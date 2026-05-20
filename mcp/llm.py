@@ -109,6 +109,14 @@ def _extract_json(text: str) -> str | None:
     return None
 
 
+# Qwen3 emits a long "reasoning" trace before the actual answer when
+# enable_thinking=True (the default on many deployments). For
+# constrained-JSON calls and tool selection we want the model to answer
+# immediately. Toggle via extra_body so we don't depend on a specific
+# SDK feature for it.
+EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
+
+
 async def _call_once(schema: type[T], system: str, user: str, temperature: float, use_schema: bool) -> str:
     cli = _client()
     if use_schema:
@@ -130,6 +138,7 @@ async def _call_once(schema: type[T], system: str, user: str, temperature: float
         ],
         temperature=temperature,
         response_format=rf,
+        extra_body=EXTRA_BODY,
     )
     return r.choices[0].message.content or ""
 

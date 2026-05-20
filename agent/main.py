@@ -158,8 +158,15 @@ async def chat_completions(request: Request) -> JSONResponse:
         "response_format",
         "tool_choice",
         "user",
+        "chat_template_kwargs",
     }
     forwarded = {k: body[k] for k in forward_keys if k in body}
+
+    # Qwen3 emits a long "reasoning" trace before the actual answer when
+    # enable_thinking=True (default on the upstream). Tool-loop callers
+    # almost never want that — it dramatically inflates latency. Default
+    # to disabled, but let the caller override via chat_template_kwargs.
+    forwarded.setdefault("chat_template_kwargs", {"enable_thinking": False})
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         # Merge MCP-provided tools with any tools the caller already supplied.

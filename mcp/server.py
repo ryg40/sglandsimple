@@ -197,7 +197,12 @@ TOOLS: list[dict[str, Any]] = [
 
 
 async def _upstream_chat(messages: list[dict[str, str]]) -> str:
-    payload = {"model": UPSTREAM_MODEL, "messages": messages, "stream": False}
+    payload = {
+        "model": UPSTREAM_MODEL,
+        "messages": messages,
+        "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
     headers = {"Authorization": f"Bearer {UPSTREAM_API_KEY}"}
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         r = await client.post(f"{UPSTREAM_BASE_URL}/chat/completions", json=payload, headers=headers)
