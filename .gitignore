@@ -1,0 +1,8 @@
+.env
+.env.local
+.env.*.local
+caddy/Caddyfile.snippet.local
+caddy/*.local
+__pycache__/
+*.pyc
+.venv/

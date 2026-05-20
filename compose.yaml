@@ -1,0 +1,58 @@
+services:
+  mcp:
+    build: ./mcp
+    container_name: sglandsimple-mcp
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:?UPSTREAM_BASE_URL is required (set in .env.local)}
+      UPSTREAM_API_KEY: ${UPSTREAM_API_KEY:-dummy}
+      UPSTREAM_MODEL: ${UPSTREAM_MODEL:?UPSTREAM_MODEL is required (set in .env.local)}
+      SEARXNG_URL: ${SEARXNG_URL:?SEARXNG_URL is required (set in .env.local)}
+    # LAN-only; not behind the public hostname. Stage 3 hardens MCP before
+    # exposing it publicly.
+    ports:
+      - "${MCP_PORT:-5451}:8080"
+    networks:
+      - default
+      - proxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  agent:
+    build: ./agent
+    container_name: sglandsimple-agent
+    restart: unless-stopped
+    depends_on:
+      mcp:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    environment:
+      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:?UPSTREAM_BASE_URL is required (set in .env.local)}
+      UPSTREAM_API_KEY: ${UPSTREAM_API_KEY:-dummy}
+      UPSTREAM_MODEL: ${UPSTREAM_MODEL:?UPSTREAM_MODEL is required (set in .env.local)}
+      MCP_URL: http://mcp:8080/mcp
+    ports:
+      - "${AGENT_PORT:-5450}:8000"
+    networks:
+      - default
+      - proxy
+    # caddy-docker-proxy labels. Ignored by static-Caddyfile setups.
+    # PUBLIC_HOSTNAME is required and must be set in .env.local.
+    labels:
+      caddy: ${PUBLIC_HOSTNAME:?PUBLIC_HOSTNAME is required (set in .env.local)}
+      caddy.reverse_proxy: "{{upstreams 8000}}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+networks:
+  proxy:
+    external: true

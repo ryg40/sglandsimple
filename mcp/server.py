@@ -1,0 +1,262 @@
+"""MCP server exposing summarize_text, chat, and echo tools over Streamable HTTP.
+
+Implements the subset of the Model Context Protocol needed for tools:
+- initialize / initialized
+- tools/list
+- tools/call
+
+Transport is JSON-RPC 2.0 over HTTP POST at /mcp. A simple GET at /mcp returns
+an SSE stream that stays open for clients that expect one; this server is
+stateless and does not push server-initiated messages.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+import httpx
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
+
+from web_research import render_markdown, run_web_research
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} environment variable is required")
+    return value
+
+
+UPSTREAM_BASE_URL = _required_env("UPSTREAM_BASE_URL")
+UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "dummy")
+UPSTREAM_MODEL = _required_env("UPSTREAM_MODEL")
+REQUEST_TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "120"))
+
+PROTOCOL_VERSION = "2025-06-18"
+SERVER_INFO = {"name": "sglandsimple-mcp", "version": "0.1.0"}
+
+TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "summarize_text",
+        "description": "Summarize the user-provided text into a short paragraph capturing the key points.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to summarize."},
+                "max_words": {
+                    "type": "integer",
+                    "description": "Soft cap on summary length in words.",
+                    "default": 80,
+                },
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "chat",
+        "description": "Engage in a multi-turn conversation. Pass the running message history; receive the assistant's next reply.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "type": "array",
+                    "description": "OpenAI-style messages, each {role, content}.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "enum": ["system", "user", "assistant"]},
+                            "content": {"type": "string"},
+                        },
+                        "required": ["role", "content"],
+                    },
+                },
+                "system": {
+                    "type": "string",
+                    "description": "Optional system prompt prepended to the conversation.",
+                },
+            },
+            "required": ["messages"],
+        },
+    },
+    {
+        "name": "echo",
+        "description": "Diagnostic: return the input verbatim. Useful for confirming MCP wiring.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+        },
+    },
+    {
+        "name": "web_research",
+        "description": (
+            "Research a topic on the web. Searches SearXNG for at least 5 relevant "
+            "results, annotates each via an SGLang fork stage, then produces a "
+            "constrained-JSON synthesis with citations and a verbatim quote from "
+            "the single best result. Returns both Markdown and JSON renderings."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "The topic or question to research."},
+                "k": {
+                    "type": "integer",
+                    "description": "Number of search results to consider (minimum 5).",
+                    "default": 5,
+                    "minimum": 5,
+                },
+            },
+            "required": ["topic"],
+        },
+    },
+]
+
+
+async def _upstream_chat(messages: list[dict[str, str]]) -> str:
+    payload = {"model": UPSTREAM_MODEL, "messages": messages, "stream": False}
+    headers = {"Authorization": f"Bearer {UPSTREAM_API_KEY}"}
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        r = await client.post(f"{UPSTREAM_BASE_URL}/chat/completions", json=payload, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+    return data["choices"][0]["message"]["content"]
+
+
+async def _tool_summarize_text(args: dict[str, Any]) -> str:
+    text = args["text"]
+    max_words = int(args.get("max_words", 80))
+    system = (
+        "You are a concise summarizer. Produce a single paragraph capturing the key points "
+        f"of the user's text in at most {max_words} words. Do not editorialize."
+    )
+    return await _upstream_chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": text}]
+    )
+
+
+async def _tool_chat(args: dict[str, Any]) -> str:
+    messages = list(args["messages"])
+    if (system := args.get("system")):
+        messages = [{"role": "system", "content": system}, *messages]
+    return await _upstream_chat(messages)
+
+
+def _tool_echo(args: dict[str, Any]) -> str:
+    return str(args.get("value", ""))
+
+
+async def _tool_web_research(args: dict[str, Any]) -> list[dict[str, Any]]:
+    topic = args["topic"]
+    k = int(args.get("k", 5))
+    payload = await run_web_research(topic, k=k)
+    markdown = render_markdown(payload)
+    return [
+        {"type": "text", "text": markdown},
+        {"type": "text", "text": json.dumps(payload, indent=2, ensure_ascii=False)},
+    ]
+
+
+async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    if name == "summarize_text":
+        text = await _tool_summarize_text(args)
+    elif name == "chat":
+        text = await _tool_chat(args)
+    elif name == "echo":
+        text = _tool_echo(args)
+    elif name == "web_research":
+        content = await _tool_web_research(args)
+        return {"content": content, "isError": False}
+    else:
+        return {
+            "content": [{"type": "text", "text": f"Unknown tool: {name}"}],
+            "isError": True,
+        }
+    return {"content": [{"type": "text", "text": text}], "isError": False}
+
+
+def _result(rpc_id: Any, value: Any) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": rpc_id, "result": value}
+
+
+def _error(rpc_id: Any, code: int, message: str) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}}
+
+
+async def _handle_rpc(msg: dict[str, Any]) -> dict[str, Any] | None:
+    method = msg.get("method")
+    rpc_id = msg.get("id")
+    params = msg.get("params") or {}
+
+    if method == "initialize":
+        return _result(
+            rpc_id,
+            {
+                "protocolVersion": PROTOCOL_VERSION,
+                "serverInfo": SERVER_INFO,
+                "capabilities": {"tools": {"listChanged": False}},
+            },
+        )
+    if method in ("notifications/initialized", "initialized"):
+        return None  # notification, no response
+    if method == "ping":
+        return _result(rpc_id, {})
+    if method == "tools/list":
+        return _result(rpc_id, {"tools": TOOLS})
+    if method == "tools/call":
+        name = params.get("name")
+        args = params.get("arguments") or {}
+        try:
+            payload = await _dispatch_tool(name, args)
+        except httpx.HTTPError as e:
+            return _error(rpc_id, -32000, f"Upstream error: {e}")
+        except Exception as e:  # noqa: BLE001
+            return _error(rpc_id, -32000, f"Tool error: {e}")
+        return _result(rpc_id, payload)
+
+    if rpc_id is None:
+        return None
+    return _error(rpc_id, -32601, f"Method not found: {method}")
+
+
+app = FastAPI(title="sglandsimple MCP server")
+
+
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/mcp")
+async def mcp_post(request: Request) -> Response:
+    body = await request.body()
+    try:
+        msg = json.loads(body)
+    except json.JSONDecodeError:
+        return JSONResponse(_error(None, -32700, "Parse error"), status_code=400)
+
+    if isinstance(msg, list):
+        responses = [r for r in [await _handle_rpc(m) for m in msg] if r is not None]
+        if not responses:
+            return Response(status_code=202)
+        return JSONResponse(responses)
+
+    resp = await _handle_rpc(msg)
+    if resp is None:
+        return Response(status_code=202)
+    return JSONResponse(resp)
+
+
+@app.get("/mcp")
+async def mcp_get() -> StreamingResponse:
+    async def event_stream():
+        # Stateless server: keep the SSE connection open with periodic comments.
+        # Clients that don't need server-pushed messages can ignore this.
+        import asyncio
+
+        while True:
+            yield ": keepalive\n\n"
+            await asyncio.sleep(15)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

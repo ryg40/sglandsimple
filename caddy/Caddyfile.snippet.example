@@ -1,0 +1,14 @@
+# Caddyfile snippet template. Copy to Caddyfile.snippet.local and replace the
+# hostname (or substitute it from your environment) before importing into your
+# real Caddyfile. The .local copy is gitignored.
+#
+# Your Caddy container must be attached to the external `proxy` network so it
+# can resolve `sglandsimple-agent` by container name.
+
+your-host.example.com {
+    encode zstd gzip
+    reverse_proxy sglandsimple-agent:8000 {
+        # Stream tokens through if you later enable streaming in the agent.
+        flush_interval -1
+    }
+}
