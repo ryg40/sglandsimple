@@ -28,7 +28,17 @@ from typing import Any
 from langgraph.constants import Send
 from langgraph.graph import END, START, StateGraph
 
+from pydantic import BaseModel
+
 from ask_data_models import AskDataState, DocNote, Evidence, FinalAnswer, QuerySpec
+
+
+class _SynthOut(BaseModel):
+    """Synthesizer output schema. query_used is injected server-side from
+    the actual spec, so the model doesn't have to emit it."""
+
+    answer: str
+    evidence: list[Evidence]
 from checkpointer import checkpointer_context
 import db as dbmod
 from llm import structured
@@ -91,8 +101,16 @@ Rules:
 - limit: small (default 10-20, max 50).
 - rationale: one short sentence explaining the plan.
 
-If a previous attempt failed validation/execution, the error is included.
-Produce a corrected spec — change collection or operators as needed.
+Name matching:
+- Names in the data are full names like "Alice Nguyen". When the user
+  gives a first name only, use a case-insensitive regex prefix match:
+  {"name": {"$regex": "^Alice", "$options": "i"}}.
+- Same for tag/title searches: use $regex with options "i" rather than
+  exact string equality.
+
+If a previous attempt failed validation/execution or returned 0 rows,
+the error is included. Produce a corrected spec — broaden the filter
+(case-insensitive regex, $in, partial match) before changing collection.
 """
 
 
@@ -127,14 +145,30 @@ async def execute_query(state: AskDataState) -> dict[str, Any]:
             "retry_count": state.retry_count + 1,
             "docs": [],
         }
+    if not rows:
+        # Empty result — give the planner a hint so a retry can broaden.
+        return {
+            "docs": [],
+            "spec_error": (
+                "query returned 0 rows; consider broader filters "
+                "(case-insensitive regex, $in across enums, partial match)"
+            ),
+            "retry_count": state.retry_count + 1,
+        }
     return {"docs": rows, "spec_error": None}
 
 
 def route_after_exec(state: AskDataState) -> str:
     if state.spec_error and state.retry_count < 2:
         return "plan_query"
+    if not state.docs and state.retry_count < 1:
+        # Empty result with no error — give the planner one chance to
+        # broaden the query (e.g. partial name match).
+        return "plan_query"
     if not state.docs:
-        return END
+        # Still empty after retry — proceed to synthesize so the answer
+        # explains the no-result outcome rather than failing silently.
+        return "synthesize"
     return "fan_out_notes"
 
 
@@ -177,18 +211,21 @@ async def interpret_doc(payload: dict[str, Any]) -> dict[str, Any]:
 SYNTH_SYSTEM = """\
 You are a careful enterprise analyst. Given a question, the documents
 returned by a database query, and per-document relevance notes, produce a
-FinalAnswer that:
+JSON object with:
 
 - answer: a concise multi-sentence response. Every factual claim must end
   with a bracketed marker like [1] or [2,3] keyed to the evidence array.
-- evidence: a list whose `index` matches those markers. Each entry must
-  reference a real document via doc_id (string _id from the docs) and
-  contain a verbatim quote from a string field of that document, plus a
-  short why.
-- query_used: echo the QuerySpec you were given.
+- evidence: a list whose `index` matches those markers. Each entry has:
+    - index (int)
+    - doc_id (string): the _id field of the relevant document, or for
+      aggregation rows the value of the _id group key
+    - collection (string): one of employees, tickets, documents
+    - quote (string): a short verbatim string drawn from one field of the
+      relevant document or row (numbers may be stringified)
+    - why (string): one short clause explaining the relevance
 
-Do not invent doc_ids. Quotes must be verbatim from a string field. If the
-docs don't answer the question, say so plainly.
+If the docs don't answer the question, say so plainly in `answer` with a
+single Evidence entry summarizing what was checked.
 """
 
 
@@ -196,15 +233,19 @@ async def synthesize(state: AskDataState) -> dict[str, Any]:
     assert state.spec is not None
     user = (
         f"Question: {state.question}\n\n"
-        f"QuerySpec used: {state.spec.model_dump_json()}\n\n"
-        f"Documents:\n{json.dumps(state.docs, default=str, indent=2)}\n\n"
+        f"Collection queried: {state.spec.collection}\n"
+        f"Kind: {state.spec.kind}\n\n"
+        f"Documents (rows):\n{json.dumps(state.docs, default=str, indent=2)}\n\n"
         f"Per-doc notes:\n"
         + "\n".join(f"- {n.doc_id}: {n.note}" for n in state.per_doc_notes)
     )
-    final = await structured(FinalAnswer, SYNTH_SYSTEM, user)
-    # Replace query_used with the actual spec we ran, regardless of what
-    # the model produced (defense in depth against the model fabricating).
-    final = final.model_copy(update={"query_used": state.spec})
+    partial = await structured(_SynthOut, SYNTH_SYSTEM, user)
+    # Fill collection if the model omitted it, and inject the real query.
+    fixed_evidence = []
+    for e in partial.evidence:
+        coll = e.collection or state.spec.collection
+        fixed_evidence.append(e.model_copy(update={"collection": coll}))
+    final = FinalAnswer(answer=partial.answer, evidence=fixed_evidence, query_used=state.spec)
     return {"final": final}
 
 
@@ -228,7 +269,12 @@ def build_graph(checkpointer=None):
     g.add_conditional_edges(
         "execute_query",
         route_after_exec,
-        {"plan_query": "plan_query", "fan_out_notes": "fan_out_notes", END: END},
+        {
+            "plan_query": "plan_query",
+            "fan_out_notes": "fan_out_notes",
+            "synthesize": "synthesize",
+            END: END,
+        },
     )
     g.add_conditional_edges("fan_out_notes", fan_out_notes, ["interpret_doc"])
     g.add_edge("interpret_doc", "synthesize")
@@ -243,7 +289,7 @@ async def run_ask_data(question: str) -> AskDataState:
     Returns the final state object. If `final` is None, the run failed —
     `spec_error` carries the diagnostic.
     """
-    with checkpointer_context() as saver:
+    async with checkpointer_context() as saver:
         graph = build_graph(checkpointer=saver)
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
         out = await graph.ainvoke({"question": question}, config=config)

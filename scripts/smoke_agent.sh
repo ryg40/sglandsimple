@@ -11,8 +11,8 @@ body=$(cat <<'EOF'
 {
   "model": "qwen3.6-27b",
   "messages": [
-    {"role": "system", "content": "You have access to enterprise data via tools. When asked about employees, tickets, or documents, call the ask_data tool with the user's question."},
-    {"role": "user", "content": "Use ask_data to answer: who manages alice in the engineering department?"}
+    {"role": "system", "content": "You have access to enterprise data via tools. When asked about employees, tickets, or documents, call the ask_data tool with the user's question, then include the document _id values from ask_data evidence in your final answer."},
+    {"role": "user", "content": "Use ask_data to list the open tickets in the engineering department, and include each ticket's _id."}
   ]
 }
 EOF

@@ -33,7 +33,7 @@ class DocNote(BaseModel):
 class Evidence(BaseModel):
     index: int
     doc_id: str
-    collection: str
+    collection: str = ""
     quote: str
     why: str
 
@@ -41,7 +41,10 @@ class Evidence(BaseModel):
 class FinalAnswer(BaseModel):
     answer: str
     evidence: list[Evidence]
-    query_used: QuerySpec
+    # NOTE: query_used is filled in by the synthesize node from the actual
+    # spec we ran, so the model can omit it. It's kept on the response as a
+    # convenience for callers, not as a real input field.
+    query_used: QuerySpec | None = None
 
 
 class AskDataState(BaseModel):

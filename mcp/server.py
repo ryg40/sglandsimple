@@ -422,7 +422,10 @@ async def _handle_rpc(msg: dict[str, Any]) -> dict[str, Any] | None:
         except httpx.HTTPError as e:
             return _error(rpc_id, -32000, f"Upstream error: {e}")
         except Exception as e:  # noqa: BLE001
-            return _error(rpc_id, -32000, f"Tool error: {e}")
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[mcp tool error] name={name} args={args}\n{tb}", flush=True)
+            return _error(rpc_id, -32000, f"Tool error: {type(e).__name__}: {e}")
         return _result(rpc_id, payload)
 
     if rpc_id is None:
