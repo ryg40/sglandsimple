@@ -1,13 +1,14 @@
-"""MCP server exposing summarize_text, chat, and echo tools over Streamable HTTP.
+"""MCP server exposing summarize_text, chat, echo, web_research, and the
+stage-1 mongo/ask_data tools.
 
 Implements the subset of the Model Context Protocol needed for tools:
 - initialize / initialized
 - tools/list
 - tools/call
 
-Transport is JSON-RPC 2.0 over HTTP POST at /mcp. A simple GET at /mcp returns
-an SSE stream that stays open for clients that expect one; this server is
-stateless and does not push server-initiated messages.
+Transport is JSON-RPC 2.0 over HTTP POST at /mcp. A simple GET at /mcp
+returns an SSE stream that stays open for clients that expect one; this
+server is stateless and does not push server-initiated messages.
 """
 
 from __future__ import annotations
@@ -20,7 +21,12 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from web_research import render_markdown, run_web_research
+import db as dbmod
+from ask_data import render_markdown as render_ask_data_markdown
+from ask_data import run_ask_data
+from web_research import render_markdown as render_web_research_markdown
+from web_research import run_web_research
+
 
 def _required_env(name: str) -> str:
     value = os.environ.get(name)
@@ -35,7 +41,7 @@ UPSTREAM_MODEL = _required_env("UPSTREAM_MODEL")
 REQUEST_TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "120"))
 
 PROTOCOL_VERSION = "2025-06-18"
-SERVER_INFO = {"name": "sglandsimple-mcp", "version": "0.1.0"}
+SERVER_INFO = {"name": "sglandsimple-mcp", "version": "0.2.0"}
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -92,10 +98,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "web_research",
         "description": (
-            "Research a topic on the web. Searches SearXNG for at least 5 relevant "
-            "results, annotates each via an SGLang fork stage, then produces a "
-            "constrained-JSON synthesis with citations and a verbatim quote from "
-            "the single best result. Returns both Markdown and JSON renderings."
+            "Research a topic on the web. Searches SearXNG for relevant results, "
+            "annotates each in parallel, then produces a constrained-JSON synthesis "
+            "with citations and a verbatim quote from the best result. Returns both "
+            "Markdown and JSON renderings."
         ),
         "inputSchema": {
             "type": "object",
@@ -109,6 +115,82 @@ TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["topic"],
+        },
+    },
+    {
+        "name": "mongo_list_collections",
+        "description": "List the enterprise Mongo collections available to the agent, with document counts.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "mongo_describe_collection",
+        "description": "Return a sampled schema for one of the enterprise collections.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Collection name. One of: employees, tickets, documents.",
+                },
+                "sample": {
+                    "type": "integer",
+                    "description": "Number of documents to sample for the schema (default 5).",
+                    "default": 5,
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "mongo_query",
+        "description": (
+            "Run a validated, read-only Mongo find() against one of the enterprise "
+            "collections. The spec is rejected if it contains $where, $function, "
+            "$accumulator, $out, or $merge. Limit is clamped to the server ceiling."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "filter": {"type": "object", "default": {}},
+                "projection": {"type": "object"},
+                "sort": {"type": "object"},
+                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 50},
+                "skip": {"type": "integer", "minimum": 0},
+            },
+            "required": ["collection"],
+        },
+    },
+    {
+        "name": "mongo_aggregate",
+        "description": (
+            "Run a validated, read-only Mongo aggregate() against one of the enterprise "
+            "collections. Stages containing $out, $merge, $function, $accumulator, or $where "
+            "are rejected. Result size is clamped to the server ceiling."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "pipeline": {"type": "array", "items": {"type": "object"}},
+                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 50},
+            },
+            "required": ["collection", "pipeline"],
+        },
+    },
+    {
+        "name": "ask_data",
+        "description": (
+            "Answer a natural-language question about the enterprise data by planning "
+            "a Mongo query, executing it, and synthesising a cited answer. Returns "
+            "markdown plus the structured JSON result."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question to answer."},
+            },
+            "required": ["question"],
         },
     },
 ]
@@ -151,23 +233,146 @@ async def _tool_web_research(args: dict[str, Any]) -> list[dict[str, Any]]:
     topic = args["topic"]
     k = int(args.get("k", 5))
     payload = await run_web_research(topic, k=k)
-    markdown = render_markdown(payload)
+    markdown = render_web_research_markdown(payload)
     return [
         {"type": "text", "text": markdown},
-        {"type": "text", "text": json.dumps(payload, indent=2, ensure_ascii=False)},
+        {"type": "text", "text": json.dumps(payload, indent=2, ensure_ascii=False, default=str)},
     ]
 
 
+# ---------------------------------------------------------------------------
+# Mongo / ask_data tools
+# ---------------------------------------------------------------------------
+
+
+def _markdown_table(rows: list[dict[str, Any]], max_rows: int = 10) -> str:
+    if not rows:
+        return "_no rows_"
+    columns: list[str] = []
+    for r in rows[:max_rows]:
+        for k in r.keys():
+            if k not in columns:
+                columns.append(k)
+    lines = ["| " + " | ".join(columns) + " |", "| " + " | ".join("---" for _ in columns) + " |"]
+    for r in rows[:max_rows]:
+        cells = []
+        for c in columns:
+            v = r.get(c, "")
+            if isinstance(v, (dict, list)):
+                v = json.dumps(v, default=str)
+            cells.append(str(v).replace("|", "\\|"))
+        lines.append("| " + " | ".join(cells) + " |")
+    if len(rows) > max_rows:
+        lines.append(f"\n_({len(rows) - max_rows} more rows omitted)_")
+    return "\n".join(lines)
+
+
+async def _tool_mongo_list_collections(args: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = await dbmod.list_collections()
+    md = "# Collections\n\n" + _markdown_table(rows)
+    return [
+        {"type": "text", "text": md},
+        {"type": "text", "text": json.dumps({"collections": rows}, indent=2)},
+    ]
+
+
+async def _tool_mongo_describe_collection(args: dict[str, Any]) -> list[dict[str, Any]]:
+    name = args["name"]
+    sample = int(args.get("sample", 5))
+    desc = await dbmod.describe_collection(name, sample=sample)
+    lines = [f"# {desc['collection']} (sampled {desc['sample_size']})", ""]
+    for fname, info in desc["fields"].items():
+        lines.append(f"- **{fname}** _({'|'.join(info['types'])})_ e.g. `{info['example']}`")
+    md = "\n".join(lines)
+    return [
+        {"type": "text", "text": md},
+        {"type": "text", "text": json.dumps(desc, indent=2, default=str)},
+    ]
+
+
+async def _tool_mongo_query(args: dict[str, Any]) -> list[dict[str, Any]]:
+    spec = {
+        "collection": args["collection"],
+        "kind": "find",
+        "filter": args.get("filter") or {},
+    }
+    for k in ("projection", "sort", "limit", "skip"):
+        if k in args and args[k] is not None:
+            spec[k] = args[k]
+    rows = await dbmod.find(spec)
+    md = f"# mongo_query: {args['collection']}\n\n" + _markdown_table(rows)
+    return [
+        {"type": "text", "text": md},
+        {"type": "text", "text": json.dumps({"rows": rows}, indent=2, default=str)},
+    ]
+
+
+async def _tool_mongo_aggregate(args: dict[str, Any]) -> list[dict[str, Any]]:
+    spec = {
+        "collection": args["collection"],
+        "kind": "aggregate",
+        "pipeline": args["pipeline"],
+    }
+    if "limit" in args and args["limit"] is not None:
+        spec["limit"] = args["limit"]
+    rows = await dbmod.aggregate(spec)
+    md = f"# mongo_aggregate: {args['collection']}\n\n" + _markdown_table(rows)
+    return [
+        {"type": "text", "text": md},
+        {"type": "text", "text": json.dumps({"rows": rows}, indent=2, default=str)},
+    ]
+
+
+async def _tool_ask_data(args: dict[str, Any]) -> dict[str, Any]:
+    question = args["question"]
+    state = await run_ask_data(question)
+    if state.final is None:
+        md = render_ask_data_markdown(None, spec_error=state.spec_error)
+        return {
+            "content": [
+                {"type": "text", "text": md},
+                {"type": "text", "text": json.dumps({"spec_error": state.spec_error}, indent=2)},
+            ],
+            "isError": True,
+        }
+    md = render_ask_data_markdown(state.final)
+    payload = state.final.model_dump(exclude_none=True)
+    return {
+        "content": [
+            {"type": "text", "text": md},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": False,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+
 async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    # Tools returning a content list of multiple blocks.
+    multi_content_tools = {
+        "web_research": _tool_web_research,
+        "mongo_list_collections": _tool_mongo_list_collections,
+        "mongo_describe_collection": _tool_mongo_describe_collection,
+        "mongo_query": _tool_mongo_query,
+        "mongo_aggregate": _tool_mongo_aggregate,
+    }
+    if name in multi_content_tools:
+        content = await multi_content_tools[name](args)
+        return {"content": content, "isError": False}
+
+    if name == "ask_data":
+        return await _tool_ask_data(args)
+
     if name == "summarize_text":
         text = await _tool_summarize_text(args)
     elif name == "chat":
         text = await _tool_chat(args)
     elif name == "echo":
         text = _tool_echo(args)
-    elif name == "web_research":
-        content = await _tool_web_research(args)
-        return {"content": content, "isError": False}
     else:
         return {
             "content": [{"type": "text", "text": f"Unknown tool: {name}"}],
@@ -209,6 +414,11 @@ async def _handle_rpc(msg: dict[str, Any]) -> dict[str, Any] | None:
         args = params.get("arguments") or {}
         try:
             payload = await _dispatch_tool(name, args)
+        except (dbmod.SpecError, dbmod.ExecError) as e:
+            return _result(
+                rpc_id,
+                {"content": [{"type": "text", "text": f"[{type(e).__name__}] {e}"}], "isError": True},
+            )
         except httpx.HTTPError as e:
             return _error(rpc_id, -32000, f"Upstream error: {e}")
         except Exception as e:  # noqa: BLE001

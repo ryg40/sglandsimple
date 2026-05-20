@@ -1,40 +1,29 @@
-"""Web research workflow expressed with the SGLang frontend DSL.
+"""Web research workflow expressed as a LangGraph StateGraph.
 
-Pedagogical notes (why this code looks the way it does):
+Flow:
 
-* `sgl.function` defines a *program* over an LLM. The `s` parameter is the
-  generation state — `s += "..."` appends to the prompt; `s += sgl.gen(name)`
-  asks the backend to generate a value bound to `name`. The whole function
-  becomes one logical session against the backend.
+    START → search → fan_out_annotate → annotate_one (parallel via Send)
+          → synthesize (structured) → END
 
-* `sgl.fork(N)` creates N independent child states branching off the current
-  prompt. Each child runs in parallel against the backend. On SGLang's native
-  runtime this exploits RadixAttention (shared KV prefix); against a remote
-  OpenAI endpoint it degrades to N concurrent HTTP calls — same API, fewer
-  wins. We use it here to extract per-result relevance notes concurrently.
-
-* `sgl.OpenAI(model)` configures the OpenAI-compatible backend. We set it
-  globally with `sgl.set_default_backend(...)`. The SGLang client honors
-  `OPENAI_BASE_URL` / `OPENAI_API_KEY` env vars.
-
-* For the final structured payload we bypass the DSL and call the OpenAI
-  client directly with `response_format={"type": "json_schema", ...}`. This
-  is the *real* SGLang/vLLM constrained-decoding feature, and it gives us a
-  guaranteed-shape JSON object — far more reliable than asking the model
-  nicely and then `json.loads`-ing the reply.
+The constrained-JSON output schema is the same one the previous SGLang
+implementation produced — both Markdown and JSON renderings are returned
+to the MCP caller.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
+import operator
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
-import sglang as sgl
-from openai import AsyncOpenAI
+from langgraph.constants import Send
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
+
+from llm import structured
+
 
 def _required_env(name: str) -> str:
     value = os.environ.get(name)
@@ -43,35 +32,22 @@ def _required_env(name: str) -> str:
     return value
 
 
-UPSTREAM_BASE_URL = _required_env("UPSTREAM_BASE_URL")
-UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "dummy")
-UPSTREAM_MODEL = _required_env("UPSTREAM_MODEL")
-
 SEARXNG_URL = _required_env("SEARXNG_URL").rstrip("/")
 SEARCH_TIMEOUT = float(os.environ.get("SEARXNG_TIMEOUT", "20"))
 MIN_RESULTS = int(os.environ.get("WEB_RESEARCH_MIN_RESULTS", "5"))
 
-# Configure the SGLang frontend to talk to the remote OpenAI-compatible server.
-# Setting these env vars before constructing the backend is the documented path.
-os.environ.setdefault("OPENAI_BASE_URL", UPSTREAM_BASE_URL)
-os.environ.setdefault("OPENAI_API_KEY", UPSTREAM_API_KEY)
-sgl.set_default_backend(sgl.OpenAI(UPSTREAM_MODEL))
-
-# Reused for the constrained-JSON final step.
-_oai = AsyncOpenAI(base_url=UPSTREAM_BASE_URL, api_key=UPSTREAM_API_KEY)
-
 
 @dataclass
 class SearchHit:
-    index: int  # 1-based citation index
+    index: int
     title: str
     url: str
     snippet: str
-    relevance_note: str = ""  # filled in by the fork stage
+    relevance_note: str = ""
 
 
 # ---------------------------------------------------------------------------
-# 1. Search
+# Search
 # ---------------------------------------------------------------------------
 
 
@@ -107,138 +83,164 @@ async def searxng_search(query: str, k: int) -> list[SearchHit]:
 
 
 # ---------------------------------------------------------------------------
-# 2. SGLang program — per-result relevance notes via fork
+# LangGraph state + IO models
 # ---------------------------------------------------------------------------
 
 
-@sgl.function
-def annotate_relevance(s, topic: str, hit: dict):
-    """Produce a one-sentence note explaining how a single result relates to the topic."""
-    s += sgl.system(
-        "You are a research assistant. In one sentence, explain how the given search "
-        "result relates to the topic. Do not invent facts beyond what the title and "
-        "snippet support. No preamble."
-    )
-    s += sgl.user(
+class RelevanceNote(BaseModel):
+    index: int
+    note: str
+
+
+class BestResult(BaseModel):
+    index: int = Field(ge=1)
+    url: str
+    quote: str
+    why: str
+
+
+class Citation(BaseModel):
+    index: int = Field(ge=1)
+    title: str
+    url: str
+
+
+class WebResearchFinal(BaseModel):
+    topic: str
+    summary: str
+    best_result: BestResult
+    citations: list[Citation] = Field(min_length=1)
+
+
+class WebState(BaseModel):
+    topic: str
+    k: int
+    hits: list[dict[str, Any]] = Field(default_factory=list)
+    notes: Annotated[list[RelevanceNote], operator.add] = Field(default_factory=list)
+    final: WebResearchFinal | None = None
+
+
+# ---------------------------------------------------------------------------
+# Nodes
+# ---------------------------------------------------------------------------
+
+
+async def node_search(state: WebState) -> dict[str, Any]:
+    hits = await searxng_search(state.topic, state.k)
+    return {"hits": [h.__dict__ for h in hits]}
+
+
+def node_fan_out_annotate(state: WebState) -> list[Send]:
+    return [
+        Send("annotate_one", {"topic": state.topic, "hit": h})
+        for h in state.hits
+    ]
+
+
+ANNOTATE_SYSTEM = """\
+You are a research assistant. In one sentence, explain how the given search
+result relates to the topic. Do not invent facts beyond what the title and
+snippet support. Return JSON {"index": <int>, "note": "<one sentence>"}.
+"""
+
+
+async def node_annotate_one(payload: dict[str, Any]) -> dict[str, Any]:
+    hit = payload["hit"]
+    topic = payload["topic"]
+    user = (
         f"Topic: {topic}\n"
-        f"Result title: {hit['title']}\n"
-        f"Result URL: {hit['url']}\n"
+        f"Result index: {hit['index']}\n"
+        f"Title: {hit['title']}\n"
+        f"URL: {hit['url']}\n"
         f"Snippet: {hit['snippet']}"
     )
-    s += sgl.assistant(sgl.gen("note", max_tokens=120, temperature=0.2))
+    note = await structured(RelevanceNote, ANNOTATE_SYSTEM, user)
+    # Force index match.
+    return {"notes": [RelevanceNote(index=int(hit["index"]), note=note.note)]}
 
 
-@sgl.function
-def annotate_all(s, topic: str, hits: list[dict]):
-    """Fan out: one fork per hit, each running annotate_relevance in parallel."""
-    forks = s.fork(len(hits))
-    for child, hit in zip(forks, hits):
-        child += annotate_relevance.run(topic=topic, hit=hit)
-    forks.join()
-    # Collect the notes back into the parent state's metadata.
-    s["notes"] = [child["note"].strip() for child in forks]
+SYNTH_SYSTEM = """\
+You are a careful research analyst. Given a topic and numbered search
+results, produce a final synthesis. Rules:
+
+- summary must contain at least one sentence and every factual claim ends
+  with one or more bracketed markers like [1] or [2,3] keyed to citations.
+- best_result.quote MUST be a verbatim substring of that result's snippet.
+- best_result.url MUST equal the URL of the chosen result.
+- citations must list every index referenced in summary, with the title
+  and URL from the matching numbered result.
+- Do not invent URLs.
+"""
 
 
-# ---------------------------------------------------------------------------
-# 3. Final summary via constrained-JSON decoding
-# ---------------------------------------------------------------------------
-
-FINAL_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["topic", "summary", "best_result", "citations"],
-    "properties": {
-        "topic": {"type": "string"},
-        "summary": {
-            "type": "string",
-            "description": (
-                "A multi-sentence synthesis of what the search results say about the topic. "
-                "Every factual claim must be followed by one or more bracketed citation "
-                "markers like [1] or [2,3] referring to the citations array."
-            ),
-        },
-        "best_result": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["index", "url", "quote", "why"],
-            "properties": {
-                "index": {"type": "integer", "minimum": 1},
-                "url": {"type": "string"},
-                "quote": {
-                    "type": "string",
-                    "description": "A short verbatim quote drawn from the best result's snippet.",
-                },
-                "why": {"type": "string", "description": "One sentence on why this is the best result."},
-            },
-        },
-        "citations": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["index", "title", "url"],
-                "properties": {
-                    "index": {"type": "integer", "minimum": 1},
-                    "title": {"type": "string"},
-                    "url": {"type": "string"},
-                },
-            },
-        },
-    },
-}
-
-
-async def generate_final(topic: str, hits: list[SearchHit]) -> dict[str, Any]:
+async def node_synthesize(state: WebState) -> dict[str, Any]:
+    # Stitch hits + notes for the prompt.
+    notes_by_index = {n.index: n.note for n in state.notes}
     bulleted = "\n".join(
-        f"[{h.index}] {h.title}\n    URL: {h.url}\n    Snippet: {h.snippet}\n    Note: {h.relevance_note}"
-        for h in hits
+        f"[{h['index']}] {h['title']}\n    URL: {h['url']}\n    Snippet: {h['snippet']}\n"
+        f"    Note: {notes_by_index.get(h['index'], '')}"
+        for h in state.hits
     )
-    system = (
-        "You are a careful research analyst. Given the topic and numbered search results, "
-        "produce a JSON object matching the provided schema. Rules:\n"
-        "- Cite every factual claim in `summary` with bracketed indices matching the citations list.\n"
-        "- `best_result.quote` MUST be copied verbatim from that result's snippet.\n"
-        "- `citations` must include every index you reference in `summary`.\n"
-        "- Do not invent URLs; reuse only the URLs given."
-    )
-    user = f"Topic: {topic}\n\nSearch results:\n{bulleted}"
-    resp = await _oai.chat.completions.create(
-        model=UPSTREAM_MODEL,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.2,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {"name": "web_research", "schema": FINAL_SCHEMA, "strict": True},
-        },
-    )
-    return json.loads(resp.choices[0].message.content)
+    user = f"Topic: {state.topic}\n\nSearch results:\n{bulleted}"
+    final = await structured(WebResearchFinal, SYNTH_SYSTEM, user)
+    # Ensure topic echoed correctly.
+    final = final.model_copy(update={"topic": state.topic})
+    return {"final": final}
 
 
 # ---------------------------------------------------------------------------
-# 4. Public entrypoint — used by the MCP tool
+# Build graph
+# ---------------------------------------------------------------------------
+
+
+def build_graph():
+    g = StateGraph(WebState)
+    g.add_node("search", node_search)
+    g.add_node("fan_out_annotate", lambda s: {})
+    g.add_node("annotate_one", node_annotate_one)
+    g.add_node("synthesize", node_synthesize)
+
+    g.add_edge(START, "search")
+    g.add_edge("search", "fan_out_annotate")
+    g.add_conditional_edges("fan_out_annotate", node_fan_out_annotate, ["annotate_one"])
+    g.add_edge("annotate_one", "synthesize")
+    g.add_edge("synthesize", END)
+
+    return g.compile()
+
+
+_GRAPH = None
+
+
+def _get_graph():
+    global _GRAPH
+    if _GRAPH is None:
+        _GRAPH = build_graph()
+    return _GRAPH
+
+
+# ---------------------------------------------------------------------------
+# Public entrypoint
 # ---------------------------------------------------------------------------
 
 
 async def run_web_research(topic: str, k: int = MIN_RESULTS) -> dict[str, Any]:
     k = max(k, MIN_RESULTS)
-    hits = await searxng_search(topic, k)
-
-    # SGLang programs are synchronous; run the fork stage off the event loop.
-    state = await asyncio.to_thread(
-        annotate_all.run, topic=topic, hits=[h.__dict__ for h in hits]
-    )
-    notes = state["notes"]
-    for h, note in zip(hits, notes):
-        h.relevance_note = note
-
-    payload = await generate_final(topic, hits)
+    graph = _get_graph()
+    out = await graph.ainvoke({"topic": topic, "k": k})
+    state = WebState.model_validate(out)
+    assert state.final is not None
+    payload = state.final.model_dump()
+    notes_by_index = {n.index: n.note for n in state.notes}
     payload["results"] = [
-        {"index": h.index, "title": h.title, "url": h.url, "snippet": h.snippet, "note": h.relevance_note}
-        for h in hits
+        {
+            "index": h["index"],
+            "title": h["title"],
+            "url": h["url"],
+            "snippet": h["snippet"],
+            "note": notes_by_index.get(h["index"], ""),
+        }
+        for h in state.hits
     ]
     return payload
 

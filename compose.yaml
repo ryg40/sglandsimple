@@ -1,8 +1,42 @@
 services:
+  mongo:
+    image: mongo:7
+    container_name: sglandsimple-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo-seed:/docker-entrypoint-initdb.d:ro
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-enterprise}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-rootpw}
+    networks:
+      - default
+    healthcheck:
+      test:
+        - "CMD"
+        - "mongosh"
+        - "--quiet"
+        - "-u"
+        - "${MONGO_ROOT_USER:-root}"
+        - "-p"
+        - "${MONGO_ROOT_PASSWORD:-rootpw}"
+        - "--authenticationDatabase"
+        - "admin"
+        - "--eval"
+        - "db.runCommand({ ping: 1 }).ok"
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
   mcp:
     build: ./mcp
     container_name: sglandsimple-mcp
     restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
     env_file:
       - .env.local
     environment:
@@ -10,6 +44,11 @@ services:
       UPSTREAM_API_KEY: ${UPSTREAM_API_KEY:-dummy}
       UPSTREAM_MODEL: ${UPSTREAM_MODEL:?UPSTREAM_MODEL is required (set in .env.local)}
       SEARXNG_URL: ${SEARXNG_URL:?SEARXNG_URL is required (set in .env.local)}
+      MONGO_URL: ${MONGO_URL:-mongodb://app:app@mongo:27017}
+      MONGO_DB: ${MONGO_DB:-enterprise}
+      ASK_DATA_MAX_DOCS: ${ASK_DATA_MAX_DOCS:-10}
+      ASK_DATA_LIMIT_CEILING: ${ASK_DATA_LIMIT_CEILING:-50}
+      LANGGRAPH_CHECKPOINT_COLLECTION: ${LANGGRAPH_CHECKPOINT_COLLECTION:-lg_checkpoints}
     # LAN-only; not behind the public hostname. Stage 3 hardens MCP before
     # exposing it publicly.
     ports:
@@ -56,3 +95,6 @@ services:
 networks:
   proxy:
     external: true
+
+volumes:
+  mongo-data:
