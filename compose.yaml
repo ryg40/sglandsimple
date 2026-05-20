@@ -49,6 +49,11 @@ services:
       ASK_DATA_MAX_DOCS: ${ASK_DATA_MAX_DOCS:-10}
       ASK_DATA_LIMIT_CEILING: ${ASK_DATA_LIMIT_CEILING:-50}
       LANGGRAPH_CHECKPOINT_COLLECTION: ${LANGGRAPH_CHECKPOINT_COLLECTION:-lg_checkpoints}
+    volumes:
+      # Stage 4: filesystem sandbox for deep-agent file & shell tools.
+      # Created on the host (`./sandbox/`); owned by uid 1000 inside the
+      # container so the `sandbox` user can write to it.
+      - ./sandbox:/sandbox
     # LAN-only; not behind the public hostname. Stage 3 hardens MCP before
     # exposing it publicly.
     ports:

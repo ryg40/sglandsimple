@@ -36,21 +36,58 @@ UPSTREAM_BASE_URL = _required_env("UPSTREAM_BASE_URL")
 UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "dummy")
 UPSTREAM_MODEL = _required_env("UPSTREAM_MODEL")
 
-_oai: AsyncOpenAI | None = None
+
+# Role registry: each role resolves base_url / model / api_key from its
+# own env-var prefix and falls back to UPSTREAM_* when unset. Stage 4
+# adds "planner" and "builder"; "default" remains the original upstream.
+def _role_env(prefix: str) -> tuple[str, str, str]:
+    base = os.environ.get(f"{prefix}_BASE_URL") or UPSTREAM_BASE_URL
+    model = os.environ.get(f"{prefix}_MODEL") or UPSTREAM_MODEL
+    key = os.environ.get(f"{prefix}_API_KEY") or UPSTREAM_API_KEY
+    return base, model, key
+
+
+_ROLE_PREFIX = {
+    "default": "UPSTREAM",
+    "planner": "PLANNER",
+    "builder": "BUILDER",
+}
+
+_clients: dict[str, AsyncOpenAI] = {}
+
+
+def llm_client(role: str = "default") -> AsyncOpenAI:
+    """Return the AsyncOpenAI client for a role, building on first use."""
+    prefix = _ROLE_PREFIX.get(role, "UPSTREAM")
+    if role not in _clients:
+        base, _model, key = _role_env(prefix)
+        _clients[role] = AsyncOpenAI(
+            base_url=base,
+            api_key=key,
+            timeout=float(os.environ.get("LLM_TIMEOUT", "120")),
+        )
+    return _clients[role]
+
+
+def llm_model(role: str = "default") -> str:
+    prefix = _ROLE_PREFIX.get(role, "UPSTREAM")
+    _base, model, _key = _role_env(prefix)
+    return model
 
 
 def _client() -> AsyncOpenAI:
-    global _oai
-    if _oai is None:
-        _oai = AsyncOpenAI(base_url=UPSTREAM_BASE_URL, api_key=UPSTREAM_API_KEY)
-    return _oai
+    # Kept for backwards compatibility with callers that haven't been
+    # updated to use llm_client(role=...).
+    return llm_client("default")
 
 
-def chat_model(temperature: float = 0.2) -> ChatOpenAI:
+def chat_model(temperature: float = 0.2, role: str = "default") -> ChatOpenAI:
+    prefix = _ROLE_PREFIX.get(role, "UPSTREAM")
+    base, model, key = _role_env(prefix)
     return ChatOpenAI(
-        base_url=UPSTREAM_BASE_URL,
-        api_key=UPSTREAM_API_KEY,
-        model=UPSTREAM_MODEL,
+        base_url=base,
+        api_key=key,
+        model=model,
         temperature=temperature,
     )
 
@@ -74,10 +111,12 @@ def _strip_fences(text: str) -> str:
 def _model_schema(schema: type[BaseModel]) -> dict:
     """Pydantic JSON-schema for a model, normalized for OpenAI response_format.strict."""
     s = schema.model_json_schema()
-    # OpenAI strict mode requires additionalProperties:false on every object schema.
+    # OpenAI strict mode requires additionalProperties:false on every object schema
+    # that defines properties. A bare {"type": "object"} (e.g. dict[str, Any]) is
+    # left alone so it remains a catch-all.
     def _fix(node):
         if isinstance(node, dict):
-            if node.get("type") == "object" and "additionalProperties" not in node:
+            if node.get("type") == "object" and "additionalProperties" not in node and "properties" in node:
                 node["additionalProperties"] = False
             for v in node.values():
                 _fix(v)
@@ -117,8 +156,15 @@ def _extract_json(text: str) -> str | None:
 EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": False}}
 
 
-async def _call_once(schema: type[T], system: str, user: str, temperature: float, use_schema: bool) -> str:
-    cli = _client()
+async def _call_once(
+    schema: type[T],
+    system: str,
+    user: str,
+    temperature: float,
+    use_schema: bool,
+    role: str = "default",
+) -> str:
+    cli = llm_client(role)
     if use_schema:
         rf = {
             "type": "json_schema",
@@ -131,7 +177,7 @@ async def _call_once(schema: type[T], system: str, user: str, temperature: float
     else:
         rf = {"type": "json_object"}
     r = await cli.chat.completions.create(
-        model=UPSTREAM_MODEL,
+        model=llm_model(role),
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -143,7 +189,13 @@ async def _call_once(schema: type[T], system: str, user: str, temperature: float
     return r.choices[0].message.content or ""
 
 
-async def structured(schema: type[T], system: str, user: str, temperature: float = 0.2) -> T:
+async def structured(
+    schema: type[T],
+    system: str,
+    user: str,
+    temperature: float = 0.2,
+    role: str = "default",
+) -> T:
     """Run one constrained-JSON call. Returns an instance of `schema`.
 
     Tries ``response_format={"type": "json_schema", "strict": true}`` first.
@@ -168,7 +220,7 @@ async def structured(schema: type[T], system: str, user: str, temperature: float
     last_err: Exception | None = None
     for sys_prompt, use_schema in attempts:
         try:
-            raw = await _call_once(schema, sys_prompt, user, temperature, use_schema)
+            raw = await _call_once(schema, sys_prompt, user, temperature, use_schema, role=role)
         except Exception as e:  # noqa: BLE001
             last_err = e
             continue

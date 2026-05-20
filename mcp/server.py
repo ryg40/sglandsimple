@@ -22,8 +22,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 import db as dbmod
+import sandbox as sbx
 from ask_data import render_markdown as render_ask_data_markdown
 from ask_data import run_ask_data
+from deep_agent import Plan, run_deep_agent, run_plan_task, run_run_plan
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
 
@@ -193,6 +195,104 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["question"],
         },
     },
+    {
+        "name": "fs_read",
+        "description": "Read a UTF-8 file from the sandbox (/sandbox). Paths must be relative; traversal is rejected.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path relative to /sandbox."},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "fs_write",
+        "description": "Write/replace a UTF-8 file in the sandbox. Creates parent directories as needed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path relative to /sandbox."},
+                "content": {"type": "string", "description": "Full file contents."},
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "fs_edit",
+        "description": "Exact-string replace in a sandbox file. old_string must be unique within the file.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "old_string": {"type": "string"},
+                "new_string": {"type": "string"},
+            },
+            "required": ["path", "old_string", "new_string"],
+        },
+    },
+    {
+        "name": "shell_exec",
+        "description": (
+            "Run a bash command inside /sandbox as the non-root sandbox user. "
+            "stdout/stderr are returned along with the exit code. Times out after "
+            "timeout_sec seconds (default 30)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "cmd": {"type": "string", "description": "Command line passed to `bash -lc`."},
+                "timeout_sec": {"type": "number", "description": "Hard timeout in seconds.", "default": 30},
+            },
+            "required": ["cmd"],
+        },
+    },
+    {
+        "name": "plan_task",
+        "description": (
+            "Planner subagent. Decomposes a goal into a typed Plan of MCP tool "
+            "calls (with depends_on and parallel flags). Persists the plan to "
+            "db.deep_agent_plans and returns it. Does not execute."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "goal": {"type": "string", "description": "The user goal to plan for."},
+                "context": {"type": "string", "description": "Optional extra context.", "default": ""},
+            },
+            "required": ["goal"],
+        },
+    },
+    {
+        "name": "run_plan",
+        "description": (
+            "Builder/executor subagent. Executes a previously-produced Plan "
+            "(by plan_id) or an inline Plan, fanning out parallel-marked steps. "
+            "Returns per-step results and a final natural-language summary."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string", "description": "Plan id returned by plan_task."},
+                "plan": {"type": "object", "description": "Inline Plan object (alternative to plan_id)."},
+            },
+        },
+    },
+    {
+        "name": "deep_agent",
+        "description": (
+            "One-shot deep-agent: plan_task -> run_plan -> summary. Use this "
+            "for goals that should be planned and executed in a single call."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "goal": {"type": "string", "description": "The goal to achieve."},
+                "context": {"type": "string", "description": "Optional context.", "default": ""},
+            },
+            "required": ["goal"],
+        },
+    },
 ]
 
 
@@ -328,6 +428,148 @@ async def _tool_mongo_aggregate(args: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Sandbox tools (stage 4)
+# ---------------------------------------------------------------------------
+
+
+async def _tool_fs_read(args: dict[str, Any]) -> list[dict[str, Any]]:
+    text = sbx.fs_read(args["path"])
+    return [{"type": "text", "text": text}]
+
+
+async def _tool_fs_write(args: dict[str, Any]) -> list[dict[str, Any]]:
+    info = sbx.fs_write(args["path"], args.get("content", ""))
+    return [{"type": "text", "text": json.dumps(info, indent=2)}]
+
+
+async def _tool_fs_edit(args: dict[str, Any]) -> list[dict[str, Any]]:
+    info = sbx.fs_edit(args["path"], args["old_string"], args["new_string"])
+    return [{"type": "text", "text": json.dumps(info, indent=2)}]
+
+
+async def _tool_shell_exec(args: dict[str, Any]) -> list[dict[str, Any]]:
+    result = await sbx.shell_exec(args["cmd"], timeout_sec=args.get("timeout_sec"))
+    head = f"$ {result['cmd']}\nexit={result['exit_code']}{' (timed out)' if result['timed_out'] else ''}\n"
+    body = ""
+    if result["stdout"]:
+        body += "--- stdout ---\n" + result["stdout"] + "\n"
+    if result["stderr"]:
+        body += "--- stderr ---\n" + result["stderr"] + "\n"
+    return [
+        {"type": "text", "text": head + body},
+        {"type": "text", "text": json.dumps(result, indent=2)},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Deep-agent tools (stage 4)
+# ---------------------------------------------------------------------------
+
+
+def _plan_markdown(plan: Plan) -> str:
+    lines = [f"# Plan {plan.plan_id or '(new)'}", "", f"**Goal:** {plan.goal}", ""]
+    if plan.rationale:
+        lines += [plan.rationale, ""]
+    lines.append("## Steps")
+    for s in plan.steps:
+        deps = ", ".join(s.depends_on) or "—"
+        par = " · parallel" if s.parallel else ""
+        lines.append(f"- **{s.id}** → `{s.tool}` (deps: {deps}){par}")
+        if s.rationale:
+            lines.append(f"  - {s.rationale}")
+    return "\n".join(lines)
+
+
+async def _tool_plan_task(args: dict[str, Any]) -> dict[str, Any]:
+    goal = args.get("goal")
+    if not goal:
+        return {"content": [{"type": "text", "text": "goal is required"}], "isError": True}
+    result = await run_plan_task(goal, context=args.get("context", "") or "")
+    if "error" in result:
+        return {
+            "content": [{"type": "text", "text": f"[planner error] {result['error']}"}],
+            "isError": True,
+        }
+    plan: Plan = result["plan"]
+    return {
+        "content": [
+            {"type": "text", "text": _plan_markdown(plan)},
+            {"type": "text", "text": plan.model_dump_json(indent=2)},
+        ],
+        "isError": False,
+    }
+
+
+async def _tool_run_plan(args: dict[str, Any]) -> dict[str, Any]:
+    plan = None
+    if args.get("plan"):
+        try:
+            plan = Plan.model_validate(args["plan"])
+        except Exception as e:  # noqa: BLE001
+            return {
+                "content": [{"type": "text", "text": f"[plan validation error] {e}"}],
+                "isError": True,
+            }
+    summary = await run_run_plan(plan=plan, plan_id=args.get("plan_id"))
+    md_lines = [f"# Run of plan {summary.plan_id}", "", f"**Goal:** {summary.goal}", ""]
+    if summary.replanned:
+        md_lines.append("_(plan was re-planned once after a step failure)_")
+    if summary.error:
+        md_lines += ["", f"**Error:** {summary.error}"]
+    md_lines.append("\n## Step results")
+    for r in summary.results:
+        if r.status == "ok":
+            md_lines.append(f"- **{r.step_id}** ✓")
+            if r.output:
+                snippet = r.output if len(r.output) < 400 else r.output[:400] + "…"
+                md_lines.append(f"  > {snippet}")
+        else:
+            md_lines.append(f"- **{r.step_id}** ✗ {r.error}")
+    if summary.summary:
+        md_lines += ["", "## Summary", summary.summary]
+    return {
+        "content": [
+            {"type": "text", "text": "\n".join(md_lines)},
+            {"type": "text", "text": summary.model_dump_json(indent=2)},
+        ],
+        "isError": bool(summary.error),
+    }
+
+
+async def _tool_deep_agent(args: dict[str, Any]) -> dict[str, Any]:
+    goal = args.get("goal")
+    if not goal:
+        return {"content": [{"type": "text", "text": "goal is required"}], "isError": True}
+    result = await run_deep_agent(goal, context=args.get("context", "") or "")
+    if "error" in result:
+        return {
+            "content": [{"type": "text", "text": f"[deep_agent error] {result['error']}"}],
+            "isError": True,
+        }
+    plan: Plan = result["plan"]
+    summary = result["summary"]
+    md = _plan_markdown(plan) + "\n\n"
+    md += f"## Run\n\n"
+    if summary.replanned:
+        md += "_(plan was re-planned once after a step failure)_\n\n"
+    for r in summary.results:
+        if r.status == "ok":
+            md += f"- **{r.step_id}** ✓\n"
+        else:
+            md += f"- **{r.step_id}** ✗ {r.error}\n"
+    if summary.summary:
+        md += f"\n## Summary\n\n{summary.summary}\n"
+    payload = {"plan": plan.model_dump(), "summary": summary.model_dump()}
+    return {
+        "content": [
+            {"type": "text", "text": md},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": bool(summary.error),
+    }
+
+
 async def _tool_ask_data(args: dict[str, Any]) -> dict[str, Any]:
     question = args["question"]
     state = await run_ask_data(question)
@@ -364,13 +606,26 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "mongo_describe_collection": _tool_mongo_describe_collection,
         "mongo_query": _tool_mongo_query,
         "mongo_aggregate": _tool_mongo_aggregate,
+        "fs_read": _tool_fs_read,
+        "fs_write": _tool_fs_write,
+        "fs_edit": _tool_fs_edit,
+        "shell_exec": _tool_shell_exec,
     }
     if name in multi_content_tools:
-        content = await multi_content_tools[name](args)
+        try:
+            content = await multi_content_tools[name](args)
+        except sbx.SandboxError as e:
+            return {"content": [{"type": "text", "text": f"[SandboxError] {e}"}], "isError": True}
         return {"content": content, "isError": False}
 
     if name == "ask_data":
         return await _tool_ask_data(args)
+    if name == "plan_task":
+        return await _tool_plan_task(args)
+    if name == "run_plan":
+        return await _tool_run_plan(args)
+    if name == "deep_agent":
+        return await _tool_deep_agent(args)
 
     if name == "summarize_text":
         text = await _tool_summarize_text(args)
@@ -602,7 +857,5 @@ async def mcp_get(request: Request) -> Response:
             i += 1
             yield f"id: {i}\nevent: ping\ndata: {{}}\n\n"
             await asyncio.sleep(15)
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
