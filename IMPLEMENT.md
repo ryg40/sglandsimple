@@ -202,6 +202,74 @@ Added `web` service (FastAPI, Jinja + vanilla JS, no build step). Exposes `${WEB
 - SSE server-push of POST responses (deferred in S3.transport.2).
 - Public Caddy routing for MCP (deferred in S3.expose.2).
 
+## Stage 5 — GitHub Copilot as an upstream provider (TBD)
+
+**Goal:** Let the stack target a GitHub Copilot Pro/Business/Enterprise subscription as `UPSTREAM_*` so the same agent + MCP plumbing can run on Copilot-hosted models (Claude Sonnet, GPT-4.1, etc.), the way opencode / PiAgent do.
+
+> Status: **TBD.** Not started. Open questions in 5e must be resolved before scheduling.
+
+### 5a. Why this is non-trivial
+
+Copilot is **not** a clean OpenAI base-URL + key. Three extra moving parts versus a vanilla provider:
+
+1. **GitHub device-flow login** → a `ghu_…` GitHub OAuth token (per-user, long-lived).
+2. **Token exchange** → `GET https://api.github.com/copilot_internal/v2/token` with `Authorization: token ghu_…` returns a short-lived HMAC bearer (~30 min TTL). Must be cached and refreshed on expiry/401.
+3. **Editor-spoof headers** required on every chat request: `Copilot-Integration-Id`, `Editor-Version`, `Editor-Plugin-Version`, `User-Agent`. Drift in any of these can flip the account into a rejected state.
+
+The chat endpoint itself is OpenAI-shaped (`POST https://api.githubcopilot.com/chat/completions`) for most models; Codex models use `/responses` and will be excluded from scope.
+
+### 5b. Two implementation routes
+
+Pick one in S5.decide.1.
+
+**Route A — Sidecar proxy (low effort).** Run a community proxy (e.g. [`ericc-ch/copilot-api`](https://github.com/ericc-ch/copilot-api), last release 2025-10-05 — slow cadence but not archived) as a new compose service. It handles device flow, token cache, refresh, and header spoofing, and exposes a local `/v1/chat/completions`. The agent and MCP point at it via `UPSTREAM_BASE_URL=http://copilot-api:4141/v1`. Nothing in our Python changes.
+
+- Pros: ~30 min to wire; zero changes to `agent/` or `mcp/`.
+- Cons: third-party dependency on a project with slow updates; breakage when GitHub rotates headers; tool-call support varies by model.
+
+**Route B — Native client in this repo (more work).** Add a Copilot auth module to `mcp/` and inject editor headers into the existing `httpx.AsyncClient` calls. ~150 LoC across:
+- `mcp/copilot_auth.py` — device-flow init, `ghu_` storage (host-mounted file), bearer cache with TTL + refresh.
+- `mcp/llm.py` — when `UPSTREAM_PROVIDER=copilot`, wrap `AsyncOpenAI` to attach Copilot headers and call the auth module for the bearer.
+- `agent/main.py` — same wrapping for the direct upstream call.
+
+- Pros: no extra container; we own the breakage surface.
+- Cons: we own the breakage surface; device-flow UX in a headless container needs care (one-time `docker compose exec mcp python -m mcp.copilot_auth login`).
+
+### 5c. Constraints we already know will bite
+
+- **Against Copilot's ToS.** Non-editor use is not sanctioned; accounts have been rate-limited or banned for heavy abuse patterns. Our `web_research` fan-out and the Stage-4 builder loop are exactly the kind of bursty parallel traffic that draws attention. Mitigation in S5.safety.
+- **Rate limits are tighter** than the current self-hosted SGLang/vLLM endpoint. The `LLM_CONCURRENCY=2` / `ASK_DATA_MAX_DOCS=4` tuning from Stage 1 will need to drop further (likely 1 concurrent + smaller fan-out).
+- **No grammar-enforced constrained JSON.** Copilot does not expose vLLM's `response_format=json_schema` strict grammar. `mcp/llm.py::structured()` will need a fallback path: prompt-only JSON + Pydantic validate + bounded retry. The existing fallback in `structured()` already covers this, but it must become the *primary* path for Copilot.
+- **Tool-calling varies by model.** GPT-4.1 / Claude Sonnet through Copilot generally honor OpenAI `tools`; Codex models do not. Restrict the configured `UPSTREAM_MODEL` to a known-good tool-calling model.
+- **Two-endpoint Stage-4 split assumes both endpoints obey the same OpenAI shape.** Copilot can be the `PLANNER_*` endpoint only if S5.builder.1 below confirms tool-call behavior under fan-out; otherwise keep `BUILDER_*` on the self-hosted box.
+
+### 5d. Env surface (proposed)
+
+| Var | Default | Required | Notes |
+| --- | --- | --- | --- |
+| `UPSTREAM_PROVIDER` | `openai` | no | When set to `copilot`, enables Copilot auth/headers path (Route B) or simply selects the sidecar service (Route A). |
+| `COPILOT_TOKEN_FILE` | `/data/copilot/ghu_token` | no | Host-mounted file holding the `ghu_…` token from device flow. |
+| `COPILOT_BEARER_TTL` | `1500` | no | Seconds to cache the exchanged bearer before forced refresh (Copilot returns ~30 min; refresh slightly early). |
+| `COPILOT_EDITOR_VERSION` | `vscode/1.104.1` | no | Editor-spoof header; bump when GitHub starts rejecting. |
+| `COPILOT_PLUGIN_VERSION` | `copilot-chat/0.26.7` | no | Editor-plugin-version header. |
+| `COPILOT_INTEGRATION_ID` | `vscode-chat` | no | Integration-id header. |
+
+### 5e. Open questions (resolve before scheduling)
+
+1. **Route A or B?** Decide based on tolerance for an extra container vs. owning ~150 LoC of auth code.
+2. **Which Copilot model id?** Confirm tool-calling works under our agent loop with the chosen model before committing. Candidates: `claude-sonnet-4.5`, `gpt-4.1`. Codex variants out.
+3. **Where does device-flow login happen?** Headless container UX needs a clear `make copilot-login` (or equivalent) target. Where does `ghu_…` live on disk — host bind-mount or Docker secret?
+4. **Does Stage-4 split survive Copilot rate limits?** If not, either keep `BUILDER_*` on the self-hosted endpoint (Copilot for planner only) or postpone Stage 4 + Copilot combination.
+5. **Constrained-JSON fallback acceptable?** Verify `ask_data` and `web_research` still return parseable JSON via the no-schema-enforcement path with one retry, on the chosen model.
+
+### 5f. Verification (intent)
+
+1. With `UPSTREAM_PROVIDER=copilot`, `curl -s ${PUBLIC_HOSTNAME}/v1/chat/completions … "model":"<copilot-model>"` returns a completion.
+2. Agent tool loop dispatches an `ask_data` tool call end-to-end via Copilot and returns a cited answer.
+3. Bearer refresh: kill the cached bearer (or wait past TTL), next call succeeds with a fresh exchange.
+4. `LLM_CONCURRENCY=1` + reduced `ASK_DATA_MAX_DOCS` produces no Copilot 429s across the three smoke tests.
+5. Route choice documented in `docs/clients.md` (Copilot as upstream — not as a client).
+
 ## Env surface after all stages
 
 All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?required}` for the required ones.
@@ -574,3 +642,110 @@ Per-session budget target: **80k tokens**. Mechanism:
 - [x] **S4.verify.3 — Context budget never exceeded**
   - Done when: a stress goal (e.g. "summarize each of 50 web pages") completes without any single LLM call exceeding `DEEP_AGENT_BUDGET_PER_CALL`. Verified from the `deep_agent.budget` log lines.
   - Depends on: S4.verify.1
+
+## Stage 5 — GitHub Copilot as upstream (TBD)
+
+> All tasks below are **TBD**. Resolve the §5e open questions and pick a route (S5.decide.1) before any other task is started.
+
+### S5.decide — Route selection
+
+- [ ] **S5.decide.1 — Pick Route A (sidecar) vs Route B (native client)**
+  - Files: this doc (record the decision in §5b).
+  - Done when: decision recorded with rationale; downstream tasks pruned to match the chosen route.
+  - Depends on: §5e Q1.
+
+- [ ] **S5.decide.2 — Pick the Copilot model id**
+  - Done when: a Copilot model is chosen, manually verified to honor OpenAI `tools` against the agent's tool loop, and recorded in `.env.example` as a comment.
+  - Depends on: §5e Q2.
+
+### S5.deps — Dependencies and env surface
+
+- [ ] **S5.deps.1 — Add Stage-5 env vars to `.env.example`**
+  - Files: `.env.example`, Env surface table.
+  - Done when: `UPSTREAM_PROVIDER`, `COPILOT_TOKEN_FILE`, `COPILOT_BEARER_TTL`, `COPILOT_EDITOR_VERSION`, `COPILOT_PLUGIN_VERSION`, `COPILOT_INTEGRATION_ID` all present with defaults from §5d.
+  - Depends on: —
+
+- [ ] **S5.deps.2 — Host-mounted token directory**
+  - Files: `compose.yaml`, `.gitignore`.
+  - Done when: `./copilot/` bind-mounts to `/data/copilot` in whichever service owns the token (sidecar for Route A, `mcp` + `agent` for Route B), uid 1000, gitignored.
+  - Depends on: S5.decide.1.
+
+### S5.proxy — Route A only (sidecar)
+
+- [ ] **S5.proxy.1 — Add `copilot-api` service to `compose.yaml`**
+  - Files: `compose.yaml`.
+  - Done when: service starts, joins the `proxy` network, exposes `4141` to the in-stack network only, healthcheck green.
+  - Depends on: S5.decide.1 (chose A), S5.deps.2.
+
+- [ ] **S5.proxy.2 — One-shot device-flow login**
+  - Files: `scripts/copilot_login.sh` (new).
+  - Done when: script runs the sidecar's login flow against `github.com/login/device`, persists `ghu_…` under `./copilot/`, and a follow-up `curl http://localhost:4141/v1/models` succeeds.
+  - Depends on: S5.proxy.1.
+
+- [ ] **S5.proxy.3 — Point upstream at the sidecar**
+  - Files: `.env.local` (documented in `.env.example`).
+  - Done when: `UPSTREAM_BASE_URL=http://copilot-api:4141/v1`, `UPSTREAM_MODEL=<chosen>`, `UPSTREAM_API_KEY=dummy`; `docker compose up -d` brings agent+mcp up against the sidecar.
+  - Depends on: S5.proxy.2, S5.decide.2.
+
+### S5.native — Route B only (in-repo client)
+
+- [ ] **S5.native.1 — `mcp/copilot_auth.py` (device flow + bearer cache)**
+  - Files: `mcp/copilot_auth.py`.
+  - Done when: `python -m mcp.copilot_auth login` walks device flow and writes `ghu_…`; `get_bearer()` returns a cached short-lived token, refreshes on 401 or TTL expiry; thread-safe via `asyncio.Lock`.
+  - Depends on: S5.decide.1 (chose B), S5.deps.1, S5.deps.2.
+
+- [ ] **S5.native.2 — Copilot-aware client wrapper in `mcp/llm.py`**
+  - Files: `mcp/llm.py`.
+  - Done when: when `UPSTREAM_PROVIDER=copilot`, the `AsyncOpenAI` instance is built with a custom `httpx.AsyncClient` that injects the four editor headers and pulls the bearer from `copilot_auth.get_bearer()` per request. Existing non-Copilot path unchanged.
+  - Depends on: S5.native.1.
+
+- [ ] **S5.native.3 — Same wrapping in `agent/main.py`**
+  - Files: `agent/main.py`.
+  - Done when: agent's direct upstream call uses the same Copilot wrapper. Header set identical to `mcp/llm.py`.
+  - Depends on: S5.native.2.
+
+- [ ] **S5.native.4 — Document login UX**
+  - Files: `docs/clients.md` (new "Copilot as upstream" section).
+  - Done when: paste-ready `docker compose exec mcp python -m mcp.copilot_auth login` recipe, plus where `ghu_…` lands and how to revoke.
+  - Depends on: S5.native.1.
+
+### S5.json — Constrained-JSON fallback
+
+- [ ] **S5.json.1 — Make prompt-only JSON the primary path when provider=copilot**
+  - Files: `mcp/llm.py::structured`.
+  - Done when: under Copilot, `structured()` skips `response_format=json_schema` (no grammar enforcement upstream), uses prompt-only JSON + Pydantic validate + 1 retry; logs which path was taken.
+  - Depends on: S5.decide.1.
+
+### S5.safety — Rate-limit and abuse-pattern mitigation
+
+- [ ] **S5.safety.1 — Drop concurrency defaults under Copilot**
+  - Files: `mcp/ask_data.py`, `.env.example` (documented).
+  - Done when: when `UPSTREAM_PROVIDER=copilot`, default `LLM_CONCURRENCY=1` and `ASK_DATA_MAX_DOCS=2` unless explicitly overridden. Documented in §5c.
+  - Depends on: S5.decide.1.
+
+- [ ] **S5.safety.2 — Backoff on 429/403**
+  - Files: `mcp/llm.py` (or the wrapper from S5.native.2 / S5.proxy.1 dependency).
+  - Done when: on 429 or 403 from Copilot, exponential backoff with jitter, max 3 retries, then surface a clear error. No silent loops.
+  - Depends on: S5.decide.1.
+
+### S5.verify — End-to-end
+
+- [ ] **S5.verify.1 — Direct curl against agent**
+  - Done when: `curl ${PUBLIC_HOSTNAME}/v1/chat/completions` with the Copilot model returns a completion; logs show the Copilot endpoint was used.
+  - Depends on: route-specific tasks above.
+
+- [ ] **S5.verify.2 — `ask_data` end-to-end via Copilot**
+  - Done when: the three-shape smoke from `scripts/smoke_ask_data.sh` passes against Copilot. Constrained-JSON fallback handles any schema misses.
+  - Depends on: S5.verify.1, S5.json.1.
+
+- [ ] **S5.verify.3 — Bearer refresh works**
+  - Done when: with the cached bearer manually invalidated (or after TTL), the next call triggers a refresh and succeeds without restart.
+  - Depends on: S5.verify.1.
+
+- [ ] **S5.verify.4 — Sustained-burst rate-limit check**
+  - Done when: running the Stage-1 smoke 10× back-to-back produces no Copilot 429s under the dropped concurrency defaults from S5.safety.1.
+  - Depends on: S5.safety.1, S5.verify.2.
+
+- [ ] **S5.verify.5 — Decide on Stage-4 + Copilot compatibility**
+  - Done when: either `deep_agent` runs cleanly with planner on Copilot + builder on self-hosted (recorded in §4c env block), or the combo is marked out-of-scope and §5e Q4 is closed.
+  - Depends on: S5.verify.4.

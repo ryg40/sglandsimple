@@ -222,6 +222,8 @@ def validate_spec(spec: dict[str, Any]) -> dict[str, Any]:
         for i, stage in enumerate(pipeline):
             if not isinstance(stage, dict):
                 raise SpecError(f"pipeline[{i}] must be an object")
+            if len(stage) != 1:
+                raise SpecError(f"pipeline[{i}] must contain exactly one field; got {len(stage)}")
             for stage_key in stage.keys():
                 if stage_key in _FORBIDDEN_OPERATORS:
                     raise SpecError(f"forbidden stage {stage_key!r} at pipeline[{i}]")

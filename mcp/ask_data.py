@@ -104,6 +104,7 @@ Rules:
 - kind = "find" for direct lookups; "aggregate" for grouping/counting/joins.
 - Never use $where, $function, $accumulator, $out, or $merge.
 - For "aggregate", use a JSON pipeline of stages like [{"$match": {...}}, {"$group": {...}}].
+  Each stage MUST be an object with exactly ONE key (e.g. {"$match":{}}), never [{}] or empty objects.
 - limit: small (default 10-20, max 50).
 - rationale: one short sentence explaining the plan.
 
@@ -165,15 +166,9 @@ async def execute_query(state: AskDataState) -> dict[str, Any]:
 
 
 def route_after_exec(state: AskDataState) -> str:
-    if state.spec_error and state.retry_count < 2:
-        return "plan_query"
-    if not state.docs and state.retry_count < 1:
-        # Empty result with no error — give the planner one chance to
-        # broaden the query (e.g. partial name match).
-        return "plan_query"
+    if state.spec_error:
+        return "plan_query" if state.retry_count < 2 else "__end__"
     if not state.docs:
-        # Still empty after retry — proceed to synthesize so the answer
-        # explains the no-result outcome rather than failing silently.
         return "synthesize"
     return "fan_out_notes"
 
