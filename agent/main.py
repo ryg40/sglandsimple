@@ -50,9 +50,47 @@ def _next_id() -> int:
     return _rpc_id
 
 
+MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN") or ""
+_mcp_session_id: str | None = None
+_mcp_session_lock = None  # set in chat_completions when needed
+
+
+def _mcp_headers() -> dict[str, str]:
+    h: dict[str, str] = {"Content-Type": "application/json"}
+    if MCP_AUTH_TOKEN:
+        h["Authorization"] = f"Bearer {MCP_AUTH_TOKEN}"
+    if _mcp_session_id:
+        h["Mcp-Session-Id"] = _mcp_session_id
+    return h
+
+
+async def _mcp_initialize(client: httpx.AsyncClient) -> None:
+    """Open a session with the MCP server and stash the returned id."""
+    global _mcp_session_id
+    body = {
+        "jsonrpc": "2.0",
+        "id": _next_id(),
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}},
+    }
+    r = await client.post(MCP_URL, json=body, headers=_mcp_headers())
+    r.raise_for_status()
+    sid = r.headers.get("Mcp-Session-Id") or r.headers.get("mcp-session-id")
+    if sid:
+        _mcp_session_id = sid
+
+
 async def _mcp_call(client: httpx.AsyncClient, method: str, params: dict[str, Any] | None = None) -> Any:
+    global _mcp_session_id
+    if _mcp_session_id is None:
+        await _mcp_initialize(client)
     body = {"jsonrpc": "2.0", "id": _next_id(), "method": method, "params": params or {}}
-    r = await client.post(MCP_URL, json=body)
+    r = await client.post(MCP_URL, json=body, headers=_mcp_headers())
+    if r.status_code in (400, 404) and "session" in r.text.lower():
+        # Session expired or invalidated — re-initialize once.
+        _mcp_session_id = None
+        await _mcp_initialize(client)
+        r = await client.post(MCP_URL, json=body, headers=_mcp_headers())
     r.raise_for_status()
     data = r.json()
     if "error" in data:

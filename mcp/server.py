@@ -438,7 +438,83 @@ async def _handle_rpc(msg: dict[str, Any]) -> dict[str, Any] | None:
     return _error(rpc_id, -32601, f"Method not found: {method}")
 
 
+# ---------------------------------------------------------------------------
+# Session + auth + rate limit (stage 3)
+# ---------------------------------------------------------------------------
+
+import asyncio  # noqa: E402
+import time as _time  # noqa: E402
+import uuid  # noqa: E402
+
+MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN") or ""
+MCP_RATE_PER_MIN = int(os.environ.get("MCP_RATE_PER_MIN", "60"))
+SESSION_TTL = float(os.environ.get("MCP_SESSION_TTL", "1800"))  # 30 min idle
+SESSION_HEADER = "Mcp-Session-Id"
+
+
+class _Session:
+    __slots__ = ("id", "last_seen", "tokens", "last_refill")
+
+    def __init__(self, sid: str):
+        self.id = sid
+        self.last_seen = _time.time()
+        # Token-bucket: full to start, refills at MCP_RATE_PER_MIN per 60s.
+        self.tokens = float(MCP_RATE_PER_MIN)
+        self.last_refill = _time.time()
+
+
+_sessions: dict[str, _Session] = {}
+_sessions_lock = asyncio.Lock()
+
+
+async def _gc_sessions() -> None:
+    now = _time.time()
+    stale = [sid for sid, s in _sessions.items() if now - s.last_seen > SESSION_TTL]
+    for sid in stale:
+        _sessions.pop(sid, None)
+
+
+def _refill(sess: _Session) -> None:
+    now = _time.time()
+    elapsed = now - sess.last_refill
+    sess.tokens = min(float(MCP_RATE_PER_MIN), sess.tokens + (MCP_RATE_PER_MIN * elapsed / 60.0))
+    sess.last_refill = now
+
+
+def _auth_ok(request: Request) -> bool:
+    if not MCP_AUTH_TOKEN:
+        return True
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return False
+    return auth[len("Bearer "):].strip() == MCP_AUTH_TOKEN
+
+
+def _unauthorized() -> JSONResponse:
+    return JSONResponse(
+        _error(None, -32001, "Unauthorized"),
+        status_code=401,
+        headers={"WWW-Authenticate": 'Bearer realm="mcp"'},
+    )
+
+
+def _too_many() -> JSONResponse:
+    return JSONResponse(_error(None, -32002, "Rate limit exceeded"), status_code=429)
+
+
 app = FastAPI(title="sglandsimple MCP server")
+
+
+@app.on_event("startup")
+async def _startup_log() -> None:
+    if not MCP_AUTH_TOKEN:
+        print(
+            "[mcp] WARNING: MCP_AUTH_TOKEN is not set; /mcp is open. "
+            "Set MCP_AUTH_TOKEN in .env.local to require bearer auth.",
+            flush=True,
+        )
+    else:
+        print(f"[mcp] bearer auth enabled (token length {len(MCP_AUTH_TOKEN)})", flush=True)
 
 
 @app.get("/healthz")
@@ -448,33 +524,85 @@ async def healthz() -> dict[str, str]:
 
 @app.post("/mcp")
 async def mcp_post(request: Request) -> Response:
+    if not _auth_ok(request):
+        return _unauthorized()
+
     body = await request.body()
     try:
         msg = json.loads(body)
     except json.JSONDecodeError:
         return JSONResponse(_error(None, -32700, "Parse error"), status_code=400)
 
+    # initialize is the only method that may arrive without a session id —
+    # the response carries a freshly-minted one.
+    is_initialize = (
+        isinstance(msg, dict) and msg.get("method") == "initialize"
+    )
+    incoming_sid = request.headers.get(SESSION_HEADER)
+    response_headers: dict[str, str] = {}
+
+    async with _sessions_lock:
+        await _gc_sessions()
+        if is_initialize:
+            sid = incoming_sid or str(uuid.uuid4())
+            sess = _sessions.setdefault(sid, _Session(sid))
+            sess.last_seen = _time.time()
+            response_headers[SESSION_HEADER] = sid
+        else:
+            if not incoming_sid:
+                # Lenient mode: if no sessions exist yet, allow the first
+                # non-initialize request (legacy clients, our own agent).
+                if not _sessions:
+                    sid = str(uuid.uuid4())
+                    sess = _sessions.setdefault(sid, _Session(sid))
+                    response_headers[SESSION_HEADER] = sid
+                else:
+                    return JSONResponse(
+                        _error(None, -32003, f"Missing {SESSION_HEADER} header"),
+                        status_code=400,
+                    )
+            else:
+                sess = _sessions.get(incoming_sid)
+                if sess is None:
+                    return JSONResponse(
+                        _error(None, -32004, "Unknown or expired session"),
+                        status_code=400,
+                    )
+                sess.last_seen = _time.time()
+
+        # Rate limit: one token per request (batched JSON-RPC = one token).
+        _refill(sess)
+        if sess.tokens < 1.0:
+            return _too_many()
+        sess.tokens -= 1.0
+
     if isinstance(msg, list):
         responses = [r for r in [await _handle_rpc(m) for m in msg] if r is not None]
         if not responses:
-            return Response(status_code=202)
-        return JSONResponse(responses)
+            return Response(status_code=202, headers=response_headers)
+        return JSONResponse(responses, headers=response_headers)
 
     resp = await _handle_rpc(msg)
     if resp is None:
-        return Response(status_code=202)
-    return JSONResponse(resp)
+        return Response(status_code=202, headers=response_headers)
+    return JSONResponse(resp, headers=response_headers)
 
 
 @app.get("/mcp")
-async def mcp_get() -> StreamingResponse:
-    async def event_stream():
-        # Stateless server: keep the SSE connection open with periodic comments.
-        # Clients that don't need server-pushed messages can ignore this.
-        import asyncio
+async def mcp_get(request: Request) -> Response:
+    if not _auth_ok(request):
+        return _unauthorized()
 
+    async def event_stream():
+        # Stateless server: keep the SSE connection open with periodic
+        # comments. Clients that don't need server-pushed messages can
+        # ignore this. Stage 3.2 would route per-session responses here.
+        i = 0
         while True:
-            yield ": keepalive\n\n"
+            i += 1
+            yield f"id: {i}\nevent: ping\ndata: {{}}\n\n"
             await asyncio.sleep(15)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
