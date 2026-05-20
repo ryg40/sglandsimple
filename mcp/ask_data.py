@@ -19,6 +19,7 @@ Flow:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -44,6 +45,11 @@ import db as dbmod
 from llm import structured
 
 ASK_DATA_MAX_DOCS = int(os.environ.get("ASK_DATA_MAX_DOCS", "10"))
+# Cap concurrent LLM calls so a parallel fan-out doesn't overrun the
+# upstream's --max-num-seqs budget. Defaults to 2 to match a vLLM
+# configured for a small machine.
+LLM_CONCURRENCY = int(os.environ.get("LLM_CONCURRENCY", "2"))
+_LLM_SEM = asyncio.Semaphore(LLM_CONCURRENCY)
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +204,8 @@ async def interpret_doc(payload: dict[str, Any]) -> dict[str, Any]:
     doc = payload["doc"]
     question = payload["question"]
     user = f"Question: {question}\n\nDocument:\n{json.dumps(doc, default=str)}"
-    note = await structured(DocNote, NOTE_SYSTEM, user)
+    async with _LLM_SEM:
+        note = await structured(DocNote, NOTE_SYSTEM, user)
     # Ensure doc_id matches even if the model invented one.
     fixed = DocNote(doc_id=str(doc.get("_id", note.doc_id)), note=note.note)
     return {"per_doc_notes": [fixed]}
