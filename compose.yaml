@@ -92,6 +92,27 @@ services:
       timeout: 3s
       retries: 5
 
+  web:
+    build: ./web
+    container_name: sglandsimple-web
+    restart: unless-stopped
+    depends_on:
+      agent:
+        condition: service_healthy
+    environment:
+      AGENT_URL: http://agent:8000
+      DEFAULT_MODEL: ${UPSTREAM_MODEL:?UPSTREAM_MODEL is required (set in .env.local)}
+    ports:
+      - "${WEB_PORT:-5452}:3000"
+    networks:
+      - default
+      - proxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:3000/healthz',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 networks:
   proxy:
     external: true
