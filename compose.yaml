@@ -52,6 +52,10 @@ services:
       ASK_DATA_MAX_DOCS: ${ASK_DATA_MAX_DOCS:-10}
       ASK_DATA_LIMIT_CEILING: ${ASK_DATA_LIMIT_CEILING:-50}
       LANGGRAPH_CHECKPOINT_COLLECTION: ${LANGGRAPH_CHECKPOINT_COLLECTION:-lg_checkpoints}
+      # Stage 16 — HIL-gated Jira bulk edits. Apply only mutates the live Jira
+      # API when JIRA_WRITES_ENABLED=true; otherwise it returns a dry-run plan.
+      JIRA_WRITES_ENABLED: ${JIRA_WRITES_ENABLED:-false}
+      JIRA_STAGE_MAX_EDITS: ${JIRA_STAGE_MAX_EDITS:-100}
     volumes:
       # Stage 4: filesystem sandbox for deep-agent file & shell tools.
       # Created on the host (`./sandbox/`); owned by uid 1000 inside the

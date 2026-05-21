@@ -11,7 +11,7 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
 
 export function Topbar() {
   const { pathname } = useLocation();
-  const meta = TITLES[pathname] ?? { title: "sglandsimple", subtitle: "" };
+  const meta = TITLES[pathname] ?? { title: "LanGarland", subtitle: "" };
   return (
     <header className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b border-border bg-background/80 px-5 backdrop-blur">
       <div className="min-w-0">

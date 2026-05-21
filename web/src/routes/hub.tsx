@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { SCHEMA_COLUMNS, fallbackColumns } from "../components/hub-columns";
+import { JiraEditableGrid } from "../components/jira-editable-grid";
 
 export default function Hub() {
   const { data, isLoading, isError, error, refetch, isRefetching } = useConnectors();
@@ -209,26 +210,31 @@ export default function Hub() {
                             {sprint.goal && <span className="w-full text-[11px] text-muted-foreground italic">🎯 {sprint.goal}</span>}
                           </div>
                         )}
-                        <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead>
-                              <tr className="bg-slate-100 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold">
-                                {columns.map((c) => (
-                                  <th key={c.header} className={`p-3 ${c.align === "right" ? "text-right" : ""}`}>{c.header}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                              {rows.map((row: any, idx: number) => (
-                                <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50 transition-colors">
+                        {schema === "jira_sprint" ? (
+                          // Stage 16 — editable, HIL-gated bulk Jira editor.
+                          <JiraEditableGrid />
+                        ) : (
+                          <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-slate-100 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold">
                                   {columns.map((c) => (
-                                    <td key={c.header} className={`p-3 ${c.align === "right" ? "text-right" : ""}`}>{c.cell(row)}</td>
+                                    <th key={c.header} className={`p-3 ${c.align === "right" ? "text-right" : ""}`}>{c.header}</th>
                                   ))}
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                              </thead>
+                              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                                {rows.map((row: any, idx: number) => (
+                                  <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50 transition-colors">
+                                    {columns.map((c) => (
+                                      <td key={c.header} className={`p-3 ${c.align === "right" ? "text-right" : ""}`}>{c.cell(row)}</td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </>
                     );
                   })()}

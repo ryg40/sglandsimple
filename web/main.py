@@ -26,6 +26,11 @@ API surface (all JSON):
 - GET  /api/connectors         → MCP connector_health + connector_summary (per bubble)
 - GET  /api/connectors/{name}  → MCP connector_health + connector_summary (one)
 - GET  /api/topology           → MCP topology_graph (Architecture page)
+- GET  /api/jira/issues        → MCP jira_list_issues (sample + staged overlay)
+- POST /api/jira/stage         → MCP jira_stage_edits (HIL drafts)
+- POST /api/jira/validate      → MCP jira_validate_staged
+- POST /api/jira/revert        → MCP jira_revert_staged
+- POST /api/jira/apply         → MCP jira_apply_staged (dry-run unless JIRA_WRITES_ENABLED)
 """
 
 from __future__ import annotations
@@ -394,6 +399,54 @@ async def api_get_topology() -> JSONResponse:
         return JSONResponse(_extract_json_block(res))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch topology: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Stage 16 — HIL-gated Jira bulk editing (stage → validate → apply)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/jira/issues")
+async def api_jira_issues() -> JSONResponse:
+    res = await _mcp_tool("jira_list_issues", {})
+    if res.get("isError"):
+        return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
+    return JSONResponse(_extract_json_block(res))
+
+
+@app.post("/api/jira/stage")
+async def api_jira_stage(request: Request) -> JSONResponse:
+    body = await request.json()
+    res = await _mcp_tool("jira_stage_edits", {"edits": body.get("edits") or []})
+    payload = _extract_json_block(res)
+    return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
+
+
+@app.post("/api/jira/validate")
+async def api_jira_validate(request: Request) -> JSONResponse:
+    body = await request.json()
+    args = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    res = await _mcp_tool("jira_validate_staged", args)
+    payload = _extract_json_block(res)
+    return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
+
+
+@app.post("/api/jira/revert")
+async def api_jira_revert(request: Request) -> JSONResponse:
+    body = await request.json()
+    args = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    res = await _mcp_tool("jira_revert_staged", args)
+    payload = _extract_json_block(res)
+    return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
+
+
+@app.post("/api/jira/apply")
+async def api_jira_apply(request: Request) -> JSONResponse:
+    body = await request.json()
+    args = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    res = await _mcp_tool("jira_apply_staged", args)
+    payload = _extract_json_block(res)
+    return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
 
 
 @app.get("/api/reports/download")

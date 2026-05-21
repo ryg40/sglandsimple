@@ -54,9 +54,9 @@ export function AppSidebar({
     >
       <div className="flex h-14 items-center gap-2 px-3">
         <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold">
-          sg
+          LG
         </div>
-        {!collapsed && <span className="font-semibold tracking-tight">sglandsimple</span>}
+        {!collapsed && <span className="font-semibold tracking-tight">LanGarland</span>}
         <button
           onClick={onToggle}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}

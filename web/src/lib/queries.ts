@@ -21,6 +21,12 @@ import type {
   SuggestResult,
   TopologyGraph,
   WranglerSample,
+  JiraIssuesResponse,
+  JiraStageEdit,
+  JiraStageResult,
+  JiraValidateResult,
+  JiraRevertResult,
+  JiraApplyResult,
 } from "./types";
 
 export const keys = {
@@ -236,3 +242,46 @@ export function useTopology() {
   });
 }
 
+
+// ---- Stage 16 — HIL-gated Jira bulk editing -------------------------------
+
+export const jiraKeys = { issues: ["jira-issues"] as const };
+
+export function useJiraIssues() {
+  return useQuery({
+    queryKey: jiraKeys.issues,
+    queryFn: () => api.get<JiraIssuesResponse>("/api/jira/issues"),
+  });
+}
+
+export function useStageJiraEdits() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (edits: JiraStageEdit[]) => api.post<JiraStageResult>("/api/jira/stage", { edits }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: jiraKeys.issues }),
+  });
+}
+
+export function useValidateJira() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (issue_keys?: string[]) => api.post<JiraValidateResult>("/api/jira/validate", { issue_keys }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: jiraKeys.issues }),
+  });
+}
+
+export function useRevertJira() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (issue_keys?: string[]) => api.post<JiraRevertResult>("/api/jira/revert", { issue_keys }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: jiraKeys.issues }),
+  });
+}
+
+export function useApplyJira() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (issue_keys?: string[]) => api.post<JiraApplyResult>("/api/jira/apply", { issue_keys }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: jiraKeys.issues }),
+  });
+}

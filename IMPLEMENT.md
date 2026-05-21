@@ -2127,3 +2127,120 @@ Investigate and address (in priority order):
 - [ ] **S15.askdata.1 — Make Ask Data return within budget (no more timeouts)**
   - Files: `mcp/ask_data.py` (graph deadline, fan-out tuning, partial-result fallback), `web/main.py` (`/api/ask_data` timeout + error passthrough), `web/src/routes/chat.tsx` (error/empty-state surfacing), env defaults (`ASK_DATA_MAX_DOCS`, `LLM_CONCURRENCY`, timeouts) in `.env.example`/compose.
   - Done when: an Ask Data question over a seeded collection returns a useful answer (or a clear partial/error) within the request budget — never a silent empty response; verified with `scripts/smoke_ask_data.sh` against the running stack. Capture the root-cause finding (which timeout fired) in the commit/PR.
+
+---
+
+## Stage 16 — Editable Jira table with HIL-gated bulk apply
+
+> **Status: COMPLETE & verified live.** All `S16.*` tasks landed; `scripts/smoke_jira_edit.sh` is green against the running stack (stage→validate→apply(dry-run)→revert; good=validated, bad=invalid; apply produced a 1-call dry-run plan and refused the unvalidated row; `audit_log` grew by 5 `source=jira_*` rows; no live write). The Hub Jira table (`/hub`) is now an inline-editable grid with Save/Validate/Revert/Apply. The connector is wired to the **hosted Atlassian MCP server** (`https://mcp.atlassian.com/v1/mcp/authv2`, Bearer `JIRA_TOKEN`, stored in gitignored `.env.local`) — `initialize`/`tools/list` succeed live; the apply path discovers an upstream edit tool and only fires when `JIRA_WRITES_ENABLED=true` (default `false` → dry-run). Note: with the current token scope the hosted server advertises only Teamwork Graph tools, so live issue-edit stays gated until a Jira-write tool is exposed; the dry-run plan + HIL flow are fully functional regardless. Also rebranded the SPA to **LanGarland** (sidebar, topbar, page title).
+
+> Standalone. Makes the Hub's Jira sample table directly editable for **bulk** changes to issues (status, assignee, priority, story points, summary, due date), with **Save / Revert / Validate** controls. The defining constraint: **no edit ever reaches the real Jira API until a human has staged it, validated it, and explicitly applied it** — and even then only when `JIRA_WRITES_ENABLED=true`. Default posture is dry-run, matching the existing connector philosophy.
+
+**Goal.** A compliance lead opens the Jira bubble in the Hub, edits several cells inline (bulk), clicks **Save** to persist the edits as *staged changes* (human-in-the-loop drafts, not yet live), clicks **Validate** to run server-side rules over the staged set, then clicks **Apply** to push validated changes — which, in prod-disabled mode, produces an auditable dry-run plan rather than mutating Jira. **Revert** discards staged changes for an issue (or all).
+
+### 16a. Why a staging store (not direct writes)
+
+Editing the in-memory `_SAMPLE` would be lost on restart and would conflate "what's in Jira" with "what a human proposes." Instead, edits land in a Mongo `jira_staged_changes` collection as field-level diffs keyed by issue. The grid renders **current Jira state overlaid with staged edits** so pending changes are visible (dirty/validated/applied badges). This reuses the Stage-6 audit philosophy: every staging mutation and every apply is written to `audit_log` with a `source="jira_*"` tag.
+
+### 16b. Data model — `jira_staged_changes`
+
+```
+{
+  _id,                 // "jira-stage-<issue_key>"
+  issue_key,           // e.g. "RDS-LOG-2"
+  changes: { field: {from, to}, ... },   // field-level diff vs. current Jira state
+  status,              // "staged" | "validated" | "invalid" | "applied" | "reverted"
+  validation: { ok, errors: [{field, message}] }?,
+  staged_by, staged_at, validated_at?, applied_at?,
+  apply_mode?          // "dry_run" | "live"  (set on apply)
+}
+```
+
+Editable fields (allowlisted): `status`, `assignee`, `priority`, `story_points`, `summary`, `duedate`. Anything else is rejected at validate time.
+
+### 16c. MCP tools (on the Jira connector + a small staging module)
+
+- `jira_list_issues` — returns current issues (the connector sample, later the live search) **merged** with any staged edits, so the grid shows `{ ...issue, _staged: {field: to}, _stage_status }`.
+- `jira_stage_edits(edits: [{issue_key, changes}])` — upsert staged diffs; resets status to `staged`; audited (`source="jira_stage"`). Bulk: accepts many issues in one call. Capped by `JIRA_STAGE_MAX_EDITS` (default 100).
+- `jira_validate_staged(issue_keys?)` — run rules over staged set: fields in allowlist; `status` ∈ allowed transition targets; `priority` ∈ enum; `story_points` is a non-negative number; `duedate` parseable ISO; `summary` non-empty. Marks each `validated` or `invalid` with per-field errors. Audited (`source="jira_validate"`).
+- `jira_revert_staged(issue_keys?)` — delete staged docs (all if no keys); marks `reverted` in audit. Audited (`source="jira_revert"`).
+- `jira_apply_staged(issue_keys?)` — applies only **validated** changes. If `JIRA_WRITES_ENABLED=false` (default), produces a **dry-run plan** (the exact `jira_update_issue` calls it *would* make) and records `apply_mode="dry_run"` without calling Jira; if true, calls the connector's live update path. Refuses to apply anything not in `validated` state. Audited (`source="jira_apply"`).
+
+### 16d. Web routes (proxy MCP)
+
+| Method | Path | Forwards to |
+| --- | --- | --- |
+| GET | `/api/jira/issues` | `jira_list_issues` |
+| POST | `/api/jira/stage` | `jira_stage_edits` |
+| POST | `/api/jira/validate` | `jira_validate_staged` |
+| POST | `/api/jira/revert` | `jira_revert_staged` |
+| POST | `/api/jira/apply` | `jira_apply_staged` |
+
+### 16e. Frontend (Hub Jira table → editable grid)
+
+- The Jira branch of the Hub detail table (`hub.tsx` / `hub-columns.tsx`) becomes an **editable grid** for `schema === "jira_sprint"`: editable cells for the allowlisted fields (select for `status`/`priority`/`assignee`, number for points, text for summary, date for duedate), dirty-cell highlight, per-issue stage-status badge (staged / validated / invalid / applied).
+- A toolbar above the grid: **Save** (stage all dirty cells in one bulk call), **Validate** (run rules, show pass/fail chips + inline error messages), **Apply** (gated; shows a confirm dialog that states dry-run vs live based on `JIRA_WRITES_ENABLED`, and lists the staged changes for HIL review before committing), **Revert** (discard staged changes).
+- Loading/empty/error + optimistic toasts per Stage-8 robustness. Apply is never one-click destructive: it always surfaces the staged diff for human confirmation first.
+
+### 16f. Safety rails
+
+- Edits are inert until **Save** (staging). Staging never touches Jira.
+- **Apply** only ever acts on `validated` rows and is gated by `JIRA_WRITES_ENABLED` (default `false` → dry-run plan only).
+- Field allowlist enforced server-side at stage *and* validate time; the frontend allowlist is convenience only.
+- Every stage/validate/revert/apply writes an `audit_log` row.
+- `JIRA_STAGE_MAX_EDITS` caps a single bulk stage call.
+
+### 16g. Env surface (additions)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `JIRA_WRITES_ENABLED` | `false` | no | 16 | When `false`, `jira_apply_staged` produces a dry-run plan and never calls Jira |
+| `JIRA_STAGE_MAX_EDITS` | `100` | no | 16 | Hard cap on issues per `jira_stage_edits` call |
+
+### 16h. Verification (intent)
+
+1. `/hub` Jira bubble shows the editable grid; editing cells across multiple rows marks them dirty.
+2. **Save** stages all dirty edits in one call; the grid shows a "staged" badge per edited issue; reload preserves staged state (Mongo-backed).
+3. **Validate** flags a bad edit (e.g. `priority="Wizard"`, empty summary, negative points) as `invalid` with a per-field message; a good edit becomes `validated`.
+4. **Apply** with `JIRA_WRITES_ENABLED=false` returns a dry-run plan listing the `jira_update_issue` calls it would make, applies nothing to Jira, and records `apply_mode="dry_run"` + an `audit_log` row.
+5. **Apply** refuses to act on a row that isn't `validated`.
+6. **Revert** clears staged changes for the selected issues (or all) and the grid returns to current Jira state.
+7. `scripts/smoke_jira_edit.sh` passes (stage → validate → apply dry-run → revert round-trip, asserting `audit_log` growth and that no live write occurred).
+
+---
+
+# Task checklist — Stage 16
+
+### S16.env — Env surface
+
+- [x] **S16.env.1 — Add Stage-16 env vars**
+  - Files: `.env.example`, `compose.yaml` (pass `JIRA_WRITES_ENABLED`/`JIRA_STAGE_MAX_EDITS` into `mcp`), IMPLEMENT.md (Env surface table).
+  - Done when: `JIRA_WRITES_ENABLED` (default `false`) and `JIRA_STAGE_MAX_EDITS` (default `100`) present and wired into the mcp container.
+
+### S16.mcp — Staging store + tools
+
+- [x] **S16.mcp.1 — `jira_staging` module + `jira_staged_changes` collection**
+  - Files: `mcp/jira_staging.py` (new), `mcp/db.py` (register collection if needed for audit).
+  - Done when: stage/validate/revert/apply helpers exist; staging mutations and apply write `audit_log` rows with `source="jira_*"`; field allowlist + validation rules enforced server-side; apply gated by `JIRA_WRITES_ENABLED` (dry-run plan when false).
+
+- [x] **S16.mcp.2 — Register the five Jira tools**
+  - Files: `mcp/connectors/jira.py` (add `jira_list_issues`/`jira_stage_edits`/`jira_validate_staged`/`jira_revert_staged`/`jira_apply_staged` + a live `jira_update_issue` stub used only when writes enabled), `mcp/server.py` (dispatch wiring if not auto-routed via connector).
+  - Done when: `tools/list` shows the new tools; `jira_list_issues` merges sample + staged state.
+
+### S16.web — Web proxies
+
+- [x] **S16.web.1 — `/api/jira/*` proxy routes + typed hooks**
+  - Files: `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
+  - Done when: issues/stage/validate/revert/apply routes proxy the MCP tools; typed `useJiraIssues` + stage/validate/revert/apply mutation hooks exist (optimistic where sensible).
+
+### S16.web — Editable grid
+
+- [x] **S16.web.2 — Editable Jira grid + Save/Revert/Validate/Apply toolbar**
+  - Files: `web/src/routes/hub.tsx`, `web/src/components/hub-columns.tsx` (or a new `jira-editable-grid.tsx`).
+  - Done when: the `jira_sprint` table is inline-editable for allowlisted fields with dirty/staged/validated/invalid badges; the toolbar wires Save→stage, Validate→validate, Revert→revert, Apply→gated confirm dialog showing the staged diff (dry-run vs live by `JIRA_WRITES_ENABLED`); robustness states + toasts per Stage-8.
+
+### S16.verify — End-to-end
+
+- [x] **S16.verify.1 — `scripts/smoke_jira_edit.sh`**
+  - Files: `scripts/smoke_jira_edit.sh` (new).
+  - Done when: stage → validate → apply (dry-run) → revert round-trips against the running stack; asserts `audit_log` grew, apply returned a dry-run plan with `apply_mode="dry_run"`, and an unvalidated row is refused.

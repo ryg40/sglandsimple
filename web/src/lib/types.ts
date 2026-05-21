@@ -222,3 +222,56 @@ export interface TopologyGraph {
   concerns: TopologyConcern[];
   zones: TopologyZone[];
 }
+
+// ---- Stage 16 — HIL-gated Jira bulk editing ------------------------------
+export interface JiraIssueRow {
+  key: string;
+  summary?: string;
+  status?: string;
+  assignee?: string;
+  priority?: string;
+  story_points?: number | null;
+  duedate?: string | null;
+  epic_key?: string;
+  epic_name?: string;
+  updated?: string;
+  flagged?: boolean;
+  // staging overlay (added by jira_list_issues)
+  _staged?: Record<string, unknown>;
+  _stage_status?: "staged" | "validated" | "invalid" | "applied" | "reverted" | null;
+  _validation?: { ok: boolean; errors: { field: string; message: string }[] } | null;
+  [k: string]: unknown;
+}
+export interface JiraIssuesResponse {
+  issues: JiraIssueRow[];
+  staged_count: number;
+}
+export interface JiraStageEdit {
+  issue_key: string;
+  changes: Record<string, unknown>;
+}
+export interface JiraStageResult {
+  staged: string[];
+  rejected: { issue_key: string; reason: string }[];
+  writes_enabled: boolean;
+}
+export interface JiraValidateResult {
+  results: { issue_key: string; status: string; validation: { ok: boolean; errors: { field: string; message: string }[] } }[];
+  validated: number;
+}
+export interface JiraRevertResult {
+  reverted: string[];
+}
+export interface JiraApplyPlanItem {
+  tool: string;
+  issue_key: string;
+  fields: Record<string, unknown>;
+}
+export interface JiraApplyResult {
+  apply_mode: "dry_run" | "live";
+  writes_enabled: boolean;
+  applied: string[];
+  skipped: { issue_key: string; reason: string }[];
+  plan: JiraApplyPlanItem[];
+  note: string;
+}
