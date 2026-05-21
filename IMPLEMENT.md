@@ -1974,3 +1974,116 @@ Because the design target is a **dark control-room** look, treat **dark mode as 
   - Files: (manual + `scripts/` if useful).
   - Done when: the 13e intent checks pass by inspection in both themes; AA contrast spot-checks pass; build is offline-safe.
   - Depends on: S13.tokens.1, S13.font.1.
+
+---
+
+## Stage 14 — Docs Wiki library (in-app MkDocs/Docusaurus-style) + Confluence sync
+
+> **Pick-up point.** Docs today are scattered Markdown at the repo root (`README.md`, `IMPLEMENT.md`, `CLAUDE.md`, `PLANTMUX.md`, `progress.md`, `WAVE1–6.md`, `docs/*.md`) with no index, lifecycle, or audience control. Stage 14 stands up a **documentation library inside the app** — an MkDocs/Docusaurus-style wiki — as the single home for **100% of our docs**. Each doc carries lifecycle/visibility **flags** and **tags**; **public** docs sync to **Confluence** mirroring the same tree; and an **agent workflow** keeps the two in sync and proposes improvements to the docs themselves. Builds on the Stage-9 Confluence connector and the Stage-6 audited write-layer. Start at `S14.model.1`.
+
+**Goal:** A `/docs` section in the SPA renders a navigable, searchable wiki (left tree, article view, edit). Every document lives in MongoDB as the system of record with front-matter-style metadata. An author flags a doc **public** and it appears in Confluence under the same path; flags like **needs-attention** / **archivable** drive review queues; an agent workflow reconciles MongoDB ↔ Confluence and raises suggested edits.
+
+### 14a. Scope of "100% of our docs"
+
+- **Migration**: the existing root/`docs/` Markdown files are imported as the initial corpus (one wiki doc per file, path-mapped, history preserved as v1). New docs are authored in the wiki; the repo Markdown becomes a generated export (or is retired) so there's one source of truth.
+- **Coverage rule**: going forward, design notes / runbooks / specs land in the wiki, not as ad-hoc root `.md` files. `IMPLEMENT.md` may remain the engineering backlog, but its narrative sections become wiki docs over time.
+
+### 14b. Data model (MongoDB — system of record)
+
+New collections (audited via the Stage-6 write-layer, `source="docs_*"`):
+
+- `docs` — `{_id, slug, path (e.g. "runbooks/rds-audit-logging"), title, body_md, tags[], status, visibility, owner, version, confluence_page_id?, last_reviewed_at, created_at, updated_at}`.
+- `doc_revisions` — append-only history `{_id, doc_id, version, body_md, author, created_at, note}`.
+- `doc_sync_log` — Confluence reconciliation events `{_id, doc_id, direction (push|pull), confluence_page_id, action (create|update|skip|conflict), at, detail}`.
+
+**Flags / lifecycle** (the requested set), as two orthogonal fields:
+
+- `visibility`: `internal` (default) | `public` (eligible for Confluence sync).
+- `status`: `up_to_date` | `needs_attention` | `archivable` | `archived`.
+- `tags[]`: free-form topical tags (e.g. `rds`, `sox-404`, `runbook`, `onboarding`) for filtering/search and to drive Confluence labels.
+
+Lifecycle rules (computed/assisted, not just manual): `needs_attention` auto-set when `now - last_reviewed_at > DOCS_REVIEW_DAYS`; `archivable` suggested when a doc is stale **and** unreferenced; `archived` hides from default views but is retained. Transitions are audited.
+
+### 14c. Architecture (server-side first, web proxies)
+
+Keep the established shape — logic in `mcp/`, web proxies, agent tool-loop can drive it:
+
+- `mcp/docs.py` — CRUD + search over `docs`/`doc_revisions` (Markdown stored as-is; render client-side). Tools: `docs_list` (tree + filters by tag/status/visibility), `docs_get`, `docs_upsert` (writes a revision), `docs_set_flags` (visibility/status/tags), `docs_search` (text). All writes go through the audited write-layer.
+- `mcp/docs_sync.py` — Confluence reconciliation built on the **Stage-9 Confluence connector** (`confluence_search_pages` / `confluence_create_page`, extended with an update path). Maps wiki `path` → Confluence space + page tree; pushes **public** docs; records every action to `doc_sync_log`. Gated by the existing `WORKFLOW_WRITES_ENABLED` + `CONN_CONFLUENCE_ENABLED` flags (dry-run by default).
+- `web/main.py` — `/api/docs*` proxies (`GET /api/docs/tree`, `GET /api/docs/{slug}`, `POST /api/docs`, `POST /api/docs/{slug}/flags`, `GET /api/docs/search`, `POST /api/docs/sync`).
+- Web SPA — a `/docs` route: left nav tree (grouped by path), article view (reuse the existing `react-markdown` + `remark-gfm` + `rehype-highlight` `Markdown` component), an editor (textarea + preview), and per-doc flag/tag controls. Search box. Status/visibility shown as badges; `needs_attention`/`archivable` surfaced in a review queue and (optionally) feed the Stage-11 attention panel + Stage-12 topology concerns.
+
+### 14d. Confluence sync (same structure)
+
+- **Mapping**: wiki `path` segments → Confluence ancestor pages (create intermediate pages as needed) so the Confluence tree mirrors the wiki tree exactly; `tags[]` → Confluence labels; `title` → page title; `body_md` → storage format (Markdown→Confluence storage conversion, server-side).
+- **Direction**: primary push (wiki → Confluence) for `public` docs. Detect drift on pull (Confluence newer) and mark `needs_attention` rather than overwriting — surface as a conflict in `doc_sync_log`.
+- **Idempotency**: store `confluence_page_id` on the doc; sync updates that page in place.
+- **Safety**: no live writes unless `CONN_CONFLUENCE_ENABLED` and `WORKFLOW_WRITES_ENABLED`; otherwise dry-run producing the would-create/update plan.
+
+### 14e. Agent workflow (sync + suggestions)
+
+A LangGraph workflow (reuse the Stage-9 orchestrator pattern + checkpointer), exposed as an MCP tool `docs_agent_run` and a `/api/docs/agent` proxy:
+
+1. **Reconcile** — diff wiki ↔ Confluence for `public` docs; push/queue per 14d; log to `doc_sync_log`.
+2. **Triage** — flag stale/unreferenced docs (`needs_attention`/`archivable`) with reasons.
+3. **Suggest** — for `needs_attention` docs, the agent drafts improvement suggestions (clarity, broken links, outdated commands/paths, missing sections) as a **proposed revision** (never auto-applied) plus a short rationale; a human approves/edits before it becomes a new `doc_revisions` entry. Human-in-the-loop interrupt at the apply gate.
+- All agent edits are proposals; applying one is an audited `docs_upsert`.
+
+### 14f. Env surface (additions — defaulted, sync off by default)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `DOCS_REVIEW_DAYS` | `90` | no | 14 | Age after which a doc auto-flags `needs_attention` |
+| `DOCS_CONFLUENCE_SPACE` | `COMP` | no | 14 | Confluence space key public docs sync into |
+| `DOCS_SYNC_ENABLED` | `false` | no | 14 | Master gate for Confluence push (also needs Stage-9 flags) |
+| `DOCS_DEFAULT_VISIBILITY` | `internal` | no | 14 | New-doc default visibility |
+
+### 14g. Verification (intent)
+
+1. `/docs` renders a tree of the migrated corpus; clicking a doc shows rendered Markdown; search returns matches by title/body/tag.
+2. Editing a doc writes a `doc_revisions` entry (version increments) and an `audit_log` row (`source="docs_upsert"`); history is viewable.
+3. Setting `visibility=public` + running sync (mocks/dry-run) yields a `doc_sync_log` plan that mirrors the wiki path into `DOCS_CONFLUENCE_SPACE`; enabling the Stage-9 flags performs the create/update and stores `confluence_page_id`.
+4. A doc past `DOCS_REVIEW_DAYS` auto-shows `needs_attention`; an archived doc is hidden from default views but retrievable.
+5. `docs_agent_run` (dry-run) reconciles, triages, and emits suggested revisions as proposals with rationales — none auto-applied; approving one creates a new revision (audited).
+6. Every doc write is audited; sync respects `DOCS_SYNC_ENABLED` + `CONN_CONFLUENCE_ENABLED` + `WORKFLOW_WRITES_ENABLED` (no outbound calls when off).
+
+---
+
+# Task checklist — Stage 14
+
+- [ ] **S14.model.1 — Docs collections + audited writes**
+  - Files: `mongo-seed/` (new seed for `docs`/`doc_revisions`/`doc_sync_log`), `mcp/db.py` (collection registration if needed).
+  - Done when: the three collections exist with the 14b shape; writes route through the Stage-6 audited write-layer (`source="docs_*"`).
+
+- [ ] **S14.api.1 — `mcp/docs.py` CRUD + search tools**
+  - Files: `mcp/docs.py` (new), `mcp/server.py` (register).
+  - Done when: `docs_list`/`docs_get`/`docs_upsert`/`docs_set_flags`/`docs_search` work; `docs_upsert` writes a `doc_revisions` entry + bumps version; flags validated against the 14b enums.
+
+- [ ] **S14.migrate.1 — Import existing Markdown corpus**
+  - Files: `scripts/import_docs.py` (new).
+  - Done when: root/`docs/` `.md` files are imported as v1 wiki docs with path-mapped slugs and sensible default tags/status; idempotent re-run.
+
+- [ ] **S14.web.1 — `/api/docs*` proxies + `useDocs*` hooks**
+  - Files: `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
+  - Done when: tree/get/upsert/flags/search/sync routes proxy the MCP tools; typed hooks exist.
+  - Depends on: S14.api.1.
+
+- [ ] **S14.web.2 — Docs Wiki SPA route**
+  - Files: `web/src/routes/docs.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`.
+  - Done when: `/docs` renders nav tree + Markdown article (reusing the `Markdown` component) + editor with preview + flag/tag controls + search; status/visibility badges; a `needs_attention`/`archivable` review queue. Loading/empty/error per Stage-8.
+  - Depends on: S14.web.1.
+
+- [ ] **S14.sync.1 — Confluence reconciliation (same tree)**
+  - Files: `mcp/docs_sync.py` (new), `mcp/connectors/confluence.py` (add update path), `mcp/server.py`.
+  - Done when: public docs map path→Confluence ancestors+page; push creates/updates idempotently (stores `confluence_page_id`), tags→labels; drift detection marks `needs_attention`; all actions logged to `doc_sync_log`; gated dry-run by default.
+  - Depends on: S14.model.1, S9 Confluence connector.
+
+- [ ] **S14.agent.1 — Docs agent workflow (sync + suggestions)**
+  - Files: `mcp/workflow/` (new graph or node set), `mcp/server.py` (`docs_agent_run`), `web/main.py` (`/api/docs/agent`).
+  - Done when: reconcile→triage→suggest runs (LangGraph + checkpointer); suggestions are human-in-the-loop proposals (never auto-applied); approving one is an audited `docs_upsert`.
+  - Depends on: S14.api.1, S14.sync.1.
+
+- [ ] **S14.verify.1 — Smoke + intent checks**
+  - Files: `scripts/smoke_docs.sh` (new).
+  - Done when: asserts CRUD+revision+audit, flag transitions, dry-run sync plan mirrors the tree, and `docs_agent_run` emits proposals without applying; the 14g checks pass by inspection.
+  - Depends on: S14.web.2, S14.sync.1, S14.agent.1.
