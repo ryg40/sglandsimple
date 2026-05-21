@@ -129,4 +129,117 @@ Both services attach to the external Docker network `proxy` so they can reach th
 ```
 agent/   FastAPI service — /v1/chat/completions, MCP-aware tool loop
 mcp/     FastAPI MCP server — JSON-RPC at /mcp, tools backed by the upstream LLM
+web/     React + shadcn/ui SPA (admin dashboard) served by FastAPI
 ```
+
+## Compliance workflow hub (Stage 9)
+
+The dashboard's purpose is to let a person open one screen and **relate every
+piece of a database-audit-logging compliance workflow** — the originating audit
+finding, the Jira epic/stories, the coding work and PR, the Confluence docs, and
+the real DB audit logs that prove the control — across many connected systems,
+and export it all as a layman-friendly PDF/PPT artifact.
+
+> Full spec, data model, and task breakdown live in `IMPLEMENT.md` (Stage 9).
+> The diagrams below are the target design.
+
+### Dashboard mockup
+
+Top row is a grid of **connection "bubbles"** (one per integrated system, each
+showing health + a summary metric). Below it, a **workflow lane** walks a
+selected audit finding through every step, and a **"relate everything"** panel
+pulls all associated records together.
+
+```
+┌──────────────┬───────────────────────────────────────────────────────────────────────┐
+│  sglandsimple│  Overview · Compliance Workflow Hub                 [⌘K search]  [◐ theme]│
+│              ├───────────────────────────────────────────────────────────────────────┤
+│ ▸ Overview   │  CONNECTIONS                                                            │
+│              │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐                        │
+│ TOOLS        │  │● Jira   │ │● Conflu.│ │● GitHub │ │● AWS    │   ● healthy            │
+│ ▸ Chat       │  │ 4 epics │ │ 12 pages│ │ 3 PRs   │ │ RDS x18 │   ◍ degraded          │
+│ ▸ Sheet      │  │ 2m ago  │ │ 5m ago  │ │ 1m ago  │ │ 9m ago  │   ○ not connected     │
+│ ▸ Wrangler   │  └─────────┘ └─────────┘ └─────────┘ └─────────┘   ◌ placeholder        │
+│ ▸ Workflow   │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐                        │
+│              │  │○ Service│ │● Snowfl.│ │● MongoDB│ │◌ Archer │                        │
+│              │  │  Now    │ │ logs:9M │ │ system  │ │ (RIMS)  │                        │
+│ ┌──────────┐ │  │  CR/CHG │ │ 3s ago  │ │ of rec. │ │ mock    │                        │
+│ │● Connected│ │  └─────────┘ └─────────┘ └─────────┘ └─────────┘                        │
+│ │ 87 records│ ├───────────────────────────────────────────────────────────────────────┤
+│ └──────────┘ │  WORKFLOW · finding F-2041 "RDS audit logging"   epic RDS-LOG  [PDF][PPT]│
+│              │  ①Finding→②Epic→③Jira ticket→④Branch/Agent→⑤PR+CI→⑥Confluence→⑦Logs    │
+│              │  ●──────────●──────────●──────────●──────────◍──────────○──────────○     │
+│              │  ┌─ relate everything ────────────────────────────────────────────────┐ │
+│              │  │ finding F-2041  ·  epic RDS-LOG  ·  story RDS-LOG-7  ·  PR #128 ◍CI │ │
+│              │  │ reviewers: copilot + 2  ·  Confluence: Epic Log §RDS  ·  12 log     │ │
+│              │  │ samples (login / sql_error / sql_query) from the Mongo warehouse    │ │
+│              │  └────────────────────────────────────────────────────────────────────┘ │
+└──────────────┴───────────────────────────────────────────────────────────────────────┘
+```
+
+### Data flow — apps · MCPs · agents
+
+How the pieces interconnect. Everything external is reached **server-side** from
+the MCP layer (as an MCP client, a REST adapter, or SQL `tool_calls`); the
+browser only talks to the web service, and the agent drives the same tools.
+
+```mermaid
+flowchart LR
+  user([User / browser])
+  subgraph edge[Edge]
+    caddy[Caddy reverse proxy]
+  end
+  user --> caddy
+
+  subgraph stack[sglandsimple stack]
+    web[web SPA + FastAPI proxy]
+    agent[agent · /v1/chat/completions · tool loop]
+    mcp[mcp · JSON-RPC tools + connector registry]
+    mongo[(MongoDB · system of record + log warehouse)]
+    orch[workflow orchestrator · LangGraph + approvals]
+  end
+
+  caddy --> web
+  caddy --> agent
+  web -->|/api proxy| agent
+  web -->|/api proxy| mcp
+  agent -->|tools/list · tools/call| mcp
+  agent --> llm[(Upstream LLM · SGLang/vLLM)]
+  mcp --> llm
+  mcp <--> mongo
+  mcp --> orch
+  orch <--> mongo
+
+  subgraph conns[Connectors  · enabled per-flag, mock-first]
+    jira[[Atlassian Jira · MCP]]
+    conf[[Confluence · MCP]]
+    gh[[GitHub · MCP]]
+    aws[[AWS · MCP]]
+    snow[[ServiceNow · REST]]
+    sf[[Snowflake · SQL tool_calls]]
+    archer[[Archer RIMS · placeholder]]
+  end
+
+  mcp <--> jira
+  mcp <--> conf
+  mcp <--> gh
+  mcp <--> aws
+  mcp <--> snow
+  mcp <--> sf
+  mcp <--> archer
+
+  subgraph report[Reporting]
+    pdf[report_pdf / report_ppt]
+  end
+  orch --> pdf
+  mcp --> pdf
+  pdf --> user
+
+  coding[Coding agent] -->|branch + PR for Jira key| gh
+  orch -->|create ticket| jira
+  orch -->|epic log| conf
+  archer -.->|audit findings| orch
+  snow -.->|findings / change records| orch
+  sf -.->|cloud DB audit logs| mongo
+```
+
