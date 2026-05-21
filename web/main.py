@@ -1,12 +1,15 @@
-"""Minimal web frontend for the sglandsimple stack.
+"""Web service for the sglandsimple stack.
 
-Serves a chat page and a spreadsheet ("/sheet") page and proxies the
-needed endpoints to the agent or directly to MCP so the browser never
-holds upstream credentials:
+Two responsibilities:
 
-- GET  /                       → templates/index.html (chat)
-- GET  /sheet                  → templates/sheet.html (Airtable/NocoDB-style grid)
-- POST /api/chat               → forward JSON body to ${AGENT_URL}/v1/chat/completions
+1. Serve the built React + shadcn/ui SPA (Vite output in ./dist): the
+   /assets mount plus an index.html SPA fallback for client-side routes
+   (/, /chat, /sheet, /wrangler).
+2. Proxy the browser's /api/* calls to the agent or directly to MCP so
+   the browser never holds upstream credentials.
+
+API surface (all JSON):
+- POST /api/chat               → ${AGENT_URL}/v1/chat/completions
 - POST /api/ask_data           → ask_data tool through the agent's tool loop
 - GET  /api/sheet/collections  → MCP mongo_list_collections
 - GET  /api/sheet/rows         → MCP sheet_get_rows
@@ -14,31 +17,35 @@ holds upstream credentials:
 - POST /api/sheet/row          → MCP sheet_insert_row
 - DELETE /api/sheet/row        → MCP sheet_delete_row
 - POST /api/sheet/nl           → MCP sheet_apply_nl
-
-No build step. Markdown rendering on the chat page happens in the
-browser via `marked` and `highlight.js` from a CDN.
+- GET  /api/wrangler/sample    → MCP wrangler_sample
+- POST /api/wrangler/run       → MCP wrangler_run_prefix
+- POST /api/wrangler/save      → MCP wrangler_save_pipeline
+- GET  /api/wrangler/pipelines → MCP wrangler_list_pipelines
+- POST /api/wrangler/suggest   → MCP wrangler_suggest
+- GET  /api/audit/recent       → MCP audit_recent
 """
 
 from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 AGENT_URL = os.environ.get("AGENT_URL", "http://agent:8000").rstrip("/")
 MCP_URL = os.environ.get("MCP_URL", "http://mcp:8080/mcp")
 MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN") or ""
 REQUEST_TIMEOUT = float(os.environ.get("REQUEST_TIMEOUT", "300"))
 
+# Built SPA (Vite output). Mounted at the end so /api/* routes win.
+DIST_DIR = Path(os.environ.get("WEB_DIST_DIR", "dist"))
+
 app = FastAPI(title="sglandsimple web")
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +131,6 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/")
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
 async def _proxy_chat(body: dict[str, Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         r = await client.post(f"{AGENT_URL}/v1/chat/completions", json=body)
@@ -143,11 +145,6 @@ async def api_chat(request: Request) -> JSONResponse:
     body = await request.json()
     data = await _proxy_chat(body)
     return JSONResponse(data)
-
-
-@app.get("/sheet")
-async def sheet(request: Request):
-    return templates.TemplateResponse("sheet.html", {"request": request})
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +235,6 @@ async def api_sheet_nl(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/wrangler")
-async def wrangler(request: Request):
-    return templates.TemplateResponse("wrangler.html", {"request": request})
-
-
 @app.get("/api/wrangler/sample")
 async def api_wrangler_sample(collection: str, limit: int | None = None) -> JSONResponse:
     args: dict[str, Any] = {"collection": collection}
@@ -304,6 +296,22 @@ async def api_wrangler_suggest(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
+# ---------------------------------------------------------------------------
+# Stage 8 — admin Overview feeds
+# ---------------------------------------------------------------------------
+
+
+AUDIT_RECENT_LIMIT = int(os.environ.get("AUDIT_RECENT_LIMIT", "25"))
+
+
+@app.get("/api/audit/recent")
+async def api_audit_recent(limit: int | None = None) -> JSONResponse:
+    result = await _mcp_tool("audit_recent", {"limit": int(limit or AUDIT_RECENT_LIMIT)})
+    if result.get("isError"):
+        return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
+    return JSONResponse(_extract_json_block(result))
+
+
 @app.post("/api/ask_data")
 async def api_ask_data(request: Request) -> JSONResponse:
     """Convenience: force the agent to call ask_data with the user's question.
@@ -331,3 +339,25 @@ async def api_ask_data(request: Request) -> JSONResponse:
     }
     data = await _proxy_chat(payload)
     return JSONResponse(data)
+
+
+# ---------------------------------------------------------------------------
+# SPA serving (mounted last so /api/* and /healthz win)
+#
+# Vite emits hashed assets under dist/assets and a dist/index.html. We mount
+# the assets dir and serve index.html for any other GET (client-side routing).
+# ---------------------------------------------------------------------------
+
+if (DIST_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=DIST_DIR / "assets"), name="assets")
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    # API routes are declared above; anything reaching here is a client route.
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="not found")
+    index = DIST_DIR / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=503, detail="SPA not built (dist/index.html missing)")
+    return FileResponse(index)

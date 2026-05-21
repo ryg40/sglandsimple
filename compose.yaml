@@ -98,7 +98,10 @@ services:
       retries: 5
 
   web:
-    build: ./web
+    build:
+      context: ./web
+      args:
+        WEB_BUILD_MODE: ${WEB_BUILD_MODE:-production}
     container_name: sglandsimple-web
     restart: unless-stopped
     depends_on:
@@ -111,6 +114,7 @@ services:
       MCP_URL: http://mcp:8080/mcp
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
       DEFAULT_MODEL: ${UPSTREAM_MODEL:?UPSTREAM_MODEL is required (set in .env.local)}
+      AUDIT_RECENT_LIMIT: ${AUDIT_RECENT_LIMIT:-25}
     ports:
       - "${WEB_PORT:-5452}:3000"
     networks:

@@ -534,3 +534,25 @@ async def sample_recent(
         "sort_dir": -1,
         "rows": [_stringify_ids(r) for r in rows],
     }
+
+
+# ---------------------------------------------------------------------------
+# Stage 8 — recent audit feed for the admin Overview dashboard
+# ---------------------------------------------------------------------------
+
+
+async def audit_recent(limit: int = 25) -> dict[str, Any]:
+    """Latest audit-log entries (newest first) for the Overview activity table.
+
+    Read-only against the audit collection. `audit_log` is intentionally
+    NOT in KNOWN_COLLECTIONS (so the generic mongo_query allowlist can't
+    touch it); this dedicated reader is the only path the UI uses.
+    """
+    db = get_db()
+    limit = max(1, min(int(limit), 200))
+    try:
+        cursor = db[SHEET_AUDIT_COLLECTION].find({}).sort([("ts", -1)]).limit(limit)
+        rows = [d async for d in cursor]
+    except Exception as e:  # noqa: BLE001
+        raise ExecError(f"audit_recent failed: {e}") from e
+    return {"collection": SHEET_AUDIT_COLLECTION, "rows": [_stringify_ids(r) for r in rows]}

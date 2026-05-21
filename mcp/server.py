@@ -453,6 +453,19 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["collection"],
         },
     },
+    {
+        "name": "audit_recent",
+        "description": (
+            "Return the most recent write audit-log entries (newest first) for the "
+            "admin Overview activity feed. Read-only against the audit collection."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 25},
+            },
+        },
+    },
 ]
 
 
@@ -847,6 +860,15 @@ async def _tool_wrangler_list_pipelines(args: dict[str, Any]) -> list[dict[str, 
     return [{"type": "text", "text": json.dumps(info, indent=2, default=str)}]
 
 
+async def _tool_audit_recent(args: dict[str, Any]) -> list[dict[str, Any]]:
+    info = await dbmod.audit_recent(int(args.get("limit", 25) or 25))
+    md = f"# audit_recent ({len(info['rows'])} rows)\n\n" + _markdown_table(info["rows"])
+    return [
+        {"type": "text", "text": md},
+        {"type": "text", "text": json.dumps(info, indent=2, default=str)},
+    ]
+
+
 async def _tool_wrangler_suggest(args: dict[str, Any]) -> dict[str, Any]:
     from wrangler_suggest import run_wrangler_suggest
 
@@ -914,6 +936,7 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "wrangler_run_prefix": _tool_wrangler_run_prefix,
         "wrangler_save_pipeline": _tool_wrangler_save_pipeline,
         "wrangler_list_pipelines": _tool_wrangler_list_pipelines,
+        "audit_recent": _tool_audit_recent,
     }
     if name in multi_content_tools:
         try:
