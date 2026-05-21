@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 
 from checkpointer import checkpointer_context
 from db import get_db
-from llm import llm_client, llm_model
+from llm import llm_client, llm_max_tokens, llm_model
 
 from .budget import budget_limit, log_event, token_count_estimate
 from .catalog import focused_catalog_markdown
@@ -133,6 +133,7 @@ async def _summarize_if_oversized(result: StepResult, plan_goal: str) -> StepRes
                 {"role": "user", "content": user},
             ],
             temperature=0.2,
+            max_tokens=llm_max_tokens("builder"),
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         condensed = (r.choices[0].message.content or "").strip()
@@ -279,6 +280,7 @@ async def _final_summary(plan: Plan, results: list[StepResult]) -> str:
                 {"role": "user", "content": user},
             ],
             temperature=0.2,
+            max_tokens=llm_max_tokens("builder"),
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return (r.choices[0].message.content or "").strip()

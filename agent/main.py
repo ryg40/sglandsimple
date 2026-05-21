@@ -30,6 +30,7 @@ def _required_env(name: str) -> str:
 UPSTREAM_BASE_URL = _required_env("UPSTREAM_BASE_URL").rstrip("/")
 UPSTREAM_API_KEY = os.environ.get("UPSTREAM_API_KEY", "dummy")
 UPSTREAM_MODEL = _required_env("UPSTREAM_MODEL")
+UPSTREAM_MAX_TOKENS = int(os.environ.get("UPSTREAM_MAX_TOKENS", "0"))
 MCP_URL = os.environ.get("MCP_URL", "http://mcp:8080/mcp")
 REQUEST_TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "180"))
 MAX_TOOL_ITERATIONS = int(os.environ.get("MAX_TOOL_ITERATIONS", "5"))
@@ -220,9 +221,12 @@ async def chat_completions(request: Request) -> JSONResponse:
             payload = {
                 "model": UPSTREAM_MODEL,
                 "messages": messages,
-                "tools": tools,
                 **forwarded,
             }
+            if UPSTREAM_MAX_TOKENS and "max_tokens" not in forwarded:
+                payload["max_tokens"] = UPSTREAM_MAX_TOKENS
+            if tools:
+                payload["tools"] = tools
             resp = await _upstream_chat(client, payload)
             choice = resp["choices"][0]
             msg = choice["message"]

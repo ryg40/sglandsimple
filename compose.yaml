@@ -125,8 +125,7 @@ services:
     ports:
       - "${WEB_PORT:-5452}:3000"
     networks:
-      - default
-      - proxy
+      - default  # proxy removed: shared with other stacks; vibevoicemcp-mcp-1 also listens on :8080 causing DNS collisions for "mcp"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:3000/healthz',timeout=2).status==200 else 1)"]
       interval: 10s

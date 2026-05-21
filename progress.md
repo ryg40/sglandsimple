@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-**Stage 12 COMPLETE & verified live; Stage 13 COMPLETE (one follow-up); Stage 14 DOCUMENTED (not built).**
+**Stage 12 COMPLETE & verified live; Stage 13 COMPLETE (one follow-up); Stage 14 DOCUMENTED (not built); Stage 17 COMPLETE.**
 Work branch: `stage12-dynamic-overview-mockdata`.
 
 ## Stage 12 — Domain-rich connector data + cross-system topology (DONE)
@@ -25,13 +25,26 @@ Work branch: `stage12-dynamic-overview-mockdata`.
 ## Stage 14 — Docs Wiki + Confluence sync (DOCUMENTED ONLY)
 - Full spec + task checklist in `IMPLEMENT.md`. Not implemented. In-app MkDocs/Docusaurus-style library; MongoDB system of record (`docs`/`doc_revisions`/`doc_sync_log`); per-doc visibility/status/tags; public docs sync to Confluence mirroring the path tree; LangGraph agent for reconcile→triage→suggest. Start at `S14.model.1`.
 
+## Stage 17 — Builder model upgrade to APEX + per-role `max_tokens` (COMPLETE)
+- Builder subagent now runs on `Qwen3.6-35B-A3B-APEX-MTP-I-Balanced` (port 9292) with 60k `max_tokens`.
+- Agent endpoint retains `qwen3.6-27b` as default upstream model.
+- Fixed: agent omits `tools` field when empty (upstream vLLM rejects `tools: []`).
+- New `llm_max_tokens(role)` helper in `mcp/llm.py` for per-role token budgets.
+- Verified: agent plain chat, tool dispatch (echo, summarize_text), builder math, builder code gen.
+
 ## Verified live (rebuilt stack)
 - `/api/topology` → 8 nodes, 11 edges, 6 concerns (prod RDS logging disabled, P1 incident, 2 neglected tickets, failing checks, high-risk change).
 - `/api/connectors` → schema + non-empty sample_data for all connectors.
 - `/architecture` → HTTP 200; web `/healthz` ok; all containers healthy.
 - Persistence survives `down && up --build`.
 
-## Key files changed (Stages 12–13)
+## Key files changed (Stages 12–13, 17)
+- `IMPLEMENT.md` (Stage 17 section + task checklist)
+- `docs/deep_agent.md` (builder model + `BUILDER_MAX_TOKENS` docs)
+- `agent/main.py` — conditional `tools`, `UPSTREAM_MAX_TOKENS`
+- `mcp/llm.py` — `llm_max_tokens()` helper
+- `mcp/deep_agent/builder.py` — `max_tokens` on builder calls
+- `.env.local`, `.env.example` — new env vars, updated `BUILDER_MODEL`
 - `mcp/connectors/{aws,jira,servicenow,github,confluence,snowflake,mongodb,archer}.py`
 - `mcp/topology.py` (new), `mcp/server.py`
 - `web/main.py`

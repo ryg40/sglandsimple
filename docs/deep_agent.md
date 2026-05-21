@@ -8,11 +8,13 @@ two LLMs so any single conversation stays well under 80k tokens.
 | Role | Endpoint env | Default | Purpose |
 | --- | --- | --- | --- |
 | Planner | `PLANNER_BASE_URL`, `PLANNER_MODEL`, `PLANNER_API_KEY` | falls back to `UPSTREAM_*` | Decomposes a goal into a typed `Plan` of MCP tool calls. |
-| Builder | `BUILDER_BASE_URL`, `BUILDER_MODEL`, `BUILDER_API_KEY` | falls back to `UPSTREAM_*` | Executes each step and summarises results. |
+| Builder | `BUILDER_BASE_URL`, `BUILDER_MODEL`, `BUILDER_API_KEY`, `BUILDER_MAX_TOKENS` | falls back to `UPSTREAM_*` | Executes each step and summarises results. |
 
 Set `BUILDER_*` to a second OpenAI-compatible endpoint to run the two
 roles on different models. Leave `PLANNER_*` unset to keep the planner
-on the existing `UPSTREAM_*` endpoint.
+on the existing `UPSTREAM_*` endpoint. `BUILDER_MAX_TOKENS` caps the
+output token budget for builder LLM calls (summarization + final summary);
+set to `60000` for the APEX model to prevent runaway responses.
 
 ## Tools exposed
 
@@ -91,8 +93,9 @@ PLANNER_BASE_URL=                          # leave blank to inherit UPSTREAM_*
 PLANNER_MODEL=
 PLANNER_API_KEY=
 BUILDER_BASE_URL=http://192.168.29.129:9292/v1
-BUILDER_MODEL=Qwen3.6-35B-Apex-Bal
+BUILDER_MODEL=Qwen3.6-35B-A3B-APEX-MTP-I-Balanced
 BUILDER_API_KEY=dummy
+BUILDER_MAX_TOKENS=60000                   # output token budget for builder calls
 DEEP_AGENT_BUDGET_PER_CALL=70000           # per-LLM-call token ceiling
 DEEP_AGENT_MAX_STEPS=25                    # hard cap on plan length
 DEEP_AGENT_MAX_SECONDS=600                 # hard cap on total run time

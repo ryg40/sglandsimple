@@ -2244,3 +2244,73 @@ Editable fields (allowlisted): `status`, `assignee`, `priority`, `story_points`,
 - [x] **S16.verify.1 — `scripts/smoke_jira_edit.sh`**
   - Files: `scripts/smoke_jira_edit.sh` (new).
   - Done when: stage → validate → apply (dry-run) → revert round-trips against the running stack; asserts `audit_log` grew, apply returned a dry-run plan with `apply_mode="dry_run"`, and an unvalidated row is refused.
+
+---
+
+## Stage 17 — Builder model upgrade to APEX + per-role `max_tokens`
+
+> **Status: COMPLETE & verified.** The builder subagent now runs on `Qwen3.6-35B-A3B-APEX-MTP-I-Balanced` (hosted at `192.168.29.129:9292`) with a 60k token output budget. The agent endpoint retains the default `qwen3.6-27b` model. Both `UPSTREAM_MAX_TOKENS` and `BUILDER_MAX_TOKENS` are wired through the codebase.
+
+### 17a. What changed
+
+| Component | Before | After |
+| --- | --- | --- |
+| Builder model | `Qwen3.6-35B-Apex-Bal` | `Qwen3.6-35B-A3B-APEX-MTP-I-Balanced` |
+| Builder `max_tokens` | not set (unlimited) | `60000` |
+| Agent `max_tokens` | not set | `UPSTREAM_MAX_TOKENS` from env (default 0) |
+| Agent tool forwarding | always sent `tools: []` when none | omits `tools` field when empty (upstream vLLM rejects `tools: []`) |
+
+### 17b. Why the APEX model for the builder
+
+The builder subagent handles per-step output condensation and final run summaries. The APEX variant (`Qwen3.6-35B-A3B-APEX-MTP-I-Balanced`) offers stronger reasoning and longer context handling than the prior Apex-Bal, which matters when the builder must condense large tool outputs while staying within `DEEP_AGENT_BUDGET_PER_CALL`. The 60k `max_tokens` cap prevents runaway responses on summarization calls.
+
+### 17c. Agent fix: empty `tools` array
+
+The upstream vLLM endpoint rejects requests with `"tools": []` (empty array). The agent now only includes the `tools` key in the forwarded payload when `tools` is non-empty. This fixes the "400 Bad Request" error that occurred when callers sent no tools and the agent had none to merge from MCP.
+
+### 17d. Per-role `max_tokens` pattern
+
+A new `llm_max_tokens(role)` helper in `mcp/llm.py` reads `{PREFIX}_MAX_TOKENS` from the environment (0 = no default). Both builder LLM calls (`_summarize_if_oversized` and `_final_summary`) now pass `max_tokens=llm_max_tokens("builder")`. The agent forwards `UPSTREAM_MAX_TOKENS` as a default when the client omits `max_tokens`.
+
+### 17e. Env surface (additions)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `UPSTREAM_MAX_TOKENS` | `0` | no | 17 | Default `max_tokens` forwarded to upstream when client omits it |
+| `BUILDER_MAX_TOKENS` | `60000` | no | 17 | Output budget for builder LLM calls (summarize + final summary) |
+
+### 17f. Files changed
+
+- `agent/main.py` — `UPSTREAM_MAX_TOKENS` env, conditional `tools` field, `max_tokens` forwarding
+- `mcp/llm.py` — `llm_max_tokens()` helper
+- `mcp/deep_agent/builder.py` — `max_tokens` on both builder LLM calls
+- `.env.example` — new env vars, updated `BUILDER_MODEL`
+- `.env.local` — `BUILDER_MAX_TOKENS=60000`, `BUILDER_MODEL` updated
+
+### 17g. Verification (intent)
+
+1. Agent `/v1/chat/completions` works with and without tools (plain chat, tool dispatch, echo, summarize_text).
+2. Builder via MCP `chat` tool responds correctly (math, code gen, summarization) on the APEX endpoint.
+3. `docker compose exec mcp python3 -c "from llm import llm_client, llm_model, llm_max_tokens; ..."` confirms `builder` role resolves to the APEX model with `max_tokens=60000`.
+
+---
+
+# Task checklist — Stage 17
+
+### S17.agent — Agent hardening
+
+- [x] **S17.agent.1 — Conditional `tools` field + `UPSTREAM_MAX_TOKENS`**
+  - Files: `agent/main.py`.
+  - Done when: agent omits `tools` from forwarded payload when empty (no `tools: []` rejection); `UPSTREAM_MAX_TOKENS` env var sets default `max_tokens` when client omits it.
+
+### S17.builder — Builder model + budget
+
+- [x] **S17.builder.1 — `llm_max_tokens()` helper + builder calls**
+  - Files: `mcp/llm.py`, `mcp/deep_agent/builder.py`.
+  - Done when: `llm_max_tokens("builder")` reads `BUILDER_MAX_TOKENS`; both builder LLM calls pass `max_tokens`.
+
+### S17.env — Configuration
+
+- [x] **S17.env.1 — Update `.env.local` and `.env.example`**
+  - Files: `.env.local`, `.env.example`.
+  - Done when: `BUILDER_MODEL=Qwen3.6-35B-A3B-APEX-MTP-I-Balanced`, `BUILDER_MAX_TOKENS=60000`, `UPSTREAM_MAX_TOKENS=0` present in both files.

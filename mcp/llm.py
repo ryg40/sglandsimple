@@ -75,6 +75,13 @@ def llm_model(role: str = "default") -> str:
     return model
 
 
+def llm_max_tokens(role: str = "default") -> int:
+    """Return the max_tokens budget for a role (0 = no default)."""
+    prefix = _ROLE_PREFIX.get(role, "UPSTREAM")
+    val = os.environ.get(f"{prefix}_MAX_TOKENS", "0")
+    return int(val) if val else 0
+
+
 def _client() -> AsyncOpenAI:
     # Kept for backwards compatibility with callers that haven't been
     # updated to use llm_client(role=...).
