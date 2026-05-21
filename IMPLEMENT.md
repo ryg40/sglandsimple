@@ -1562,3 +1562,30 @@ Per-session budget target: **80k tokens**. Mechanism:
 - [ ] **S5.verify.5 — Decide on Stage-4 + Copilot compatibility**
   - Done when: either `deep_agent` runs cleanly with planner on Copilot + builder on self-hosted (recorded in §4c env block), or the combo is marked out-of-scope and §5e Q4 is closed.
   - Depends on: S5.verify.4.
+
+## Stage 10 — Service-Specific Micro-Agents (Cognitive Scaling & Security Isolation)
+
+**Goal:** Evolve the monolithic toolbelt design into specialized, single-responsibility leaf executors at the LangGraph node level (Node-Level Tool Scoping), minimizing token context usage, avoiding tool dilution, and enforcing the security principle of least privilege.
+
+### 10a. Why this is necessary
+- **Tool Dilution:** As Stage 9 adds multiple external systems (Jira, Confluence, GitHub, AWS, ServiceNow, Snowflake, Archer), making all tools available statically in `server.py`’s `TOOLS` array forces generalist agents to select from 30+ schemas. This degrades model accuracy.
+- **Context Footprint:** Transmitting 30+ schemas on every LLM call scales input token usage exponentially across multi-turn workflows.
+- **Least Privilege:** Restricting tool access in a node-level sandbox reduces security risks in case of model drift.
+
+### 10b. The Implementation Pattern: Node-Level Tool Scoping
+- At the LangGraph execution layer (`mcp/workflow/nodes.py`), each node is a pure function.
+- Rather than a generalist prompt, each node limits tool access solely to the schemas relevant for that node's concrete task (e.g., the `generate_ticket` node only sees `jira_*` tools).
+- High-level orchestration is kept in the high-level graphical state transition layer (the controller), while low-level actions are scoped specifically.
+
+### 10c. Task Checklist
+
+- [ ] **S10.scope.1 — Restructure graph nodes tool scoping**
+  - Files: `mcp/workflow/nodes.py`, `mcp/connectors/__init__.py`.
+  - Done when: `get_connector(name).tools()` is utilized inside `nodes.py` to selectively fetch and inject *only* system-specific tools to the LLM during distinct node tasks, reducing prompt size by 80%+.
+  - Depends on: S9.workflow.2
+
+- [ ] **S10.scope.2 — Least-privilege credentials isolation**
+  - Files: `mcp/connectors/__init__.py`.
+  - Done when: connectors verify and utilize scoped API keys, preventing global leakage if a single provider is degraded.
+  - Depends on: S9.connect.2
+
