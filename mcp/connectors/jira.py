@@ -26,29 +26,63 @@ class JiraConnector:
             return {"status": "degraded", "error": "Missing JIRA_MCP_URL or JIRA_MCP_TOKEN"}
         return {"status": "healthy", "url": self.mcp_url}
 
-    # Active sprint board, tickets grouped by epic. `flagged`/high `age_days`
-    # marks a neglected ticket the topology surfaces as a weak-spot.
-    _ACTIVE_SPRINT = {"name": "Compliance Sprint 24", "ends": "2026-05-30", "committed": 34, "completed": 13}
+    # Active sprint board, tickets grouped by epic, modeled on the real Jira
+    # issue + Agile-API shapes. `fields.*` mirror the REST API; top-level
+    # convenience keys (epic_key, age_days, flagged) drive the topology
+    # weak-spot rules. `flagged`/high `age_days` marks a neglected ticket.
+    _ACTIVE_SPRINT = {
+        "id": 1042, "name": "Compliance Sprint 24", "state": "active", "boardId": 7,
+        "startDate": "2026-05-16", "endDate": "2026-05-30",
+        "goal": "Close RDS audit-logging stories + branch security gates",
+        "committed": 34, "completed": 13,
+    }
+
+    @staticmethod
+    def _issue(key, summary, issuetype, status, cat, priority, assignee, reporter,
+               labels, components, points, epic_key, epic_name, created, updated,
+               duedate, age_days, flagged):
+        return {
+            "key": key,
+            "fields": {
+                "summary": summary,
+                "issuetype": {"name": issuetype},
+                "status": {"name": status, "statusCategory": {"name": cat}},
+                "priority": {"name": priority},
+                "assignee": {"displayName": assignee},
+                "reporter": {"displayName": reporter},
+                "labels": labels,
+                "components": [{"name": c} for c in components],
+                "customfield_story_points": points,
+                "parent": {"key": epic_key, "fields": {"summary": epic_name}},
+                "created": created,
+                "updated": updated,
+                "duedate": duedate,
+            },
+            # convenience top-level keys (denormalized for rules + simple rendering)
+            "summary": summary, "status": status, "assignee": assignee,
+            "epic_key": epic_key, "epic_name": epic_name, "story_points": points,
+            "updated": updated, "duedate": duedate, "age_days": age_days, "flagged": flagged,
+        }
 
     _SAMPLE = [
-        {"key": "RDS-LOG-2", "summary": "Enable RDS MySQL audit trail logs + ship to S3", "status": "In Progress",
-         "assignee": "Sultan DevOps", "epic_key": "RDS-LOG-1", "epic_name": "RDS Audit Logging",
-         "story_points": 5, "updated": "2026-05-21", "age_days": 0, "flagged": False},
-        {"key": "RDS-LOG-3", "summary": "Enable RDS PostgreSQL pgaudit extension", "status": "To Do",
-         "assignee": "Sultan DevOps", "epic_key": "RDS-LOG-1", "epic_name": "RDS Audit Logging",
-         "story_points": 5, "updated": "2026-05-19", "age_days": 2, "flagged": False},
-        {"key": "RDS-LOG-4", "summary": "Backfill RDS MariaDB log retention to 400 days", "status": "Blocked",
-         "assignee": "Sarah SRE", "epic_key": "RDS-LOG-1", "epic_name": "RDS Audit Logging",
-         "story_points": 3, "updated": "2026-05-06", "age_days": 15, "flagged": True},
-        {"key": "SEC-SCAN-101", "summary": "Integrate GitHub repo scanner alerts for branch compliance", "status": "To Do",
-         "assignee": "Alex SecOps", "epic_key": "SEC-SCAN", "epic_name": "CI Branch Security Gates",
-         "story_points": 8, "updated": "2026-05-20", "age_days": 1, "flagged": False},
-        {"key": "SEC-SCAN-104", "summary": "Add secret-scanning push protection to all infra repos", "status": "In Progress",
-         "assignee": "Alex SecOps", "epic_key": "SEC-SCAN", "epic_name": "CI Branch Security Gates",
-         "story_points": 5, "updated": "2026-05-18", "age_days": 3, "flagged": False},
-        {"key": "ALB-ROT-202", "summary": "Automate certificate rotation in AWS load balancer pipeline", "status": "Deferred",
-         "assignee": "Sarah SRE", "epic_key": "ALB-ROT", "epic_name": "Cert Rotation Automation",
-         "story_points": 3, "updated": "2026-04-28", "age_days": 23, "flagged": True},
+        _issue.__func__("RDS-LOG-2", "Enable RDS MySQL audit trail logs + ship to S3", "Story", "In Progress", "In Progress",
+                        "High", "Sultan DevOps", "Alex SecOps", ["compliance", "sox-404"], ["database"], 5,
+                        "RDS-LOG-1", "RDS Audit Logging", "2026-05-12", "2026-05-21", "2026-05-28", 0, False),
+        _issue.__func__("RDS-LOG-3", "Enable RDS PostgreSQL pgaudit extension", "Story", "To Do", "To Do",
+                        "High", "Sultan DevOps", "Alex SecOps", ["compliance"], ["database"], 5,
+                        "RDS-LOG-1", "RDS Audit Logging", "2026-05-12", "2026-05-19", "2026-05-29", 2, False),
+        _issue.__func__("RDS-LOG-4", "Backfill RDS MariaDB log retention to 400 days", "Story", "Blocked", "In Progress",
+                        "Medium", "Sarah SRE", "Sultan DevOps", ["compliance", "pci-dss"], ["database"], 3,
+                        "RDS-LOG-1", "RDS Audit Logging", "2026-04-30", "2026-05-06", "2026-05-22", 15, True),
+        _issue.__func__("SEC-SCAN-101", "Integrate GitHub repo scanner alerts for branch compliance", "Story", "To Do", "To Do",
+                        "High", "Alex SecOps", "Alex SecOps", ["security"], ["ci"], 8,
+                        "SEC-SCAN", "CI Branch Security Gates", "2026-05-10", "2026-05-20", "2026-05-30", 1, False),
+        _issue.__func__("SEC-SCAN-104", "Add secret-scanning push protection to all infra repos", "Story", "In Progress", "In Progress",
+                        "Medium", "Alex SecOps", "Alex SecOps", ["security"], ["ci"], 5,
+                        "SEC-SCAN", "CI Branch Security Gates", "2026-05-11", "2026-05-18", "2026-05-31", 3, False),
+        _issue.__func__("ALB-ROT-202", "Automate certificate rotation in AWS load balancer pipeline", "Task", "Deferred", "To Do",
+                        "Low", "Sarah SRE", "Sarah SRE", ["tls"], ["sre"], 3,
+                        "ALB-ROT", "Cert Rotation Automation", "2026-04-20", "2026-04-28", "2026-06-15", 23, True),
     ]
 
     def _summary_payload(self, status: str) -> dict:

@@ -26,31 +26,50 @@ class ConfluenceConnector:
             return {"status": "degraded", "error": "Missing CONFLUENCE_MCP_URL or CONFLUENCE_MCP_TOKEN"}
         return {"status": "healthy", "url": self.mcp_url}
 
-    # Auto-surfaced related articles. `matched_on` explains *why* each page was
-    # linked in: shared ticket numbers, users, projects, or keywords.
+    # Auto-surfaced related content, modeled on the real Confluence content
+    # shape (space/version/_links/ancestors/labels). `matched_on` expresses the
+    # CQL-style relatedness: *why* each page surfaced — shared ticket numbers,
+    # users, projects/spaces, or keywords.
+    @staticmethod
+    def _page(b, cid, title, space_key, space_name, ver, when, by, parent_id,
+              labels, relevance, matched_on):
+        return {
+            "id": cid, "type": "page", "title": title,
+            "space": {"key": space_key, "name": space_name},
+            "version": {"number": ver, "when": when, "by": {"displayName": by}},
+            "_links": {"webui": f"{b}/spaces/{space_key}/pages/{cid}"},
+            "ancestors": ([{"id": parent_id}] if parent_id else []),
+            "labels": labels,
+            "relevance": relevance,
+            "matched_on": matched_on,
+            # convenience keys for simple rendering
+            "url": f"{b}/spaces/{space_key}/pages/{cid}",
+            "last_updated": when, "editor": by,
+        }
+
     def _sample(self) -> list[dict]:
         b = self.base_url.rstrip("/")
         return [
-            {"id": "pg-01", "title": "Runbook: SOX-404 Database Audit Logging Procedure",
-             "space": "Compliance-Runbooks", "last_updated": "2026-05-18", "relevance": 0.94,
-             "url": f"{b}/spaces/COMP/pages/100401",
-             "matched_on": {"keywords": ["audit logging", "RDS"], "ticket_refs": ["RDS-LOG-1"],
-                            "users": ["Sultan DevOps"], "projects": ["infra-terraform"]}},
-            {"id": "pg-02", "title": "CI/CD Secure Branch Scanning Policy & Compliance Standards",
-             "space": "Architecture-RFCs", "last_updated": "2026-05-20", "relevance": 0.88,
-             "url": f"{b}/spaces/ARCH/pages/100412",
-             "matched_on": {"keywords": ["branch protection", "secret scanning"], "ticket_refs": ["SEC-SCAN-101"],
-                            "users": ["Alex SecOps"], "projects": ["sec-gates"]}},
-            {"id": "pg-03", "title": "AWS Certificate Rotation Playbook (ALB Pipeline)",
-             "space": "SRE-Guides", "last_updated": "2026-05-21", "relevance": 0.81,
-             "url": f"{b}/spaces/SRE/pages/100420",
-             "matched_on": {"keywords": ["certificate", "rotation", "ALB"], "ticket_refs": ["ALB-ROT-202"],
-                            "users": ["Sarah SRE"], "projects": ["infra-k8s"]}},
-            {"id": "pg-04", "title": "Epic Log: RDS Audit Logging — Evidence Index",
-             "space": "Compliance-Runbooks", "last_updated": "2026-05-21", "relevance": 0.97,
-             "url": f"{b}/spaces/COMP/pages/100433",
-             "matched_on": {"keywords": ["evidence", "PCI-DSS-10.2"], "ticket_refs": ["RDS-LOG-1", "RDS-LOG-2"],
-                            "users": ["Sultan DevOps"], "projects": ["infra-terraform"]}},
+            self._page(b, "100401", "Runbook: SOX-404 Database Audit Logging Procedure", "COMP",
+                       "Compliance-Runbooks", 7, "2026-05-18", "Sultan DevOps", "100400",
+                       ["sox-404", "runbook"], 0.94,
+                       {"keywords": ["audit logging", "RDS"], "ticket_refs": ["RDS-LOG-1"],
+                        "users": ["Sultan DevOps"], "projects": ["infra-terraform"]}),
+            self._page(b, "100412", "CI/CD Secure Branch Scanning Policy & Compliance Standards", "ARCH",
+                       "Architecture-RFCs", 3, "2026-05-20", "Alex SecOps", None,
+                       ["security", "policy"], 0.88,
+                       {"keywords": ["branch protection", "secret scanning"], "ticket_refs": ["SEC-SCAN-101"],
+                        "users": ["Alex SecOps"], "projects": ["sec-gates"]}),
+            self._page(b, "100420", "AWS Certificate Rotation Playbook (ALB Pipeline)", "SRE",
+                       "SRE-Guides", 5, "2026-05-21", "Sarah SRE", None,
+                       ["tls", "playbook"], 0.81,
+                       {"keywords": ["certificate", "rotation", "ALB"], "ticket_refs": ["ALB-ROT-202"],
+                        "users": ["Sarah SRE"], "projects": ["infra-k8s"]}),
+            self._page(b, "100433", "Epic Log: RDS Audit Logging — Evidence Index", "COMP",
+                       "Compliance-Runbooks", 11, "2026-05-21", "Sultan DevOps", "100400",
+                       ["epic-log", "evidence"], 0.97,
+                       {"keywords": ["evidence", "PCI-DSS-10.2"], "ticket_refs": ["RDS-LOG-1", "RDS-LOG-2"],
+                        "users": ["Sultan DevOps"], "projects": ["infra-terraform"]}),
         ]
 
     def _summary_payload(self, status: str) -> dict:
