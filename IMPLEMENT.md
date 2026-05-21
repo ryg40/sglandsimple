@@ -1894,3 +1894,83 @@ Seeded Mongo data **must survive `docker compose down/up` and `--build`**. The p
   - Done when: asserts `/api/topology` returns nodes/edges/concerns and `/api/connectors` carries `schema` + non-empty `sample_data` for AWS/ServiceNow; the 12g checks pass by inspection in the running app; `web/package.json` diff adds only `@xyflow/react`; persistence verified per S12.persist.1.
   - Depends on: S12.topo.2, S12.web.2, S12.web.3, S12.persist.1.
 
+
+---
+
+## Stage 13 — Fleet-Dispatch design system (Roboto + navy/amber/teal restyle)
+
+> **Pick-up point.** Stages 8–12 settled the IA and the data; the look is the generic "fintech-admin" oklch palette in `web/src/index.css` (Inter font, blue-grey neutrals). Stage 13 restyles the whole SPA toward a **fleet-dispatch tablet dashboard** aesthetic (ref: dribbble.com/shots/27367688-Fleet-Dispatch-Tablet-Dashboard) — a dark navy control-room surface with a single bright amber accent and teal as the secondary. Because every component already references **semantic tokens only** (never raw hex), this is almost entirely a **token + font remap in one file** plus a chart/edge color pass — not a component rewrite. Start at `S13.tokens.1`.
+
+**Goal:** The app reads like an operations dashboard: deep indigo/navy canvas and cards, white text, **amber (`#FFD000`) as the primary call-to-action / active-state / key-metric accent**, **teal (`#06748C`) as the secondary / links / chart series**, on a white-and-navy base. Typography switches to **Roboto**. No layout or component-structure changes; the change is the palette, the font, and the accent behavior.
+
+### 13a. Brand palette → token mapping
+
+The four brand colors and their roles:
+
+| Hex | Name | Role |
+| --- | --- | --- |
+| `#FFFFFF` | White | Light-mode background / dark-mode foreground text / card text on navy |
+| `#FFD000` | Amber | **Primary** accent — buttons, active nav, focus ring, key KPI numbers, "needs attention" highlights, chart series 1 |
+| `#1A1446` | Navy (deep indigo) | Dark-mode canvas + cards + sidebar; light-mode primary text; brand chrome |
+| `#06748C` | Teal | **Secondary** — links, secondary buttons, chart series 2, info states, edge lines in topology |
+
+Because the design target is a **dark control-room** look, treat **dark mode as the primary/intended theme** (navy canvas), while keeping a clean light variant (white canvas, navy text, amber/teal accents). Map onto the existing semantic tokens in `web/src/index.css` (convert hex → oklch to stay consistent with the file's convention; keep raw hex only in a comment for reference):
+
+- **Dark theme (`.dark`, the headline look)**: `--background`/`--sidebar` ≈ `#1A1446` (and a slightly lighter navy for `--card`/`--popover`); `--foreground` ≈ `#FFFFFF`; `--primary` = `#FFD000` with `--primary-foreground` = `#1A1446` (dark text on amber); `--secondary`/`--ring`/links = `#06748C`; `--border`/`--input` = a translucent white/navy mix; `--accent` = amber-tinted hover.
+- **Light theme (`:root`)**: `--background` = `#FFFFFF`; `--foreground` = `#1A1446`; `--primary` = `#FFD000` (amber, navy text); `--secondary`/links = `#06748C`; navy used for headings/chrome.
+- **Charts**: `--chart-1` = amber `#FFD000`, `--chart-2` = teal `#06748C`, `--chart-3..5` = tints/shades of navy + teal + a desaturated amber so multi-series stays on-brand.
+- **Status semantics stay legible**: keep `--destructive` red and `--success` green (don't fold these into brand colors — they carry meaning), but retune `--warning` toward the brand amber. The topology "weak-spot" highlight keeps using `--destructive`.
+
+### 13b. Typography (Roboto)
+
+- Set `--font-sans: "Roboto", Arial, sans-serif;` in the `@theme` block of `web/src/index.css` (replacing the Inter stack). `body` already uses `var(--font-sans)`.
+- Load Roboto **self-hosted** via `@fontsource` (preferred — no external CDN call, works offline in the Docker build) or a `<link>` to Google Fonts in `web/index.html` if a CDN is acceptable. Default to `@fontsource/roboto` (weights 400/500/700) imported in `web/src/main.tsx`, added to `web/package.json`. Note: this is a second new web dependency after Stage-12's `@xyflow/react`.
+- Keep the existing monospace token usage (`font-mono`) for ids/SQL/keys.
+
+### 13c. Accent behavior (what "amber-forward" means)
+
+- **Primary buttons / active nav item / current tab**: amber fill, navy text.
+- **Focus ring** (`--ring`): amber, for a high-visibility tablet/touch target.
+- **Key metrics** (Stage-11 KPI numbers, the attention count): amber numerals on navy cards.
+- **Links / secondary actions / chart secondary**: teal.
+- **Topology (Architecture page)**: node borders/edges default to teal; **weak-spot** nodes/edges stay destructive-red so concern signaling isn't diluted by brand color; the React Flow theme variables are mapped to these tokens.
+- Maintain WCAG AA contrast: amber `#FFD000` on navy passes for large text/UI; for small body text prefer white-on-navy and reserve amber for accents/numerals/icons, not paragraphs.
+
+### 13d. Scope / non-goals
+
+- **In scope**: `web/src/index.css` token values (`:root`, `.dark`, `@theme`), `--font-sans`, font loading (`main.tsx`/`package.json` or `index.html`), and a small pass on any component that hardcoded a non-token color (e.g. the Tailwind palette literals like `text-blue-600`/`bg-emerald-100` used in `hub.tsx`/`hub-columns.tsx`/`workflow-stepper.tsx` — migrate the load-bearing ones to semantic tokens or on-brand equivalents).
+- **Out of scope**: component structure, IA, copy, data. No new routes. Status red/green stay.
+
+### 13e. Verification (intent)
+
+1. Dark mode renders a navy (`#1A1446`) canvas with white text, amber primary buttons/active nav, teal links — matching the fleet-dispatch reference vibe.
+2. Light mode renders white canvas, navy text, same amber/teal accents.
+3. All text/UI meets WCAG AA contrast (spot-check amber-on-navy, white-on-navy, teal-on-white).
+4. Body copy is Roboto (verify computed `font-family`); the app builds offline (no blocking external font fetch if `@fontsource` is used).
+5. Charts use amber + teal as the lead two series; status red/green still signal correctly; topology weak-spots remain red.
+6. No component references a raw brand hex directly — colors flow through tokens (grep for the four hexes finds them only in `index.css` comments).
+
+---
+
+# Task checklist — Stage 13
+
+- [ ] **S13.tokens.1 — Remap semantic color tokens to the brand palette**
+  - Files: `web/src/index.css` (`:root`, `.dark`, `@theme inline`, chart vars).
+  - Done when: dark = navy canvas/white text/amber primary/teal secondary; light = white/navy/amber/teal; charts lead amber+teal; destructive/success unchanged; brand hexes appear only in reference comments. Per 13a.
+
+- [ ] **S13.font.1 — Switch typography to Roboto**
+  - Files: `web/src/index.css` (`--font-sans`), `web/package.json` + `web/src/main.tsx` (`@fontsource/roboto`) or `web/index.html` (`<link>`).
+  - Done when: `--font-sans` is Roboto/Arial/sans-serif, the font loads (offline-safe if `@fontsource`), and body computed font is Roboto. Per 13b.
+
+- [ ] **S13.accent.1 — Amber-forward accent behavior**
+  - Files: `web/src/index.css` (`--ring`, `--accent`, `--warning`), targeted component tweaks.
+  - Done when: primary buttons/active nav/focus ring/key KPI numerals are amber; links/secondary are teal; AA contrast holds. Per 13c.
+
+- [ ] **S13.cleanup.1 — Migrate hardcoded literals to tokens**
+  - Files: `web/src/components/hub-columns.tsx`, `web/src/routes/hub.tsx`, `web/src/components/workflow-stepper.tsx`, others surfaced by grep.
+  - Done when: load-bearing hardcoded Tailwind color literals are replaced with semantic tokens / on-brand equivalents; status red/green retained for meaning. Per 13d.
+
+- [ ] **S13.verify.1 — Theme + contrast check**
+  - Files: (manual + `scripts/` if useful).
+  - Done when: the 13e intent checks pass by inspection in both themes; AA contrast spot-checks pass; build is offline-safe.
+  - Depends on: S13.tokens.1, S13.font.1.
