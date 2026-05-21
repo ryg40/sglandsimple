@@ -23,6 +23,9 @@ API surface (all JSON):
 - GET  /api/wrangler/pipelines → MCP wrangler_list_pipelines
 - POST /api/wrangler/suggest   → MCP wrangler_suggest
 - GET  /api/audit/recent       → MCP audit_recent
+- GET  /api/connectors         → MCP connector_health + connector_summary (per bubble)
+- GET  /api/connectors/{name}  → MCP connector_health + connector_summary (one)
+- GET  /api/topology           → MCP topology_graph (Architecture page)
 """
 
 from __future__ import annotations
@@ -381,6 +384,16 @@ async def api_get_connector_detail(name: str) -> JSONResponse:
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/topology")
+async def api_get_topology() -> JSONResponse:
+    """Stage 12: cross-system interconnectivity graph for the Architecture page."""
+    try:
+        res = await _mcp_tool("topology_graph", {})
+        return JSONResponse(_extract_json_block(res))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch topology: {e}")
 
 
 @app.get("/api/reports/download")

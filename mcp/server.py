@@ -31,6 +31,7 @@ from deep_agent import Plan, run_deep_agent, run_plan_task, run_run_plan
 from workflow.graph import run_compliance_workflow
 from report.pdf import generate_pdf_report
 from report.ppt import generate_ppt_report
+from topology import build_topology
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
 
@@ -507,6 +508,13 @@ TOOLS: list[dict[str, Any]] = [
     }
 ]
 
+# Stage 12 — cross-system topology graph for the Architecture page.
+TOOLS.append({
+    "name": "topology_graph",
+    "description": "Return the cross-system interconnectivity graph (nodes, edges, concerns) for the Architecture visualization.",
+    "inputSchema": {"type": "object", "properties": {}},
+})
+
 # Stage 9 — append connector tools dynamically after the static list is defined.
 TOOLS.extend(connector_tools())
 
@@ -532,6 +540,11 @@ async def _tool_connector_summary(args: dict[str, Any]) -> dict[str, Any]:
         return {"content": [{"type": "text", "text": f"Connector '{name}' not found. Registered: {[c.name for c in list_connectors()]}"}], "isError": True}
     result = await conn.summary()
     return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}], "isError": False}
+
+
+async def _tool_topology_graph(args: dict[str, Any]) -> dict[str, Any]:
+    graph = await build_topology()
+    return {"content": [{"type": "text", "text": json.dumps(graph, indent=2)}], "isError": False}
 
 
 async def _tool_workflow_run(args: dict[str, Any]) -> dict[str, Any]:
@@ -1124,6 +1137,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_connector_health(args)
     elif name == "connector_summary":
         return await _tool_connector_summary(args)
+    elif name == "topology_graph":
+        return await _tool_topology_graph(args)
     else:
         # Route to registered connectors dynamically
         for conn in list_connectors():
