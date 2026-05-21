@@ -487,3 +487,50 @@ async def get_rows(
         "total": int(total),
         "rows": [_stringify_ids(r) for r in rows],
     }
+
+
+# ---------------------------------------------------------------------------
+# Stage 7 — light recent-doc sample for the aggregation builder
+# ---------------------------------------------------------------------------
+
+# Order matters: the first field that actually exists on a sampled doc wins.
+_RECENCY_FIELDS = ("updated_at", "ts", "created_at", "hire_date", "_id")
+
+
+async def sample_recent(
+    collection: str, *, limit: int = 50, sort_by: str | None = None
+) -> dict[str, Any]:
+    """A light, recency-ordered sample for the wrangler UI.
+
+    Picks the first recency field that exists on the collection (unless
+    `sort_by` is given), sorts descending, and caps at LIMIT_CEILING.
+    Returns {collection, rows, sort_field, sort_dir}.
+    """
+    coll_name = _require_known_collection(collection)
+    db = get_db()
+    coll = db[coll_name]
+    limit = max(1, min(int(limit), LIMIT_CEILING))
+
+    sort_field = sort_by
+    if not sort_field:
+        # Probe one doc to see which recency field is present.
+        probe = await coll.find_one({})
+        if probe:
+            for f in _RECENCY_FIELDS:
+                if f in probe:
+                    sort_field = f
+                    break
+        sort_field = sort_field or "_id"
+
+    try:
+        cursor = coll.find({}).sort([(sort_field, -1)]).limit(limit)
+        rows = [d async for d in cursor]
+    except Exception as e:  # noqa: BLE001
+        raise ExecError(f"sample_recent failed: {e}") from e
+
+    return {
+        "collection": coll_name,
+        "sort_field": sort_field,
+        "sort_dir": -1,
+        "rows": [_stringify_ids(r) for r in rows],
+    }

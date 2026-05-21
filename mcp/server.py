@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 import db as dbmod
 import sandbox as sbx
+import wrangler as wranglermod
 from ask_data import render_markdown as render_ask_data_markdown
 from ask_data import run_ask_data
 from deep_agent import Plan, run_deep_agent, run_plan_task, run_run_plan
@@ -376,6 +377,82 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["collection", "instruction"],
         },
     },
+    {
+        "name": "wrangler_sample",
+        "description": (
+            "Light recent-doc sample for the aggregation builder. Returns the "
+            "sampled rows plus a per-field summary (types, cardinality, coverage, "
+            "examples) the UI turns into clickable field chips."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+            "required": ["collection"],
+        },
+    },
+    {
+        "name": "wrangler_run_prefix",
+        "description": (
+            "Run a prefix of an aggregation pipeline (stages 0..upto) so each "
+            "stage can be executed on its own. Returns the preview rows plus "
+            "input_count -> output_count for the final stage. Goes through the "
+            "same read-only validate_spec/aggregate path as mongo_aggregate."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "pipeline": {"type": "array", "items": {"type": "object"}},
+                "upto": {"type": "integer", "minimum": 0, "description": "Index of the last stage to run."},
+            },
+            "required": ["collection", "pipeline", "upto"],
+        },
+    },
+    {
+        "name": "wrangler_save_pipeline",
+        "description": (
+            "Persist a builder pipeline to db.wrangler_pipelines (upsert by id). "
+            "Writes an audit_log row tagged source=wrangler_save."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "stages": {"type": "array", "items": {"type": "object"}},
+                "_id": {"type": "string", "description": "Optional id to update an existing pipeline."},
+            },
+            "required": ["name", "collection", "stages"],
+        },
+    },
+    {
+        "name": "wrangler_list_pipelines",
+        "description": "List saved builder pipelines, optionally filtered to one collection.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+            },
+        },
+    },
+    {
+        "name": "wrangler_suggest",
+        "description": (
+            "Ask the planner LLM for 2-3 useful, differently-shaped aggregation "
+            "pipelines for a collection (count-by-group, trend-over-time, rank/top-N). "
+            "Each suggestion is validated server-side; invalid ones are dropped."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+            },
+            "required": ["collection"],
+        },
+    },
 ]
 
 
@@ -721,6 +798,74 @@ async def _tool_sheet_apply_nl(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Stage 7 — aggregation builder tools
+# ---------------------------------------------------------------------------
+
+
+async def _tool_wrangler_sample(args: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = await wranglermod.sample(args["collection"], limit=args.get("limit"))
+    chips = "\n".join(
+        f"- **{f['field']}** ({'|'.join(f['types'])}) "
+        f"card={f['cardinality']} cov={f['coverage']}"
+        for f in payload["field_summary"]
+    )
+    md = (
+        f"# wrangler sample: {payload['collection']} "
+        f"({payload['row_count']} rows by {payload['sort_field']} desc)\n\n{chips}"
+    )
+    return [
+        {"type": "text", "text": md},
+        {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+    ]
+
+
+async def _tool_wrangler_run_prefix(args: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = await wranglermod.run_prefix(
+        args["collection"], args.get("pipeline") or [], int(args["upto"])
+    )
+    md = (
+        f"# stage {payload['stage_index']} — "
+        f"{payload['input_count']} → {payload['output_count']} rows\n\n"
+        + _markdown_table(payload["rows"])
+    )
+    return [
+        {"type": "text", "text": md},
+        {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+    ]
+
+
+async def _tool_wrangler_save_pipeline(args: dict[str, Any]) -> list[dict[str, Any]]:
+    info = await wranglermod.save_pipeline(
+        args["name"], args["collection"], args.get("stages") or [], args.get("_id")
+    )
+    return [{"type": "text", "text": json.dumps(info, indent=2, default=str)}]
+
+
+async def _tool_wrangler_list_pipelines(args: dict[str, Any]) -> list[dict[str, Any]]:
+    info = await wranglermod.list_pipelines(args.get("collection"))
+    return [{"type": "text", "text": json.dumps(info, indent=2, default=str)}]
+
+
+async def _tool_wrangler_suggest(args: dict[str, Any]) -> dict[str, Any]:
+    from wrangler_suggest import run_wrangler_suggest
+
+    result = await run_wrangler_suggest(args["collection"])
+    md_lines = [f"# Suggested pipelines for {args['collection']}", ""]
+    for p in result.get("pipelines", []):
+        md_lines.append(f"## {p['name']}")
+        if p.get("rationale"):
+            md_lines.append(p["rationale"])
+        md_lines.append(f"```json\n{json.dumps(p['stages'], indent=2)}\n```")
+    return {
+        "content": [
+            {"type": "text", "text": "\n".join(md_lines)},
+            {"type": "text", "text": json.dumps(result, indent=2, default=str)},
+        ],
+        "isError": not result.get("pipelines"),
+    }
+
+
 async def _tool_ask_data(args: dict[str, Any]) -> dict[str, Any]:
     question = args["question"]
     state = await run_ask_data(question)
@@ -765,6 +910,10 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "sheet_update_cell": _tool_sheet_update_cell,
         "sheet_insert_row": _tool_sheet_insert_row,
         "sheet_delete_row": _tool_sheet_delete_row,
+        "wrangler_sample": _tool_wrangler_sample,
+        "wrangler_run_prefix": _tool_wrangler_run_prefix,
+        "wrangler_save_pipeline": _tool_wrangler_save_pipeline,
+        "wrangler_list_pipelines": _tool_wrangler_list_pipelines,
     }
     if name in multi_content_tools:
         try:
@@ -783,6 +932,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_deep_agent(args)
     if name == "sheet_apply_nl":
         return await _tool_sheet_apply_nl(args)
+    if name == "wrangler_suggest":
+        return await _tool_wrangler_suggest(args)
 
     if name == "summarize_text":
         text = await _tool_summarize_text(args)

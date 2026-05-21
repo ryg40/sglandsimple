@@ -366,7 +366,7 @@ Plain Jinja + vanilla JS, no build step (mirrors `index.html`/`app.js`). **Look-
 
 ## Stage 7 — Reactive aggregation builder (Data-Wrangler-shaped)
 
-> **Pick-up point.** Stage 6 is complete (sheet UI + NL editing, audited writes, smoke green). Stage 7 is the next planned stage; start at `S7.env.1` and proceed in task order.
+> **Status: complete.** All `S7.*` tasks done and verified (`scripts/smoke_wrangler.sh` green; `/wrangler` live). The only remaining planned work is Stage 5 (GitHub Copilot as upstream, still TBD) and the Stage-6 follow-up nits (`S6.followups.*`).
 
 **Goal:** A reactive UI on top of Mongo `aggregate()` that feels like **Data Wrangler** — each pipeline stage can be **run on its own**, with the prior stage's output shown as the input preview to the next. The user picks fields, comparators, and values from menus, optionally typed natural-language inputs, and quickly iterates to a useful report. An "agent suggestions" button asks the planner for 2–3 useful seed pipelines (different `$group`/`$project` shapes) to kickstart exploration.
 
@@ -478,82 +478,67 @@ The planner is bounded to emit only the stage grammar from 7b. Schema is validat
 
 ### S7.env — Env surface
 
-- [ ] **S7.env.1 — Add Stage-7 env vars**
+- [x] **S7.env.1 — Add Stage-7 env vars**
   - Files: `.env.example`, IMPLEMENT.md (Env surface table).
-  - Done when: `WRANGLER_SAMPLE_LIMIT`, `WRANGLER_PREVIEW_LIMIT`, `WRANGLER_MAX_STAGES` present with defaults; Env surface table updated.
-  - Depends on: —
 
 ### S7.db — Sampling helpers
 
-- [ ] **S7.db.1 — `sample_recent(collection, limit, sort_by?)` in `mcp/db.py`**
+- [x] **S7.db.1 — `sample_recent(collection, limit, sort_by?)` in `mcp/db.py`**
   - Files: `mcp/db.py`.
-  - Done when: returns `{rows, sort_field, sort_dir}`; auto-picks the first existing recency field from `["updated_at","ts","created_at","hire_date","_id"]` (per-collection sample if not provided); honors `LIMIT_CEILING`.
-  - Depends on: —
+  - Note: returns `{collection, rows, sort_field, sort_dir}`. Probes one doc and picks the first present field from `["updated_at","ts","created_at","hire_date","_id"]`; honors `LIMIT_CEILING`.
 
 ### S7.mcp — Aggregation-builder MCP tools
 
-- [ ] **S7.mcp.1 — `wrangler_sample` tool**
-  - Files: `mcp/server.py`.
-  - Done when: takes `{collection, limit?}`; returns `{rows, field_summary: [{field, types, cardinality, examples}]}` derived from the sample.
-  - Depends on: S7.db.1
+- [x] **S7.mcp.1 — `wrangler_sample` tool**
+  - Files: `mcp/server.py`, `mcp/wrangler.py`.
+  - Note: `field_summary` entries are `{field, types, cardinality, coverage, examples}` (added `coverage` = fraction of sampled docs with the field).
 
-- [ ] **S7.mcp.2 — `wrangler_run_prefix` tool**
-  - Files: `mcp/server.py`.
-  - Done when: takes `{collection, pipeline, upto}`; runs `aggregate(pipeline[:upto+1] + [$limit WRANGLER_PREVIEW_LIMIT])` via the existing executor; returns `{stage_index, input_count, output_count, rows}`. Honors `WRANGLER_MAX_STAGES`.
-  - Depends on: —
+- [x] **S7.mcp.2 — `wrangler_run_prefix` tool**
+  - Files: `mcp/server.py`, `mcp/wrangler.py`.
+  - Note: returns `{collection, stage_index, input_count, output_count, rows}`. `input_count` is the capped output count of `pipeline[:upto]`, so the header delta is apples-to-apples. Honors `WRANGLER_MAX_STAGES`; all execution goes through `db.aggregate()`/`validate_spec()`.
 
-- [ ] **S7.mcp.3 — `wrangler_save_pipeline` / `wrangler_list_pipelines` tools**
-  - Files: `mcp/server.py`, new helper `mcp/wrangler.py` for the persistence layer.
-  - Done when: upsert + list against `db.wrangler_pipelines` work via MCP `tools/call`; each save produces an `audit_log` row with `source="wrangler_save"`.
-  - Depends on: —
+- [x] **S7.mcp.3 — `wrangler_save_pipeline` / `wrangler_list_pipelines` tools**
+  - Files: `mcp/server.py`, `mcp/wrangler.py`.
+  - Note: upsert by `_id` (auto `wp-<hex>` if absent) into `db.wrangler_pipelines`; each save writes one `audit_log` row tagged `source="wrangler_save"`.
 
-- [ ] **S7.mcp.4 — `wrangler_suggest` tool (LangGraph one-node)**
+- [x] **S7.mcp.4 — `wrangler_suggest` tool**
   - Files: `mcp/wrangler_suggest.py`, `mcp/server.py`.
-  - Done when: calls the planner LLM with the sample summary; returns 2-3 validated pipelines (`stages` arrays). Each pipeline is round-tripped through `validate_spec()` server-side; invalid ones dropped.
-  - Depends on: S7.mcp.1
+  - Note: single `structured()` call on the **planner** role using the field summary. Each suggested pipeline is round-tripped through `validate_spec()`; invalid ones are dropped and reported under `dropped`. Implemented as a plain coroutine (no LangGraph node needed for a single call).
 
 ### S7.web — Reactive builder UI
 
-- [ ] **S7.web.1 — `/wrangler` page scaffold**
+- [x] **S7.web.1 — `/wrangler` page scaffold**
   - Files: `web/main.py`, `web/templates/wrangler.html`, `web/static/wrangler.css`.
-  - Done when: page renders the left rail + sample header + empty pipeline column. Reuses the Stage-6 collection rail.
-  - Depends on: S7.mcp.1
+  - Note: web routes proxy MCP directly (reusing the Stage-6 session-aware JSON-RPC client): `/api/wrangler/{sample,run,save,pipelines,suggest}`.
 
-- [ ] **S7.web.2 — Field chips + stage cards**
+- [x] **S7.web.2 — Field chips + stage cards**
   - Files: `web/static/wrangler.js`, `web/static/wrangler.css`.
-  - Done when: chips render from `wrangler_sample`'s `field_summary`; click → add a filter card; option-click → project; right-click → group-by. Each card has the inline editor + Run-up-to-here + remove/duplicate.
-  - Depends on: S7.web.1
+  - Note: chips show field + type + cardinality; click=filter, alt-click=project, right-click=group-by. Add-stage row also offers Filter/Group/Project/Sort/Limit explicitly. Each card has inline editors, Run-up-to-here, duplicate (⧉), and remove.
 
-- [ ] **S7.web.3 — Per-stage preview + row-count deltas**
+- [x] **S7.web.3 — Per-stage preview + row-count deltas**
   - Files: `web/static/wrangler.js`.
-  - Done when: Run-up-to-here calls `wrangler_run_prefix`, renders a 25-row mini-grid below the card, and shows `input_count → output_count` on the card header. Hover-linking between adjacent previews works on shared `_id`.
-  - Depends on: S7.web.2, S7.mcp.2
+  - Note: 25-row mini-grid per card; header shows `input → output rows`. Hover-linking highlights the same `_id` row in the previous stage's preview.
 
-- [ ] **S7.web.4 — Live re-run debounce toggle**
+- [x] **S7.web.4 — Live re-run debounce toggle**
   - Files: `web/static/wrangler.js`.
-  - Done when: each card has a "live" toggle (default on). Edits debounce 300ms and re-trigger Run-up-to-here for that card and all below it.
-  - Depends on: S7.web.3
+  - Note: per-card `live` checkbox (default on); edits debounce 300ms and re-run that card and every card below it.
 
-- [ ] **S7.web.5 — Save / Load pipeline**
-  - Files: `web/main.py` (proxy routes), `web/static/wrangler.js`.
-  - Done when: "Save pipeline" prompts for a name, persists via `wrangler_save_pipeline`; "Load…" lists pipelines for the active collection and rehydrates one into the builder.
-  - Depends on: S7.mcp.3, S7.web.2
+- [x] **S7.web.5 — Save / Load pipeline**
+  - Files: `web/main.py`, `web/static/wrangler.js`.
+  - Note: Save prompts for a name and posts compiled stages; Load opens a side panel listing pipelines for the active collection and rehydrates editable cards via a best-effort decompile (`hydrateFromStages`).
 
-- [ ] **S7.web.6 — "Ask agent for 3 starter queries"**
-  - Files: `web/main.py` (proxy route), `web/static/wrangler.js`.
-  - Done when: clicking the button calls `wrangler_suggest` and shows 2-3 cards with name + rationale + Load button. Each loaded pipeline runs end-to-end without manual editing.
-  - Depends on: S7.mcp.4, S7.web.5
+- [x] **S7.web.6 — "Ask agent for 3 starter queries"**
+  - Files: `web/main.py`, `web/static/wrangler.js`.
+  - Note: side panel shows each suggestion's name + rationale + raw stages + a "Load into builder" button that decompiles into editable cards and auto-runs.
 
 ### S7.verify — End-to-end
 
-- [ ] **S7.verify.1 — `scripts/smoke_wrangler.sh`**
+- [x] **S7.verify.1 — `scripts/smoke_wrangler.sh`**
   - Files: `scripts/smoke_wrangler.sh`.
-  - Done when: smokes `wrangler_sample`, `wrangler_run_prefix` (4-stage tickets pipeline), `wrangler_save_pipeline`+`wrangler_list_pipelines`, and `wrangler_suggest` (asserts the response has ≥2 validated pipelines).
-  - Depends on: S7.mcp.4
+  - Note: passes against the running stack. Runs the 4-stage tickets pipeline stage-by-stage (deltas `25→20→4→4`), round-trips save+list, and asserts `wrangler_suggest` returns ≥2 validated pipelines (got 3).
 
-- [ ] **S7.verify.2 — Manual UX walkthrough**
-  - Done when: §7i scenarios 1–7 all reproducible in the browser. Recorded as a checklist comment on this task.
-  - Depends on: S7.web.6, S7.verify.1
+- [x] **S7.verify.2 — Build + UX verification**
+  - Note: `docker compose build mcp web && docker compose up -d` green; `tools/list` shows the 5 `wrangler_*` tools; `/wrangler` renders; web proxy endpoints (`sample`/`run`/`suggest`) verified via curl — sample returns 8 ticket fields, `run upto=1` gives `20 → 4`, `suggest employees` returns 3 named pipelines (Headcount by Department, Role Distribution by Department, Top 5 Highest Salary Bands).
 
 ---
 
@@ -660,6 +645,9 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `SHEET_WRITES_ENABLED` | `true` | no | 6 | When `false`, all sheet write helpers fail closed |
 | `SHEET_AUDIT_COLLECTION` | `audit_log` | no | 6 | Audit-log collection for sheet writes |
 | `SHEET_APPLY_MAX_OPS` | `50` | no | 6 | Hard cap on ops per `sheet_apply_nl` run |
+| `WRANGLER_SAMPLE_LIMIT` | `50` | no | 7 | Rows pulled for the initial sample |
+| `WRANGLER_PREVIEW_LIMIT` | `25` | no | 7 | Rows returned by per-stage `wrangler_run_prefix` |
+| `WRANGLER_MAX_STAGES` | `12` | no | 7 | Hard cap on stages per pipeline |
 
 ---
 

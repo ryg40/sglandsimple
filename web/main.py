@@ -233,6 +233,77 @@ async def api_sheet_nl(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
+# ---------------------------------------------------------------------------
+# Stage 7 — aggregation builder (proxy MCP wrangler_* tools)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/wrangler")
+async def wrangler(request: Request):
+    return templates.TemplateResponse("wrangler.html", {"request": request})
+
+
+@app.get("/api/wrangler/sample")
+async def api_wrangler_sample(collection: str, limit: int | None = None) -> JSONResponse:
+    args: dict[str, Any] = {"collection": collection}
+    if limit:
+        args["limit"] = int(limit)
+    result = await _mcp_tool("wrangler_sample", args)
+    if result.get("isError"):
+        return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
+    return JSONResponse(_extract_json_block(result))
+
+
+@app.post("/api/wrangler/run")
+async def api_wrangler_run(request: Request) -> JSONResponse:
+    body = await request.json()
+    for k in ("collection", "pipeline", "upto"):
+        if k not in body:
+            raise HTTPException(status_code=400, detail=f"missing field: {k}")
+    result = await _mcp_tool(
+        "wrangler_run_prefix",
+        {"collection": body["collection"], "pipeline": body["pipeline"], "upto": int(body["upto"])},
+    )
+    if result.get("isError"):
+        return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
+    return JSONResponse(_extract_json_block(result))
+
+
+@app.post("/api/wrangler/save")
+async def api_wrangler_save(request: Request) -> JSONResponse:
+    body = await request.json()
+    for k in ("name", "collection", "stages"):
+        if k not in body:
+            raise HTTPException(status_code=400, detail=f"missing field: {k}")
+    args = {"name": body["name"], "collection": body["collection"], "stages": body["stages"]}
+    if body.get("_id"):
+        args["_id"] = body["_id"]
+    result = await _mcp_tool("wrangler_save_pipeline", args)
+    if result.get("isError"):
+        return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
+    return JSONResponse(_extract_json_block(result))
+
+
+@app.get("/api/wrangler/pipelines")
+async def api_wrangler_pipelines(collection: str | None = None) -> JSONResponse:
+    args = {"collection": collection} if collection else {}
+    result = await _mcp_tool("wrangler_list_pipelines", args)
+    if result.get("isError"):
+        return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
+    return JSONResponse(_extract_json_block(result))
+
+
+@app.post("/api/wrangler/suggest")
+async def api_wrangler_suggest(request: Request) -> JSONResponse:
+    body = await request.json()
+    if "collection" not in body:
+        raise HTTPException(status_code=400, detail="collection required")
+    result = await _mcp_tool("wrangler_suggest", {"collection": body["collection"]})
+    payload = _extract_json_block(result)
+    payload["isError"] = bool(result.get("isError"))
+    return JSONResponse(payload)
+
+
 @app.post("/api/ask_data")
 async def api_ask_data(request: Request) -> JSONResponse:
     """Convenience: force the agent to call ask_data with the user's question.
