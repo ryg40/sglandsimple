@@ -366,7 +366,7 @@ Plain Jinja + vanilla JS, no build step (mirrors `index.html`/`app.js`). **Look-
 
 ## Stage 7 — Reactive aggregation builder (Data-Wrangler-shaped)
 
-> **Status: complete.** All `S7.*` tasks done and verified (`scripts/smoke_wrangler.sh` green; `/wrangler` live). The only remaining planned work is Stage 5 (GitHub Copilot as upstream, still TBD) and the Stage-6 follow-up nits (`S6.followups.*`).
+> **Status: complete.** All `S7.*` tasks done and verified (`scripts/smoke_wrangler.sh` green; `/wrangler` live). Next planned work is **Stage 8** (React + shadcn/ui admin-panel rewrite of the front end); after that, Stage 5 (GitHub Copilot as upstream, still TBD) and the Stage-6 follow-up nits (`S6.followups.*`).
 
 **Goal:** A reactive UI on top of Mongo `aggregate()` that feels like **Data Wrangler** — each pipeline stage can be **run on its own**, with the prior stage's output shown as the input preview to the next. The user picks fields, comparators, and values from menus, optionally typed natural-language inputs, and quickly iterates to a useful report. An "agent suggestions" button asks the planner for 2–3 useful seed pipelines (different `$group`/`$project` shapes) to kickstart exploration.
 
@@ -542,6 +542,221 @@ The planner is bounded to emit only the stage grammar from 7b. Schema is validat
 
 ---
 
+## Stage 8 — React + shadcn/ui admin panel (visual overhaul)
+
+> **Pick-up point.** Stages 6 & 7 are complete. Stage 8 is the next planned stage; start at `S8.scaffold.1` and proceed in task order. This is a **front-end rewrite only** — no MCP/agent/db changes. The existing `web/` API surface (the `/api/*` proxy routes) is preserved verbatim; only the presentation layer changes.
+
+**Goal:** Replace the no-build Jinja + vanilla-JS pages with a single **React + TypeScript + Vite + Tailwind v4 + shadcn/ui** SPA that presents Chat, Sheet, and Wrangler as panels of one cohesive, visually polished **admin dashboard**. Robustness is a first-class requirement: every data view has loading/empty/error states, every mutation is optimistic with rollback, the whole thing is keyboard- and screen-reader-navigable with a persisted light/dark theme, and all server payloads flow through a typed API client backed by TanStack Query.
+
+### 8a. Decisions (locked)
+
+- **Full React SPA rewrite** (not a CSS-only reskin, not a hybrid). `web/templates/*` and `web/static/*.{js,css}` are removed once parity is reached.
+- **Build/serve topology: multi-stage Docker, FastAPI serves the SPA.** Stage 1 (`node:20`) runs `vite build` → `dist/`; stage 2 (`python:3.12-slim`) copies `dist/` + `main.py`. FastAPI mounts the built assets and serves `index.html` as the SPA fallback for any non-`/api` route. Still one `web` container, still `:3000`, no new compose service.
+- **"Robust" scope (locked):** (1) loading/empty/error states + toasts + optimistic mutations with rollback; (2) a11y + light/dark theming with persisted preference; (3) a type-safe API layer (shared TS types + typed fetch client + TanStack Query). *Automated component tests / CI gates are out of scope for this stage* (can be a follow-up).
+- **Visual reference:** the Dribbble "Fintech Admin Dashboard" shot ([CDN image](https://cdn.dribbble.com/userupload/46653846/file/0f601882bc358a009ee16725d325eb15.png)). Translate its language into our tokens — see 8c.
+
+### 8b. Topology & layout
+
+The SPA is one app shell with three routed panels, reachable from a persistent left sidebar (replacing the three separate pages):
+
+```
+AppShell
+  ├─ Sidebar (collapsible)        grouped nav: Overview · Chat · Sheet · Wrangler;
+  │                               theme toggle + a pinned status card at the bottom
+  ├─ Topbar                       page title / breadcrumb, command search (⌘K),
+  │                               connection/health pill, primary actions per route
+  └─ <Outlet/>
+       ├─ /            Overview    dashboard: stat cards (collection counts, recent
+       │                           audit activity), a recent-transactions-style table
+       │                           fed by audit_log, quick links into the three tools
+       ├─ /chat        Chat        the existing agent chat (markdown + code), restyled
+       ├─ /sheet       Sheet       the Stage-6 grid as a shadcn DataTable
+       └─ /wrangler    Wrangler    the Stage-7 builder as shadcn Cards + DataTable previews
+```
+
+The **Overview** route is new — it's the "admin panel" landing surface the visual reference is built around. It reuses existing read endpoints (`/api/sheet/collections`, a new lightweight `/api/audit/recent` proxy — see 8g) and is the showcase for the fintech-dashboard styling.
+
+### 8c. Design language (from the reference)
+
+Translate the reference into shadcn/Tailwind tokens rather than hard-coded colors:
+
+- **Theme:** light default with a real dark mode. Soft neutral canvas (`--background` ~ `oklch(0.985 0 0)`), white elevated cards (`--card`) with hairline borders (`--border`) and a very soft shadow. Generous radii (`--radius: 0.875rem`).
+- **Sidebar:** grouped sections with small muted labels, icon + label rows, an active "pill" highlight, collapsible to icons-only. A pinned card at the bottom (status/health), mirroring the reference's promo card.
+- **Topbar:** greeting/breadcrumb left, centered command search, pill-shaped **primary** (dark) action buttons right.
+- **Cards:** big tabular-numeric figures with small muted captions; positive deltas green, negative red/orange; chips with soft tinted backgrounds for statuses (Completed/Pending/etc.).
+- **Charts:** smooth area/line via `recharts` (shadcn's chart wrapper) — an Overview trend card and a Money-movement-style stacked bar.
+- **Tables:** dense rows, avatar/logo cell, status chips, right-aligned monospaced amounts, hover row state. Use shadcn `DataTable` (TanStack Table).
+- **Typography:** Inter (or system) with clear hierarchy; `font-variant-numeric: tabular-nums` on all figures.
+
+### 8d. Stack & dependencies
+
+- `vite`, `react`, `react-dom`, `typescript`, `@vitejs/plugin-react`.
+- `tailwindcss@4` + `@tailwindcss/vite` (Tailwind v4, CSS-first config via `@theme`).
+- `shadcn/ui` (Radix primitives + class-variance-authority + tailwind-merge + lucide-react icons). Components added on demand: `button`, `card`, `input`, `table`/data-table, `dialog`, `dropdown-menu`, `tabs`, `sonner` (toasts), `skeleton`, `badge`, `tooltip`, `command`, `switch`/`theme-toggle`, `chart`.
+- `@tanstack/react-query` (server-state cache/retry/invalidation) + `@tanstack/react-table` (data grids).
+- `react-router-dom` (routing), `recharts` (charts), `react-markdown` + `highlight.js`/`rehype-highlight` (chat rendering, replacing the CDN `marked`).
+
+### 8e. Type-safe API layer
+
+- `src/lib/types.ts` — TS interfaces for every payload the existing routes return: `Collection`, `SheetRowsResponse`, `CellUpdateResult`, `SheetApplyResult`, `WranglerSample`, `FieldSummary`, `RunPrefixResult`, `Pipeline`, `SuggestResult`, plus the chat completion shape.
+- `src/lib/api.ts` — a thin typed `fetch` wrapper (`get<T>`, `post<T>`, `del<T>`) that throws a typed `ApiError` (status + parsed body) on non-2xx. No URL is hand-built in components.
+- `src/lib/queries.ts` — TanStack Query hooks: `useCollections`, `useSheetRows`, `useUpdateCell` (optimistic), `useInsertRow`, `useDeleteRow`, `useApplyNl`, `useWranglerSample`, `useRunPrefix`, `useSavePipeline`, `usePipelines`, `useSuggest`, `useRecentAudit`. Mutations invalidate the right query keys; cell/insert/delete are optimistic with rollback on error.
+
+### 8f. Robustness requirements (acceptance-bearing)
+
+- **States:** every panel renders a `Skeleton` while loading, an empty-state component when there's no data, and an inline error card with a retry button on failure. A top-level React error boundary catches render crashes and shows a recoverable fallback.
+- **Mutations:** cell edits, row insert/delete, and NL apply are optimistic; on error the cache rolls back and a destructive `sonner` toast explains why. Success shows a subtle confirmation.
+- **A11y:** all interactive controls reachable by keyboard; visible focus rings; dialogs/menus use Radix (focus trap + escape). The Sheet grid supports arrow-key cell navigation and Enter-to-edit. Charts have text alternatives (a data summary). Run `axe` manually; no serious violations.
+- **Theming:** a `ThemeProvider` toggles `.dark` on `<html>`, persists to `localStorage`, and defaults to `prefers-color-scheme`. Tokens defined once in `@theme`; no component hard-codes a hex.
+
+### 8g. New back-end surface (minimal)
+
+Only one additive read endpoint is needed; everything else reuses existing routes:
+
+- `GET /api/audit/recent?limit=` → web proxies a new MCP read tool **`audit_recent`** (or, if we'd rather not add an MCP tool, a direct read via the existing `mongo_query` tool against `audit_log`). Returns the latest audit rows for the Overview "recent activity" table. *Decision recorded in S8.api.1.*
+
+FastAPI changes: mount `dist/assets`, add a catch-all that returns `index.html` for non-`/api`, non-asset GETs (SPA fallback), keep all `/api/*` handlers byte-for-byte.
+
+### 8h. Migration / parity
+
+- Build the SPA alongside the old pages; cut over only when Chat + Sheet + Wrangler reach feature parity (every existing button/flow works).
+- Delete `web/templates/` and `web/static/*.{js,css}` in the same commit that flips FastAPI to serve `dist/`.
+- `.dockerignore` excludes `node_modules`; `web/dist/` is gitignored (built in CI/Docker, not committed).
+
+### 8i. Env surface (additions)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `WEB_BUILD_MODE` | `production` | no | 8 | `vite build` mode; `development` enables source maps |
+| `AUDIT_RECENT_LIMIT` | `25` | no | 8 | Default rows for the Overview activity table |
+
+(No new ports or services. `WEB_PORT` unchanged.)
+
+### 8j. Verification (intent)
+
+1. `docker compose build web` runs the Node build stage then the Python stage; `docker compose up -d` brings `web` up healthy on `${WEB_PORT}`.
+2. `/` renders the Overview dashboard with stat cards, a trend chart, and a recent-activity table — visually consistent with the reference (light theme).
+3. Theme toggle flips to dark, persists across reload, and respects `prefers-color-scheme` on first load.
+4. `/sheet` reaches full Stage-6 parity (cell edit, add/delete row, NL bar) with optimistic updates + rollback verified by forcing a failing edit.
+5. `/wrangler` reaches full Stage-7 parity (chips, per-stage run + deltas, save/load, suggest).
+6. Loading skeletons, empty states, and error-with-retry are each observable (e.g. by stopping `mcp`).
+7. Keyboard-only walkthrough of all three panels works; no serious `axe` violations.
+8. `scripts/smoke_web_spa.sh` passes (built `index.html` served, hashed assets resolve, SPA fallback returns `index.html` for `/sheet`, `/api/*` still returns JSON).
+
+---
+
+# Task checklist — Stage 8
+
+### S8.scaffold — Vite + React + Tailwind v4 + shadcn
+
+- [ ] **S8.scaffold.1 — Vite React+TS app under `web/`**
+  - Files: `web/package.json`, `web/tsconfig*.json`, `web/vite.config.ts`, `web/index.html`, `web/src/main.tsx`, `web/.gitignore`.
+  - Done when: `npm install && npm run build` produces `web/dist/` locally; `node_modules` and `dist` gitignored.
+  - Depends on: —
+
+- [ ] **S8.scaffold.2 — Tailwind v4 + design tokens**
+  - Files: `web/src/index.css` (`@import "tailwindcss"; @theme {...}`), `web/vite.config.ts` (`@tailwindcss/vite`).
+  - Done when: tokens for background/card/border/primary/muted/radius + light & dark are defined once; a sample component picks them up.
+  - Depends on: S8.scaffold.1
+
+- [ ] **S8.scaffold.3 — shadcn/ui init + base components**
+  - Files: `web/components.json`, `web/src/components/ui/*`, `web/src/lib/utils.ts`.
+  - Done when: `button`, `card`, `input`, `badge`, `skeleton`, `dialog`, `dropdown-menu`, `tabs`, `tooltip`, `sonner`, `table` are generated and importable.
+  - Depends on: S8.scaffold.2
+
+### S8.api — Type-safe data layer
+
+- [ ] **S8.api.1 — Decide + implement the `audit_recent` read**
+  - Files: `web/main.py` (+ optionally `mcp/server.py`/`mcp/wrangler.py`).
+  - Done when: `GET /api/audit/recent?limit=` returns the latest audit rows. Decision recorded inline: new MCP `audit_recent` tool **vs.** reuse `mongo_query` against `audit_log`. (Note: `audit_log` is not in `KNOWN_COLLECTIONS`, so reusing `mongo_query` requires either adding it or a dedicated tool — resolve here.)
+  - Depends on: —
+
+- [ ] **S8.api.2 — Shared TS types**
+  - Files: `web/src/lib/types.ts`.
+  - Done when: every `/api/*` payload has an interface; no `any` in the data layer.
+  - Depends on: S8.scaffold.1
+
+- [ ] **S8.api.3 — Typed fetch client + `ApiError`**
+  - Files: `web/src/lib/api.ts`.
+  - Done when: `get/post/del<T>` wrappers throw a typed `ApiError{status, body}` on non-2xx; base URL is same-origin `/api`.
+  - Depends on: S8.api.2
+
+- [ ] **S8.api.4 — TanStack Query hooks**
+  - Files: `web/src/lib/queries.ts`, `web/src/main.tsx` (QueryClientProvider).
+  - Done when: all hooks from §8e exist; cell/insert/delete/apply-nl mutations are optimistic with rollback and invalidate the right keys.
+  - Depends on: S8.api.3, S8.scaffold.3
+
+### S8.shell — App shell, routing, theming
+
+- [ ] **S8.shell.1 — Router + AppShell (sidebar + topbar)**
+  - Files: `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`, `web/src/components/topbar.tsx`, route files.
+  - Done when: `/`, `/chat`, `/sheet`, `/wrangler` route within one shell; sidebar collapsible; active route highlighted.
+  - Depends on: S8.scaffold.3
+
+- [ ] **S8.shell.2 — Theme provider + toggle (persisted)**
+  - Files: `web/src/components/theme-provider.tsx`, `web/src/components/theme-toggle.tsx`.
+  - Done when: toggles `.dark`, persists to `localStorage`, defaults to `prefers-color-scheme`.
+  - Depends on: S8.scaffold.2
+
+- [ ] **S8.shell.3 — Error boundary + global toaster**
+  - Files: `web/src/components/error-boundary.tsx`, mount `<Toaster/>`.
+  - Done when: a thrown render error shows a recoverable fallback; toasts render app-wide.
+  - Depends on: S8.shell.1
+
+### S8.overview — Dashboard landing (the showcase)
+
+- [ ] **S8.overview.1 — Stat cards + trend chart**
+  - Files: `web/src/routes/overview.tsx`, `web/src/components/stat-card.tsx`, chart components.
+  - Done when: collection-count stat cards + a `recharts` area/line trend render with loading skeletons; styled to the reference.
+  - Depends on: S8.api.4, S8.shell.1
+
+- [ ] **S8.overview.2 — Recent-activity table**
+  - Files: `web/src/routes/overview.tsx`, `web/src/components/activity-table.tsx`.
+  - Done when: the `audit_recent` feed renders as a fintech-style table with status chips + relative timestamps; empty/error states present.
+  - Depends on: S8.api.1, S8.api.4
+
+### S8.panels — Port the three tools
+
+- [ ] **S8.panels.1 — Chat panel**
+  - Files: `web/src/routes/chat.tsx`.
+  - Done when: full parity with the old chat (send, ask-data, markdown + code highlight) using `react-markdown`; loading + error states.
+  - Depends on: S8.api.4, S8.shell.1
+
+- [ ] **S8.panels.2 — Sheet panel (shadcn DataTable)**
+  - Files: `web/src/routes/sheet.tsx`, `web/src/components/data-grid.tsx`.
+  - Done when: Stage-6 parity — collection rail/tabs, click-to-edit cells (optimistic + rollback), add/delete row, paging, NL bar; keyboard cell nav.
+  - Depends on: S8.api.4
+
+- [ ] **S8.panels.3 — Wrangler panel**
+  - Files: `web/src/routes/wrangler.tsx`, stage-card + preview components.
+  - Done when: Stage-7 parity — field chips, stage cards with per-stage run + delta, 25-row previews, live-rerun toggle, save/load, suggest.
+  - Depends on: S8.api.4
+
+### S8.docker — Build & serve
+
+- [ ] **S8.docker.1 — Multi-stage Dockerfile + FastAPI SPA serving**
+  - Files: `web/Dockerfile`, `web/main.py`, `web/.dockerignore`.
+  - Done when: Node stage builds `dist/`; Python stage copies it; FastAPI mounts `dist/assets` and serves `index.html` as SPA fallback for non-`/api` GETs; all `/api/*` handlers unchanged. `WEB_BUILD_MODE`/`AUDIT_RECENT_LIMIT` added to `.env.example` + Env surface table.
+  - Depends on: S8.panels.1, S8.panels.2, S8.panels.3, S8.overview.2
+
+- [ ] **S8.docker.2 — Remove legacy Jinja/vanilla pages**
+  - Files: delete `web/templates/`, `web/static/{app,sheet,wrangler}.{js,css}`, old template routes in `main.py`.
+  - Done when: nothing references the removed files; build still green; all routes served by the SPA.
+  - Depends on: S8.docker.1
+
+### S8.verify — End-to-end
+
+- [ ] **S8.verify.1 — `scripts/smoke_web_spa.sh`**
+  - Files: `scripts/smoke_web_spa.sh`.
+  - Done when: asserts built `index.html` is served, a hashed asset 200s, SPA fallback returns `index.html` for `/sheet`, and `/api/sheet/collections` still returns JSON.
+  - Depends on: S8.docker.1
+
+- [ ] **S8.verify.2 — Build + manual UX/a11y walkthrough**
+  - Done when: §8j scenarios 1–8 reproducible; dark mode persists; optimistic rollback observed; keyboard-only pass clean; recorded as a checklist note on this task.
+  - Depends on: S8.docker.2, S8.verify.1
+
+---
+
 ## Stage 5 — GitHub Copilot as an upstream provider (TBD)
 
 **Goal:** Let the stack target a GitHub Copilot Pro/Business/Enterprise subscription as `UPSTREAM_*` so the same agent + MCP plumbing can run on Copilot-hosted models (Claude Sonnet, GPT-4.1, etc.), the way opencode / PiAgent do.
@@ -648,6 +863,8 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `WRANGLER_SAMPLE_LIMIT` | `50` | no | 7 | Rows pulled for the initial sample |
 | `WRANGLER_PREVIEW_LIMIT` | `25` | no | 7 | Rows returned by per-stage `wrangler_run_prefix` |
 | `WRANGLER_MAX_STAGES` | `12` | no | 7 | Hard cap on stages per pipeline |
+| `WEB_BUILD_MODE` | `production` | no | 8 | `vite build` mode; `development` enables source maps |
+| `AUDIT_RECENT_LIMIT` | `25` | no | 8 | Default rows for the Overview activity table |
 
 ---
 
