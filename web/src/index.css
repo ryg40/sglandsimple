@@ -5,33 +5,41 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Design tokens — translated from the fintech-admin reference into
- * oklch. Light is the default; .dark overrides. Components reference
- * the semantic tokens only (never raw hex), so theming stays in one place.
+ * Stage 13 — Fleet-Dispatch design system. Brand palette (raw hex for
+ * reference only; components reference semantic tokens, never hex):
+ *   white  #FFFFFF  ≈ oklch(1 0 0)
+ *   amber  #FFD000  ≈ oklch(0.85 0.18 95)    — PRIMARY accent
+ *   navy   #1A1446  ≈ oklch(0.25 0.09 285)   — dark canvas / light text+chrome
+ *   teal   #06748C  ≈ oklch(0.55 0.09 220)   — SECONDARY / links / charts
+ * Dark mode is the headline control-room look (navy canvas); light is clean
+ * white. Status red/green are kept distinct from brand colors (they carry
+ * meaning). Theming lives entirely in this file.
  */
 :root {
   --radius: 0.875rem;
 
-  --background: oklch(0.985 0.002 247);
-  --foreground: oklch(0.21 0.02 257);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.25 0.09 285);
 
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.21 0.02 257);
+  --card-foreground: oklch(0.25 0.09 285);
 
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.02 257);
+  --popover-foreground: oklch(0.25 0.09 285);
 
-  --primary: oklch(0.22 0.02 257);
-  --primary-foreground: oklch(0.985 0 0);
+  /* amber primary, navy text on it */
+  --primary: oklch(0.85 0.18 95);
+  --primary-foreground: oklch(0.25 0.09 285);
 
-  --secondary: oklch(0.967 0.003 247);
-  --secondary-foreground: oklch(0.22 0.02 257);
+  /* teal secondary */
+  --secondary: oklch(0.55 0.09 220);
+  --secondary-foreground: oklch(1 0 0);
 
-  --muted: oklch(0.967 0.003 247);
-  --muted-foreground: oklch(0.55 0.02 257);
+  --muted: oklch(0.96 0.005 270);
+  --muted-foreground: oklch(0.5 0.04 270);
 
-  --accent: oklch(0.95 0.02 250);
-  --accent-foreground: oklch(0.22 0.02 257);
+  --accent: oklch(0.93 0.04 95);
+  --accent-foreground: oklch(0.25 0.09 285);
 
   --destructive: oklch(0.58 0.22 27);
   --destructive-foreground: oklch(0.985 0 0);
@@ -39,48 +47,51 @@
   --success: oklch(0.62 0.17 152);
   --success-foreground: oklch(0.985 0 0);
 
-  --warning: oklch(0.72 0.17 65);
+  --warning: oklch(0.82 0.17 85);
 
-  --border: oklch(0.922 0.004 247);
-  --input: oklch(0.922 0.004 247);
-  --ring: oklch(0.62 0.13 250);
+  --border: oklch(0.9 0.01 270);
+  --input: oklch(0.9 0.01 270);
+  --ring: oklch(0.85 0.18 95);
 
-  /* sidebar surface (slightly off-canvas) */
-  --sidebar: oklch(0.992 0.002 247);
-  --sidebar-foreground: oklch(0.32 0.02 257);
-  --sidebar-accent: oklch(0.95 0.02 250);
-  --sidebar-accent-foreground: oklch(0.22 0.06 255);
-  --sidebar-border: oklch(0.922 0.004 247);
+  /* sidebar surface (navy, brand chrome even in light mode) */
+  --sidebar: oklch(0.25 0.09 285);
+  --sidebar-foreground: oklch(0.92 0.01 270);
+  --sidebar-accent: oklch(0.32 0.09 285);
+  --sidebar-accent-foreground: oklch(0.85 0.18 95);
+  --sidebar-border: oklch(1 0 0 / 12%);
 
-  /* chart series */
-  --chart-1: oklch(0.62 0.19 250);
-  --chart-2: oklch(0.65 0.16 152);
-  --chart-3: oklch(0.72 0.17 65);
-  --chart-4: oklch(0.6 0.21 16);
+  /* chart series — lead amber + teal, then navy/teal tints */
+  --chart-1: oklch(0.85 0.18 95);
+  --chart-2: oklch(0.55 0.09 220);
+  --chart-3: oklch(0.4 0.09 285);
+  --chart-4: oklch(0.68 0.1 200);
   --chart-5: oklch(0.58 0.16 300);
 }
 
 .dark {
-  --background: oklch(0.17 0.015 257);
-  --foreground: oklch(0.96 0.005 247);
+  /* navy canvas — the headline control-room look */
+  --background: oklch(0.2 0.08 285);
+  --foreground: oklch(0.98 0.005 270);
 
-  --card: oklch(0.215 0.018 257);
-  --card-foreground: oklch(0.96 0.005 247);
+  --card: oklch(0.25 0.09 285);
+  --card-foreground: oklch(0.98 0.005 270);
 
-  --popover: oklch(0.215 0.018 257);
-  --popover-foreground: oklch(0.96 0.005 247);
+  --popover: oklch(0.25 0.09 285);
+  --popover-foreground: oklch(0.98 0.005 270);
 
-  --primary: oklch(0.96 0.005 247);
-  --primary-foreground: oklch(0.21 0.02 257);
+  /* amber primary, navy text on it */
+  --primary: oklch(0.85 0.18 95);
+  --primary-foreground: oklch(0.22 0.09 285);
 
-  --secondary: oklch(0.27 0.02 257);
-  --secondary-foreground: oklch(0.96 0.005 247);
+  /* teal secondary */
+  --secondary: oklch(0.55 0.09 220);
+  --secondary-foreground: oklch(0.98 0.005 270);
 
-  --muted: oklch(0.27 0.02 257);
-  --muted-foreground: oklch(0.7 0.02 257);
+  --muted: oklch(0.3 0.06 285);
+  --muted-foreground: oklch(0.75 0.03 270);
 
-  --accent: oklch(0.3 0.03 255);
-  --accent-foreground: oklch(0.96 0.005 247);
+  --accent: oklch(0.34 0.08 285);
+  --accent-foreground: oklch(0.85 0.18 95);
 
   --destructive: oklch(0.62 0.2 25);
   --destructive-foreground: oklch(0.98 0 0);
@@ -88,23 +99,24 @@
   --success: oklch(0.68 0.16 152);
   --success-foreground: oklch(0.16 0.02 257);
 
-  --warning: oklch(0.76 0.16 65);
+  --warning: oklch(0.82 0.17 85);
 
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.62 0.13 250);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.85 0.18 95);
 
-  --sidebar: oklch(0.2 0.018 257);
-  --sidebar-foreground: oklch(0.9 0.01 247);
-  --sidebar-accent: oklch(0.3 0.03 255);
-  --sidebar-accent-foreground: oklch(0.96 0.005 247);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar: oklch(0.17 0.07 285);
+  --sidebar-foreground: oklch(0.9 0.01 270);
+  --sidebar-accent: oklch(0.32 0.09 285);
+  --sidebar-accent-foreground: oklch(0.85 0.18 95);
+  --sidebar-border: oklch(1 0 0 / 12%);
 
-  --chart-1: oklch(0.68 0.18 250);
-  --chart-2: oklch(0.7 0.15 152);
-  --chart-3: oklch(0.76 0.16 65);
-  --chart-4: oklch(0.66 0.2 16);
-  --chart-5: oklch(0.64 0.15 300);
+  /* chart series — lead amber + teal */
+  --chart-1: oklch(0.85 0.18 95);
+  --chart-2: oklch(0.62 0.1 220);
+  --chart-3: oklch(0.72 0.08 240);
+  --chart-4: oklch(0.7 0.1 200);
+  --chart-5: oklch(0.78 0.12 110);
 }
 
 /* Map tokens into Tailwind's theme so utilities like bg-card, text-muted-foreground work. */
@@ -149,7 +161,7 @@
   --radius-sm: calc(var(--radius) - 0.4rem);
   --radius-xl: calc(var(--radius) + 0.25rem);
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Roboto", Arial, sans-serif;
 }
 
 @layer base {
