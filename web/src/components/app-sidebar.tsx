@@ -7,6 +7,8 @@ import {
   PanelLeftClose,
   PanelLeft,
   Activity,
+  Shield,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCollections } from "@/lib/queries";
@@ -25,6 +27,8 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/chat", label: "Chat", icon: MessageSquare },
       { to: "/sheet", label: "Sheet", icon: Table2 },
       { to: "/wrangler", label: "Wrangler", icon: Workflow },
+      { to: "/hub", label: "Compliance Hub", icon: Shield },
+      { to: "/workflow", label: "Workflow Orchestrator", icon: Clock },
     ],
   },
 ];

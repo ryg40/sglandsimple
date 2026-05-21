@@ -48,6 +48,13 @@ export const api = {
   del: <T>(url: string) => request<T>("DELETE", url),
 };
 
+export const api_stage9 = {
+  getConnectors: () => api.get<{ connectors: any[] }>("/api/connectors"),
+  getConnector: (name: string) => api.get<any>(`/api/connectors/${name}`),
+  runWorkflow: (findingId: string, decision?: string, runId?: string) =>
+    api.post<any>("/api/workflow/run", { finding_id: findingId, resume_decision: decision, checkpoint_id: runId }),
+};
+
 export function qs(params: Record<string, string | number | undefined>): string {
   const u = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") u.set(k, String(v));

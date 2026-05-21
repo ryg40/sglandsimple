@@ -195,3 +195,34 @@ export function useAskData() {
     mutationFn: (question: string) => api.post<ChatCompletion>("/api/ask_data", { question }),
   });
 }
+
+// ---- Stage 9 — Compliance Hub React Query Hooks ---------------------------
+
+export const keys_stage9 = {
+  connectors: ["connectors-bubbles"] as const,
+  connector: (name: string) => ["connector-detail", name] as const,
+};
+
+export function useConnectors() {
+  return useQuery({
+    queryKey: keys_stage9.connectors,
+    queryFn: () => api.get<{ connectors: any[] }>("/api/connectors"),
+    refetchInterval: 30_000, // Poll every 30 seconds
+  });
+}
+
+export function useConnectorDetail(name: string | null) {
+  return useQuery({
+    queryKey: keys_stage9.connector(name ?? ""),
+    queryFn: () => api.get<any>(`/api/connectors/${name}`),
+    enabled: !!name,
+  });
+}
+
+export function useWorkflowRun() {
+  return useMutation({
+    mutationFn: (a: { finding_id: string; resume_decision?: string; checkpoint_id?: string }) =>
+      api.post<any>("/api/workflow/run", a),
+  });
+}
+

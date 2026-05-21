@@ -7,6 +7,8 @@ import Overview from "@/routes/overview";
 import Chat from "@/routes/chat";
 import Sheet from "@/routes/sheet";
 import Wrangler from "@/routes/wrangler";
+import Hub from "@/routes/hub";
+import Workflow from "@/routes/workflow";
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
@@ -22,6 +24,8 @@ export default function App() {
               <Route path="/chat" element={<Chat />} />
               <Route path="/sheet" element={<Sheet />} />
               <Route path="/wrangler" element={<Wrangler />} />
+              <Route path="/hub" element={<Hub />} />
+              <Route path="/workflow" element={<Workflow />} />
             </Routes>
           </main>
         </div>
