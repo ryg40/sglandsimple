@@ -23,6 +23,8 @@ class ServiceNowConnector:
     async def health(self) -> dict:
         if not self.enabled:
             return {"status": "disabled"}
+        if not self.url or not self.token:
+            return {"status": "degraded", "error": "Missing SERVICENOW_URL or SERVICENOW_TOKEN"}
         try:
             # Table API client sanity check as health-probe Table GET
             headers = {"Authorization": f"Bearer {self.token}"}

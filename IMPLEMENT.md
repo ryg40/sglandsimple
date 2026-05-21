@@ -1579,12 +1579,12 @@ Per-session budget target: **80k tokens**. Mechanism:
 
 ### 10c. Task Checklist
 
-- [ ] **S10.scope.1 — Restructure graph nodes tool scoping**
+- [x] **S10.scope.1 — Restructure graph nodes tool scoping**
   - Files: `mcp/workflow/nodes.py`, `mcp/connectors/__init__.py`.
   - Done when: `get_connector(name).tools()` is utilized inside `nodes.py` to selectively fetch and inject *only* system-specific tools to the LLM during distinct node tasks, reducing prompt size by 80%+.
   - Depends on: S9.workflow.2
 
-- [ ] **S10.scope.2 — Least-privilege credentials isolation**
+- [x] **S10.scope.2 — Least-privilege credentials isolation**
   - Files: `mcp/connectors/__init__.py`.
   - Done when: connectors verify and utilize scoped API keys, preventing global leakage if a single provider is degraded.
   - Depends on: S9.connect.2

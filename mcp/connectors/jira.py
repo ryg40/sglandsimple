@@ -21,7 +21,8 @@ class JiraConnector:
     async def health(self) -> dict:
         if not self.enabled:
             return {"status": "disabled"}
-        # Simply return OK as active placeholder
+        if not self.mcp_url or not self.mcp_token:
+            return {"status": "degraded", "error": "Missing JIRA_MCP_URL or JIRA_MCP_TOKEN"}
         return {"status": "healthy", "url": self.mcp_url}
 
     async def summary(self) -> dict:

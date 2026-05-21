@@ -15,10 +15,15 @@ class SnowflakeConnector:
 
     def __init__(self, enabled: bool = False) -> None:
         self.enabled = enabled
+        self.account = os.environ.get("SNOWFLAKE_ACCOUNT", "")
+        self.user = os.environ.get("SNOWFLAKE_USER", "")
+        self.token = os.environ.get("SNOWFLAKE_TOKEN", "")
 
     async def health(self) -> dict:
         if not self.enabled:
             return {"status": "disabled"}
+        if not self.account or not self.user or not self.token:
+            return {"status": "degraded", "error": "Missing Snowflake credentials (account, user, or token)"}
         try:
             # In a real environment, we'd import and run
             # import snowflake.connector

@@ -16,10 +16,13 @@ class ConfluenceConnector:
     def __init__(self, enabled: bool = False) -> None:
         self.enabled = enabled
         self.mcp_url = os.environ.get("CONFLUENCE_MCP_URL", "")
+        self.mcp_token = os.environ.get("CONFLUENCE_MCP_TOKEN", "")
 
     async def health(self) -> dict:
         if not self.enabled:
             return {"status": "disabled"}
+        if not self.mcp_url or not self.mcp_token:
+            return {"status": "degraded", "error": "Missing CONFLUENCE_MCP_URL or CONFLUENCE_MCP_TOKEN"}
         return {"status": "healthy", "url": self.mcp_url}
 
     async def summary(self) -> dict:

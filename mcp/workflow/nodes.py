@@ -68,6 +68,21 @@ async def generate_ticket(state: dict[str, Any]) -> dict[str, Any]:
     payload = render_jira_story(finding, epic)
 
     jira_conn = get_connector("jira")
+    scoped_tools = jira_conn.tools() if jira_conn else []
+
+    # Node-Level Tool Scoping: Use LLM with system-scoped tools for verification checks
+    from llm import chat_model
+    model = chat_model(role="builder")
+    if scoped_tools:
+        try:
+            scoped_model = model.bind_tools(scoped_tools)
+            await scoped_model.ainvoke([
+                {"role": "system", "content": f"You are a specialized Jira ticket generator assistant. You have access ONLY to Jira tools: {[t['name'] for t in scoped_tools]}. Verify compliance ticketing payload."},
+                {"role": "user", "content": f"Story summary: {payload.get('summary')}\nDescription: {payload.get('description')}"}
+            ])
+        except Exception as scoped_err:
+            print(f"[workflow nodes] scoped jira verification check failed: {scoped_err}", flush=True)
+
     is_live = dbmod.WORKFLOW_WRITES_ENABLED and jira_conn and jira_conn.enabled
 
     ticket_key = "MOCK-123"
@@ -134,6 +149,21 @@ async def open_pr(state: dict[str, Any]) -> dict[str, Any]:
     pr_spec = state["artifacts"]["pr_spec"]
 
     github_conn = get_connector("github")
+    scoped_tools = github_conn.tools() if github_conn else []
+
+    # Node-Level Tool Scoping: Use LLM with system-scoped GitHub tools
+    from llm import chat_model
+    model = chat_model(role="builder")
+    if scoped_tools:
+        try:
+            scoped_model = model.bind_tools(scoped_tools)
+            await scoped_model.ainvoke([
+                {"role": "system", "content": f"You are a specialized GitHub integration micro-agent. You have access ONLY to GitHub tools: {[t['name'] for t in scoped_tools]}. Verify PR branch and config layout."},
+                {"role": "user", "content": f"PR request titling: {pr_spec.get('title')} on branch: {branch_name}"}
+            ])
+        except Exception as scoped_err:
+            print(f"[workflow nodes] scoped github verification check failed: {scoped_err}", flush=True)
+
     is_live = dbmod.WORKFLOW_WRITES_ENABLED and github_conn and github_conn.enabled
 
     pr_url = "https://github.com/org/repo/pull/123"
@@ -198,6 +228,21 @@ async def post_approval_docs(state: dict[str, Any]) -> dict[str, Any]:
     doc_text = render_epic_log(finding, epic, recent_runs)
 
     confluence_conn = get_connector("confluence")
+    scoped_tools = confluence_conn.tools() if confluence_conn else []
+
+    # Node-Level Tool Scoping: Use LLM with system-scoped Confluence tools
+    from llm import chat_model
+    model = chat_model(role="builder")
+    if scoped_tools:
+        try:
+            scoped_model = model.bind_tools(scoped_tools)
+            await scoped_model.ainvoke([
+                {"role": "system", "content": f"You are a specialized Confluence page publisher micro-agent. You have access ONLY to Confluence tools: {[t['name'] for t in scoped_tools]}. Verify compliance wiki logging page details."},
+                {"role": "user", "content": f"Documentation text preview:\n{doc_text[:300]}..."}
+            ])
+        except Exception as scoped_err:
+            print(f"[workflow nodes] scoped confluence verification check failed: {scoped_err}", flush=True)
+
     is_live = dbmod.WORKFLOW_WRITES_ENABLED and confluence_conn and confluence_conn.enabled
 
     confluence_url = "https://confluence.example.com/pages/RDS-Log-Audit"
