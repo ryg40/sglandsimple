@@ -26,6 +26,7 @@ import sandbox as sbx
 import wrangler as wranglermod
 from ask_data import render_markdown as render_ask_data_markdown
 from ask_data import run_ask_data
+from connectors import connector_tools, get_connector, init_connectors, list_connectors
 from deep_agent import Plan, run_deep_agent, run_plan_task, run_run_plan
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
@@ -467,6 +468,32 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
 ]
+
+# Stage 9 — append connector tools dynamically after the static list is defined.
+TOOLS.extend(connector_tools())
+
+
+# ---------------------------------------------------------------------------
+# Connector tools (proxied through registry)
+# ---------------------------------------------------------------------------
+
+
+async def _tool_connector_health(args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    conn = get_connector(name) if name else None
+    if conn is None:
+        return {"content": [{"type": "text", "text": f"Connector '{name}' not found. Registered: {[c.name for c in list_connectors()]}"}], "isError": True}
+    result = await conn.health()
+    return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}], "isError": False}
+
+
+async def _tool_connector_summary(args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    conn = get_connector(name) if name else None
+    if conn is None:
+        return {"content": [{"type": "text", "text": f"Connector '{name}' not found. Registered: {[c.name for c in list_connectors()]}"}], "isError": True}
+    result = await conn.summary()
+    return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}], "isError": False}
 
 
 async def _upstream_chat(messages: list[dict[str, str]]) -> str:
@@ -964,6 +991,10 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         text = await _tool_chat(args)
     elif name == "echo":
         text = _tool_echo(args)
+    elif name == "connector_health":
+        return await _tool_connector_health(args)
+    elif name == "connector_summary":
+        return await _tool_connector_summary(args)
     else:
         return {
             "content": [{"type": "text", "text": f"Unknown tool: {name}"}],
@@ -1093,6 +1124,7 @@ app = FastAPI(title="sglandsimple MCP server")
 
 @app.on_event("startup")
 async def _startup_log() -> None:
+    await init_connectors()
     if not MCP_AUTH_TOKEN:
         print(
             "[mcp] WARNING: MCP_AUTH_TOKEN is not set; /mcp is open. "

@@ -22,6 +22,7 @@ import os
 import time
 from typing import Any
 
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
 
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://mongo:27017")
@@ -30,9 +31,23 @@ LIMIT_CEILING = int(os.environ.get("ASK_DATA_LIMIT_CEILING", "50"))
 
 KNOWN_COLLECTIONS = ("employees", "tickets", "documents")
 
+# Stage 9 — workflow collections
+WORKFLOW_COLLECTIONS = (
+    "audit_findings",
+    "epics",
+    "work_items",
+    "pr_records",
+    "doc_records",
+    "log_samples",
+    "workflow_runs",
+)
+
 # Stage 6 — write surface.
 SHEET_WRITES_ENABLED = os.environ.get("SHEET_WRITES_ENABLED", "true").lower() == "true"
 SHEET_AUDIT_COLLECTION = os.environ.get("SHEET_AUDIT_COLLECTION", "audit_log")
+
+# Stage 9 — workflow write flag (defaults to dry-run / false)
+WORKFLOW_WRITES_ENABLED = os.environ.get("WORKFLOW_WRITES_ENABLED", "false").lower() == "true"
 
 # Update operators the sheet write-layer allows. Anything outside this set
 # is rejected before the driver sees it.
@@ -556,3 +571,122 @@ async def audit_recent(limit: int = 25) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         raise ExecError(f"audit_recent failed: {e}") from e
     return {"collection": SHEET_AUDIT_COLLECTION, "rows": [_stringify_ids(r) for r in rows]}
+
+
+# ---------------------------------------------------------------------------
+# Stage 9 — workflow collections helpers
+# ---------------------------------------------------------------------------
+
+
+def _require_workflow_collection(name: Any) -> str:
+    if name not in WORKFLOW_COLLECTIONS:
+        raise SpecError(f"unknown workflow collection: {name!r}")
+    return name
+
+
+async def find_workflow(collection: str, _id: str) -> dict[str, Any] | None:
+    """Read a single workflow document by its string _id."""
+    coll_name = _require_workflow_collection(collection)
+    db = get_db()
+    doc = await db[coll_name].find_one({"_id": _id})
+    return _stringify_ids(doc) if doc else None
+
+
+async def insert_workflow(collection: str, doc: dict[str, Any], *, source: str = "workflow_direct") -> dict[str, Any]:
+    """Insert a document into a workflow collection with audit logging."""
+    if not WORKFLOW_WRITES_ENABLED:
+        raise SpecError("workflow writes disabled (WORKFLOW_WRITES_ENABLED=false)")
+    coll_name = _require_workflow_collection(collection)
+    if not isinstance(doc, dict):
+        raise SpecError("doc must be a dict")
+    if "_id" not in doc:
+        doc["_id"] = str(ObjectId())
+    db = get_db()
+    try:
+        result = await db[coll_name].insert_one(doc)
+    except Exception as e:  # noqa: BLE001
+        raise ExecError(f"insert_workflow failed: {e}") from e
+    inserted_id = result.inserted_id
+    after = await db[coll_name].find_one({"_id": inserted_id})
+    after_s = _stringify_ids(after) if after is not None else None
+    await _audit("insertOne", coll_name, str(inserted_id), None, after_s, source)
+    return {"_id": str(inserted_id), "after": after_s}
+
+
+async def update_workflow(
+    collection: str, _id: str, update: dict[str, Any], *, source: str = "workflow_direct"
+) -> dict[str, Any]:
+    """Update a workflow document by its string _id with audit logging."""
+    if not WORKFLOW_WRITES_ENABLED:
+        raise SpecError("workflow writes disabled (WORKFLOW_WRITES_ENABLED=false)")
+    coll_name = _require_workflow_collection(collection)
+    extra = set(update.keys()) - _ALLOWED_UPDATE_OPERATORS
+    if extra:
+        raise SpecError(f"unknown update operators: {sorted(extra)}")
+    _walk_forbidden(update, "/update")
+    db = get_db()
+    before = await db[coll_name].find_one({"_id": _id})
+    if before is None:
+        raise SpecError(f"no document with _id={_id!r}")
+    try:
+        result = await db[coll_name].update_one({"_id": _id}, update)
+    except Exception as e:  # noqa: BLE001
+        raise ExecError(f"update_workflow failed: {e}") from e
+    after = await db[coll_name].find_one({"_id": _id})
+    before_s = _stringify_ids(before)
+    after_s = _stringify_ids(after) if after is not None else None
+    await _audit("updateOne", coll_name, _id, before_s, after_s, source)
+    return {
+        "_id": _id,
+        "matched": result.matched_count,
+        "modified": result.modified_count,
+        "before": before_s,
+        "after": after_s,
+    }
+
+
+async def find_workflow_run(run_id: str) -> dict[str, Any] | None:
+    """Read a workflow run document by its string _id."""
+    return await find_workflow("workflow_runs", run_id)
+
+
+async def upsert_workflow_run(run_id: str, doc: dict[str, Any]) -> dict[str, Any]:
+    """Replace-or-insert a workflow run document with audit logging."""
+    if not WORKFLOW_WRITES_ENABLED:
+        raise SpecError("workflow writes disabled (WORKFLOW_WRITES_ENABLED=false)")
+    db = get_db()
+    before = await db["workflow_runs"].find_one({"_id": run_id})
+    try:
+        result = await db["workflow_runs"].replace_one(
+            {"_id": run_id}, doc, upsert=True
+        )
+    except Exception as e:  # noqa: BLE001
+        raise ExecError(f"upsert_workflow_run failed: {e}") from e
+    after = await db["workflow_runs"].find_one({"_id": run_id})
+    before_s = _stringify_ids(before) if before else None
+    after_s = _stringify_ids(after) if after else None
+    source = doc.get("source", "workflow_run")
+    await _audit("replaceOne" if before else "insertOne", "workflow_runs", run_id, before_s, after_s, source)
+    return {
+        "_id": run_id,
+        "matched": result.matched_count,
+        "modified": result.modified_count,
+        "upserted": result.upserted_id is not None,
+        "before": before_s,
+        "after": after_s,
+    }
+
+
+async def list_workflow_runs(finding_id: str | None = None, *, limit: int = 50) -> list[dict[str, Any]]:
+    """List workflow runs, optionally filtered by finding_id."""
+    db = get_db()
+    filt: dict[str, Any] = {}
+    if finding_id:
+        filt["finding_id"] = finding_id
+    limit = max(1, min(int(limit), 200))
+    try:
+        cursor = db["workflow_runs"].find(filt).sort([("updated_at", -1), ("_id", -1)]).limit(limit)
+        rows = [d async for d in cursor]
+    except Exception as e:  # noqa: BLE001
+        raise ExecError(f"list_workflow_runs failed: {e}") from e
+    return [_stringify_ids(r) for r in rows]
