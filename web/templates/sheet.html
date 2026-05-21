@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>sglandsimple — sheet</title>
+  <link rel="stylesheet" href="/static/sheet.css">
+</head>
+<body>
+  <aside id="rail">
+    <div class="rail-head">
+      <a href="/" class="back">← Chat</a>
+      <h1>Tables</h1>
+    </div>
+    <nav id="collections" aria-label="collections"></nav>
+    <div class="rail-foot muted">
+      <small>Audit log records every edit.</small>
+    </div>
+  </aside>
+
+  <main id="workspace">
+    <header id="toolbar">
+      <div class="toolbar-left">
+        <h2 id="title">…</h2>
+        <span id="count" class="muted"></span>
+      </div>
+      <div class="toolbar-right">
+        <button id="addRow" type="button">+ Add row</button>
+        <button id="prev" type="button">‹</button>
+        <span id="page" class="muted">0–0 of 0</span>
+        <button id="next" type="button">›</button>
+      </div>
+    </header>
+
+    <form id="nl-bar" autocomplete="off">
+      <span class="nl-icon" aria-hidden="true">⌨</span>
+      <input id="nl-input" type="text"
+             placeholder="Describe an edit in plain English — e.g. change Bob Carter's dept to Platform"
+             aria-label="Natural-language edit instruction" />
+      <button type="submit" id="nl-go" class="primary">Apply</button>
+    </form>
+
+    <section id="grid-wrap">
+      <table id="grid">
+        <thead><tr id="grid-head"></tr></thead>
+        <tbody id="grid-body"></tbody>
+      </table>
+      <div id="empty" class="muted" hidden>No rows.</div>
+    </section>
+  </main>
+
+  <div id="toasts" aria-live="polite"></div>
+  <script src="/static/sheet.js"></script>
+</body>
+</html>

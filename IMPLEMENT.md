@@ -195,12 +195,367 @@ Added `web` service (FastAPI, Jinja + vanilla JS, no build step). Exposes `${WEB
 ## Out of scope (for now)
 
 - Multi-tenant auth (per-user Mongo namespaces).
-- Write operations against Mongo (`$set`, `insert`, `delete`).
+- ~~Write operations against Mongo (`$set`, `insert`, `delete`)~~ — landed in Stage 6 via a narrow audited write-layer (`mcp/db.py::insert_one|update_one|delete_one`). Free-form multi-doc updates remain out of scope.
 - Streaming responses from the agent (`stream: true`). Still 400s.
 - Observability (OTel, structured logs to a collector).
 - Vector search / semantic retrieval.
 - SSE server-push of POST responses (deferred in S3.transport.2).
 - Public Caddy routing for MCP (deferred in S3.expose.2).
+
+## Stage 6 — Spreadsheet UI + natural-language data editing
+
+**Goal:** A spreadsheet-style front end over the Mongo collections — **Airtable / NocoDB-shaped UX** (left rail of "tables" = collections, dense grid with sticky headers, inline cell edit, per-cell save state, paging) — so a user can manipulate rows directly **and** drive the same edits via plain-English commands ("change Alice's dept to Platform", "raise the salary band for everyone in Support hired before 2020 to IC4"). Reuses the existing agent → MCP tool-loop plumbing; adds a small write-layer with hard safety rails.
+
+> This stage extends Stage 1 (read-only `ask_data`) into controlled writes. The existing read paths and validation continue to apply; the new write path is its own validated, audited surface — not a relaxation of `validate_spec`.
+
+### 6a. Why this is one stage, not two
+
+The natural-language path and the manual grid path share the *same* server-side write surface (`sheet_*` MCP tools). The NL path is just a planner that emits a sequence of those tool calls. Building both at once keeps the audit-log + safety story consistent, and means the grid UI can dogfood every edit the NL path could possibly emit.
+
+### 6b. Surface
+
+Three layers, top → bottom:
+
+1. **Web `/sheet` page** (Stage-2 web service, new template + JS). Collection tabs, paginated grid, click-to-edit cells, add-row / delete-row buttons, an NL command bar across the top, and a toast feed.
+2. **Web service routes** (`web/main.py`) that proxy the grid CRUD **and** the NL command directly to MCP via a session-aware JSON-RPC client (the web service holds the MCP session id + optional bearer). Going direct keeps the NL path one round-trip and avoids dragging the agent's tool-loop into a single-purpose write call; the agent path is still available for callers that want it.
+3. **MCP tools** (in `mcp/server.py`): `sheet_get_rows`, `sheet_update_cell`, `sheet_insert_row`, `sheet_delete_row`, `sheet_apply_nl`. The first four are thin wrappers over a new write-layer in `mcp/db.py`. `sheet_apply_nl` is a LangGraph workflow (`mcp/sheet_apply.py`) that turns NL into a plan of those same calls.
+
+### 6c. Write-layer in `mcp/db.py`
+
+New, separate from `validate_spec()` so the read-only invariant is untouched. Adds:
+
+- `validate_write_spec(spec)` — allowlists exactly four ops: `insertOne`, `updateOne` (by `_id` only), `deleteOne` (by `_id` only), `replaceOne` (by `_id` only). Rejects update operators outside a small allowlist (`$set`, `$unset`, `$inc`, `$push`, `$pull`, `$addToSet`). Rejects bulk ops, pipelines, multi-document updates.
+- `insert_one(collection, doc)`, `update_one(collection, _id, update)`, `delete_one(collection, _id)` — each writes a *before* snapshot, performs the op, writes an *after* snapshot, and appends a row to `audit_log`.
+- `audit_log` collection rows: `{action, collection, doc_id, before, after, ts, source}` where `source ∈ {"sheet_cell", "sheet_insert", "sheet_delete", "sheet_apply_nl", "mcp_direct"}`. The audited row's `_id` is stored under `doc_id`; the audit doc itself gets a Mongo-auto `_id`, so multiple edits to the same row don't collide on the audit collection's primary key.
+- A `SHEET_WRITES_ENABLED` env gate; when false, every write helper raises `SpecError("writes disabled")` before touching Mongo.
+- `get_rows(collection, skip, limit, sort?)` — paginated read used by the spreadsheet grid; returns `{collection, skip, limit, total, rows}`.
+
+Read-only allowlist of collections (`KNOWN_COLLECTIONS`) unchanged; writes target the same three (`employees`, `tickets`, `documents`).
+
+### 6d. NL-edit workflow (`mcp/sheet_apply.py`)
+
+A small async coroutine (no LangGraph `StateGraph` was needed here — the flow is linear and short enough that the graph overhead doesn't pay off; if a re-plan loop is added later, promote this to a `StateGraph`):
+
+1. **discover_schema** — reuses `ask_data._build_catalog()` so the planner sees the same cached schema as the read-side workflow.
+2. **plan_ops** — single `structured()` call on the **planner** role. Output schema: `EditPlan = {ops: [SetCell | InsertRow | DeleteRow], match?: MatchFilter, rationale}`. `MatchFilter = {filter, set_for_matches: {field: value}}` is the planner's escape hatch for predicate edits ("everyone in Support hired before 2020").
+3. **expand_matches** — if `match` is present, run a read-only `dbmod.find()` with the filter, then expand into per-row `SetCell` ops applying `set_for_matches`.
+4. **apply_ops** — iterate ops sequentially through `dbmod.insert_one`/`update_one`/`delete_one` with `source="sheet_apply_nl"`. Each op is its own try/except; failures are recorded into `failed` but don't abort the run.
+5. **return** — `SheetApplyResult{collection, instruction, rationale, applied, failed, summary, error?}`, rendered as markdown + JSON in the MCP `content[]` envelope.
+
+Pydantic note: `SetCell.id`, `DeleteRow.id`, `AppliedOp.id`, `FailedOp.id` use `Field(alias="_id")` with `populate_by_name=True` because Pydantic v2 reserves underscore-prefixed attribute names. The server dumps the result with `by_alias=True` so JSON consumers see `_id` as expected.
+
+Caps:
+
+- `SHEET_APPLY_MAX_OPS` (default 50) — refuses to plan/expand more ops than this, including `match` expansion.
+- The write-layer per-op limits still apply (one `_id` per op).
+
+### 6e. Spreadsheet front end (`web/`)
+
+Plain Jinja + vanilla JS, no build step (mirrors `index.html`/`app.js`). **Look-and-feel target: Airtable / NocoDB** — left rail of "tables" (Mongo collections), a top toolbar over each table, a dense grid below, inline cell edit with type-aware inputs, and per-cell save state. Keep it CSS-only (no framework) but copy the visual cues: white background, sticky column headers, hairline 1 px borders, a thin "saving…" indicator on the edited cell, row hover state, and a row "+" affordance at the bottom.
+
+- `templates/sheet.html` — fixed left rail listing collections (with their row counts); main pane has a toolbar (collection name, row count, NL command bar, "Add row" button, paging) and the grid; toast region top-right; link back to `/`.
+- `static/sheet.js` — fetches rows via `/api/sheet/rows`, renders an HTML `<table>` with sticky `<thead>`. Each editable `<td>` becomes an inline input on click (text / number / date detected from the sampled schema). Blur or Enter commits via `POST /api/sheet/cell`; Escape cancels. The cell shows three states: idle, saving (spinner), saved (brief green flash) / error (red flash + toast). Add-row inserts a blank doc with a generated `_id` (visible in the grid immediately, then committed). Delete-row prompts for confirmation. NL bar posts to `/api/sheet/nl`, streams a "thinking…" toast, then reloads the current page.
+- `static/sheet.css` — Airtable-ish: sticky header row, sticky `_id` column, alternating rows, edit-state highlight, error toast, left rail with active-table highlight. Style budget < 300 LoC.
+
+### 6f. Web routes (`web/main.py`)
+
+| Method | Path | Forwards to |
+| --- | --- | --- |
+| GET | `/sheet` | renders `templates/sheet.html` |
+| GET | `/api/sheet/collections` | MCP `mongo_list_collections` |
+| GET | `/api/sheet/rows?collection=&skip=&limit=` | MCP `sheet_get_rows` |
+| POST | `/api/sheet/cell` | MCP `sheet_update_cell` |
+| POST | `/api/sheet/row` | MCP `sheet_insert_row` |
+| DELETE | `/api/sheet/row?collection=&_id=` | MCP `sheet_delete_row` |
+| POST | `/api/sheet/nl` | MCP `sheet_apply_nl` (direct JSON-RPC; the web service holds the session id + optional `MCP_AUTH_TOKEN`) |
+
+### 6g. Safety rails
+
+- Read-only path **and** write path live in `mcp/db.py`; the read-only `validate_spec` does not change shape. `validate_write_spec` is strictly additive.
+- Writes always go through the write-layer (no caller may invoke `motor` `update_one()` directly).
+- Every write produces an `audit_log` row, including planner-driven NL writes. The `source` field distinguishes them.
+- `SHEET_WRITES_ENABLED=false` (default in `.env.example` → set to `true` in `.env.local` only when desired) disables the write surface and makes the NL planner refuse with an explicit "writes disabled" error.
+- The NL planner emits no free-form Mongo updates — it can only emit `SheetOp` variants that one-to-one map to the four allowlisted ops.
+- Hard cap on ops per NL call (`SHEET_APPLY_MAX_OPS`, default 50) prevents a runaway bulk edit.
+
+### 6h. Env surface (additions)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `SHEET_WRITES_ENABLED` | `true` | no | 6 | When `false`, all write helpers fail closed |
+| `SHEET_AUDIT_COLLECTION` | `audit_log` | no | 6 | Collection name for the write audit log |
+| `SHEET_APPLY_MAX_OPS` | `50` | no | 6 | Hard cap on ops per `sheet_apply_nl` run |
+
+### 6i. Verification (intent)
+
+1. `docker compose up --build -d` brings up mongo + mcp + agent + web; healthchecks green.
+2. `GET /sheet` renders the grid for `employees`; clicking a cell, editing it, and tabbing away persists the change (visible in Mongo and in `audit_log`).
+3. Add row + delete row round-trip works with confirmation.
+4. NL bar: "change Bob Carter's dept to Platform" produces exactly one `audit_log` entry with `before.dept="Engineering"` / `after.dept="Platform"`.
+5. NL bar: "set salary_band to IC4 for every Support engineer hired before 2020" expands to N ops, all logged, with `source="sheet_apply_nl"`.
+6. With `SHEET_WRITES_ENABLED=false`, every write attempt (grid or NL) returns a clear "writes disabled" error and `audit_log` does not grow.
+7. `scripts/smoke_sheet.sh` passes.
+
+---
+
+# Task checklist — Stage 6
+
+### S6.env — Env surface
+
+- [x] **S6.env.1 — Add Stage-6 env vars and update the Env surface table**
+  - Files: `.env.example`, IMPLEMENT.md (Env surface table).
+  - Done when: `SHEET_WRITES_ENABLED`, `SHEET_AUDIT_COLLECTION`, `SHEET_APPLY_MAX_OPS` present with sensible defaults; both files in sync.
+
+### S6.db — Mongo write layer
+
+- [x] **S6.db.1 — Write-layer in `mcp/db.py` with audit log**
+  - Files: `mcp/db.py`.
+  - Note: also added `get_rows()` for paginated grid reads. Audit row uses `doc_id` (not `_id`) to avoid collisions on repeat edits to the same row.
+
+### S6.mcp — MCP write tools
+
+- [x] **S6.mcp.1 — Register `sheet_get_rows`, `sheet_update_cell`, `sheet_insert_row`, `sheet_delete_row`**
+  - Files: `mcp/server.py`.
+  - Note: `tools/list` returns 21 tools; the four `sheet_*` CRUD tools are wired through `multi_content_tools` for uniform error handling.
+
+- [x] **S6.mcp.2 — `sheet_apply_nl` workflow + MCP registration**
+  - Files: `mcp/sheet_apply.py` (new), `mcp/server.py`.
+  - Note: implemented as a small async coroutine rather than a LangGraph `StateGraph` (linear flow; promote later if a re-plan loop is added). Planner emits `EditPlan{ops, match?, rationale}`; `match.set_for_matches` is expanded server-side into per-row `SetCell` ops, capped by `SHEET_APPLY_MAX_OPS`.
+
+### S6.web — Web service
+
+- [x] **S6.web.1 — Web routes for the sheet surface**
+  - Files: `web/main.py`, `compose.yaml`.
+  - Note: all routes proxy MCP **directly** (the web service runs its own session-aware JSON-RPC client with `MCP_AUTH_TOKEN` support), including `POST /api/sheet/nl`. The agent path is no longer in the loop for sheet ops. `compose.yaml` was updated to pass `MCP_URL` and `MCP_AUTH_TOKEN` into the web container.
+
+- [x] **S6.web.2 — Spreadsheet UI (`sheet.html`, `sheet.js`, `sheet.css`)**
+  - Files: `web/templates/sheet.html`, `web/static/sheet.js`, `web/static/sheet.css`.
+  - Note: Airtable/NocoDB look — left rail of tables with badge counts, sticky `<thead>`, sticky `_id` column, hairline borders, per-cell saving/saved/errored state, paging, NL command bar, toast feed.
+
+- [x] **S6.web.3 — Cross-link sheet from chat UI**
+  - Files: `web/templates/index.html`, `web/templates/sheet.html`.
+  - Note: `/` header has "Open Sheet →"; `/sheet` rail has "← Chat".
+
+### S6.verify — End-to-end
+
+- [x] **S6.verify.1 — `scripts/smoke_sheet.sh`**
+  - Files: `scripts/smoke_sheet.sh`.
+  - Note: passes against the running stack. Asserts `audit_log` grew by ≥4 rows (insert + cell update + NL update + delete) and also pings `/api/sheet/collections` on the web service for parity.
+
+- [x] **S6.verify.2 — Rebuild + manual UX walkthrough**
+  - Note: stack rebuilt (`docker compose build mcp web && docker compose up -d`), all four services healthy, `/sheet` renders, NL bar applied a probe edit and `audit_log` recorded it with `source="sheet_apply_nl"`.
+
+### S6.followups — Known nits (not blockers)
+
+- [ ] **S6.followups.1 — `total` row count drifts after writes**
+  - Files: `mcp/db.py::get_rows`.
+  - Symptom: the grid header showed `27 rows` immediately after inserting a probe into a 28-row collection because `get_rows()` uses `estimated_document_count()` for `total`.
+  - Fix: switch to `count_documents({})` when `skip + limit > total` (or always, accepting the small cost on these tiny collections). One-shottable.
+
+- [ ] **S6.followups.2 — Reactivity after NL edits**
+  - Files: `web/static/sheet.js`.
+  - Symptom: after an NL edit, the grid reload picks up changes but the column set is derived from rows on the page — newly-`$set` fields not in the current page won't show up until the user navigates to a page that has them.
+  - Fix: when the NL response includes a list of `applied`, union those `field`s into `state.columns` before rerendering.
+
+- [ ] **S6.followups.3 — Cell type inference for booleans / arrays**
+  - Files: `web/static/sheet.js::inferInputType` + `editCell`.
+  - Current behaviour: arrays/objects open as a `<textarea>` of JSON; everything else opens as a single-line text/number input. Booleans become strings on edit.
+  - Fix: detect `typeof value === "boolean"` and render a checkbox; for arrays of strings (e.g. `skills`), render a tag editor. Not load-bearing for Stage 7.
+
+---
+
+## Stage 7 — Reactive aggregation builder (Data-Wrangler-shaped)
+
+> **Pick-up point.** Stage 6 is complete (sheet UI + NL editing, audited writes, smoke green). Stage 7 is the next planned stage; start at `S7.env.1` and proceed in task order.
+
+**Goal:** A reactive UI on top of Mongo `aggregate()` that feels like **Data Wrangler** — each pipeline stage can be **run on its own**, with the prior stage's output shown as the input preview to the next. The user picks fields, comparators, and values from menus, optionally typed natural-language inputs, and quickly iterates to a useful report. An "agent suggestions" button asks the planner for 2–3 useful seed pipelines (different `$group`/`$project` shapes) to kickstart exploration.
+
+> Read-only by design. Reuses Stage-1's `validate_spec`/`aggregate` plumbing. No new write surface.
+
+### 7a. UX shape
+
+The page is a left rail of "recent collections" (reusing the Stage-6 rail) and a right pane structured as:
+
+1. **Sample header** — a thin band that says e.g. "Sampled 50 most recent `tickets` (by `updated_at desc`)" with a refresh button. On first load and on collection change, the page does a light `find()` against the chosen collection ordered by the best available recency field (`updated_at` / `ts` / `created_at` / `hire_date` / `_id` as fallback) capped at `WRANGLER_SAMPLE_LIMIT` (default 50).
+2. **Important fields strip** — a horizontal scroll of "field chips" derived from the sample: each chip shows field name + type + a tiny histogram/cardinality hint. Click a chip to filter; option-click to project; right-click for "group by". This is the Data-Wrangler "tap a column → get suggestions" affordance.
+3. **Pipeline column** — a vertical list of stages. Each stage card has:
+   - a header (stage type icon, e.g. ⮕ `$match`, Σ `$group`, ⛚ `$project`, ↧ `$sort`, ⊓ `$limit`),
+   - a small inline editor (key-value chips for filters; pickers for group keys + accumulators; toggle list for project),
+   - **Run-up-to-here** button, which executes the pipeline `[stage_0, …, stage_i]` and shows the output preview *as the input* of the next card,
+   - a "remove" / "duplicate" / "drag-handle" affordance.
+4. **Preview pane** — below each run stage, a small grid view (sticky header, 25 rows max) showing the materialized rows. The card immediately below uses *that* preview as its "incoming" data label.
+5. **Footer toolbar** — "Run all", "Save pipeline" (writes to `db.wrangler_pipelines`), "Load…", "Ask agent for 3 starter queries" button. The page can also export the final pipeline as a copy-paste `mongo_aggregate` MCP call.
+
+The visual cues to copy from Data Wrangler:
+- Stage cards stack vertically with a "what's currently selected" summary on the closed card and a full editor on the open card.
+- Every stage shows a row-count delta (`50 → 12 rows`) on its header.
+- Hovering a row in the preview highlights the same row in the prior-stage preview (best-effort by `_id` join).
+
+### 7b. Stages the builder supports (v1)
+
+A bounded grammar, mapped one-to-one onto Mongo stages and onto `validate_spec`'s existing allowlist (no new validation surface):
+
+| Stage card | Mongo stage | UI |
+| --- | --- | --- |
+| Filter | `$match` | per-field row of `{field, op, value}`; `op ∈ {=, !=, contains, regex, in, exists, between, >, >=, <, <=}` |
+| Group | `$group` | multi-select group keys + accumulator rows `{field, fn}`, `fn ∈ {count, sum, avg, min, max, addToSet, first, last}` |
+| Project | `$project` | toggleable include/exclude + computed-field rows (`{$expr}` is supported, no `$function`) |
+| Sort | `$sort` | per-field row `{field, dir}` |
+| Limit | `$limit` | integer, clamped to `ASK_DATA_LIMIT_CEILING` |
+| Lookup | `$lookup` | (deferred to v2 — needs cross-collection allowlist work) |
+
+Computed-field expressions and `$expr` filters go through the existing `_walk_forbidden` scan so `$where`/`$function`/`$accumulator` cannot leak in.
+
+### 7c. Per-stage execution (the Data-Wrangler bit)
+
+Each "Run-up-to-here" call sends the **prefix** of the pipeline to a new MCP tool `wrangler_run_prefix(collection, pipeline, upto)`:
+
+- Builds `pipeline[:upto+1]`.
+- Appends `{"$limit": WRANGLER_PREVIEW_LIMIT}` (default 25) if no `$limit` is already at that point.
+- Goes through `dbmod.aggregate()`, hitting the same `validate_spec()` everything else does.
+- Returns `{stage_index, input_count, output_count, rows}` so the UI can show the row-count delta.
+
+This means **every stage is independently runnable**, instantly, before adding the next — exactly the Wrangler experience.
+
+### 7d. Saved pipelines
+
+`db.wrangler_pipelines` collection:
+
+```
+{_id, name, collection, stages: [...], created_by, created_at, updated_at, tags?}
+```
+
+Two MCP tools:
+
+- `wrangler_save_pipeline(name, collection, stages, _id?)` — upsert.
+- `wrangler_list_pipelines(collection?)` — for the "Load…" menu.
+
+These do not go through the Stage-6 write surface (different collection, different shape, no row-level audit needed). They DO get a single per-write `audit_log` entry tagged `source="wrangler_save"` for parity.
+
+### 7e. Agent-suggested pipelines
+
+A button "Ask agent for 3 starter queries" hits a new MCP tool:
+
+- `wrangler_suggest(collection, sample_summary)` — planner LLM call. System prompt: "given this collection schema and a small sample, propose 2-3 *useful, different-shaped* aggregation pipelines: prefer one count-by-group, one trend-over-time, one rank/top-N. Each must be valid against `validate_spec`."
+- Returns structured `{pipelines: [{name, rationale, stages: [...]}]}` — the UI offers each as a one-click "load into the builder".
+
+The planner is bounded to emit only the stage grammar from 7b. Schema is validated server-side by Pydantic + `validate_spec` before being returned.
+
+### 7f. Reactivity
+
+- The sample query auto-refreshes when the collection changes (and when the user clicks the sample-header refresh button).
+- Each stage card has a "live re-run on edit" toggle (default on). When on, edits to a stage are debounced (300ms) and the up-to-here preview re-runs.
+- The page never holds open WebSockets — every call is a regular HTTP POST. Reactivity is client-side debounce + small payloads (25-row previews keep round-trips snappy).
+
+### 7g. Safety rails
+
+- All execution goes through `dbmod.aggregate()` and `validate_spec()`. The new builder cannot bypass them.
+- Stage cap: `WRANGLER_MAX_STAGES` (default 12) — refuses larger pipelines.
+- Preview cap: `WRANGLER_PREVIEW_LIMIT` (default 25). Final "Run all" honors `ASK_DATA_LIMIT_CEILING` (50).
+- Suggested pipelines from the agent are validated server-side; an invalid suggestion is silently dropped from the response.
+
+### 7h. Env surface (additions)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `WRANGLER_SAMPLE_LIMIT` | `50` | no | 7 | Rows pulled for the initial sample |
+| `WRANGLER_PREVIEW_LIMIT` | `25` | no | 7 | Rows returned by per-stage `wrangler_run_prefix` |
+| `WRANGLER_MAX_STAGES` | `12` | no | 7 | Hard cap on stages per pipeline |
+
+### 7i. Verification (intent)
+
+1. `/wrangler` loads with the `tickets` sample populated and field chips visible.
+2. Click `status` chip → filter card appears with `op==`, value picker. Selecting `open` and Run-up-to-here shows the filtered preview with `50 → N` delta.
+3. Add `$group { _id: "$priority", count: {$sum:1} }` → preview shows grouped counts; row hover highlights the corresponding `priority` rows in the prior preview.
+4. Add `$sort {count:-1}` then `$limit 5` → preview shows top-5 priorities.
+5. "Save pipeline" persists to `db.wrangler_pipelines`; "Load…" rehydrates it on a new page load.
+6. "Ask agent for 3 starter queries" returns 2-3 valid pipelines; one-click load drops them into the builder; each Runs successfully.
+7. A pipeline of 13 stages is refused with a clear error referencing `WRANGLER_MAX_STAGES`.
+
+---
+
+# Task checklist — Stage 7
+
+### S7.env — Env surface
+
+- [ ] **S7.env.1 — Add Stage-7 env vars**
+  - Files: `.env.example`, IMPLEMENT.md (Env surface table).
+  - Done when: `WRANGLER_SAMPLE_LIMIT`, `WRANGLER_PREVIEW_LIMIT`, `WRANGLER_MAX_STAGES` present with defaults; Env surface table updated.
+  - Depends on: —
+
+### S7.db — Sampling helpers
+
+- [ ] **S7.db.1 — `sample_recent(collection, limit, sort_by?)` in `mcp/db.py`**
+  - Files: `mcp/db.py`.
+  - Done when: returns `{rows, sort_field, sort_dir}`; auto-picks the first existing recency field from `["updated_at","ts","created_at","hire_date","_id"]` (per-collection sample if not provided); honors `LIMIT_CEILING`.
+  - Depends on: —
+
+### S7.mcp — Aggregation-builder MCP tools
+
+- [ ] **S7.mcp.1 — `wrangler_sample` tool**
+  - Files: `mcp/server.py`.
+  - Done when: takes `{collection, limit?}`; returns `{rows, field_summary: [{field, types, cardinality, examples}]}` derived from the sample.
+  - Depends on: S7.db.1
+
+- [ ] **S7.mcp.2 — `wrangler_run_prefix` tool**
+  - Files: `mcp/server.py`.
+  - Done when: takes `{collection, pipeline, upto}`; runs `aggregate(pipeline[:upto+1] + [$limit WRANGLER_PREVIEW_LIMIT])` via the existing executor; returns `{stage_index, input_count, output_count, rows}`. Honors `WRANGLER_MAX_STAGES`.
+  - Depends on: —
+
+- [ ] **S7.mcp.3 — `wrangler_save_pipeline` / `wrangler_list_pipelines` tools**
+  - Files: `mcp/server.py`, new helper `mcp/wrangler.py` for the persistence layer.
+  - Done when: upsert + list against `db.wrangler_pipelines` work via MCP `tools/call`; each save produces an `audit_log` row with `source="wrangler_save"`.
+  - Depends on: —
+
+- [ ] **S7.mcp.4 — `wrangler_suggest` tool (LangGraph one-node)**
+  - Files: `mcp/wrangler_suggest.py`, `mcp/server.py`.
+  - Done when: calls the planner LLM with the sample summary; returns 2-3 validated pipelines (`stages` arrays). Each pipeline is round-tripped through `validate_spec()` server-side; invalid ones dropped.
+  - Depends on: S7.mcp.1
+
+### S7.web — Reactive builder UI
+
+- [ ] **S7.web.1 — `/wrangler` page scaffold**
+  - Files: `web/main.py`, `web/templates/wrangler.html`, `web/static/wrangler.css`.
+  - Done when: page renders the left rail + sample header + empty pipeline column. Reuses the Stage-6 collection rail.
+  - Depends on: S7.mcp.1
+
+- [ ] **S7.web.2 — Field chips + stage cards**
+  - Files: `web/static/wrangler.js`, `web/static/wrangler.css`.
+  - Done when: chips render from `wrangler_sample`'s `field_summary`; click → add a filter card; option-click → project; right-click → group-by. Each card has the inline editor + Run-up-to-here + remove/duplicate.
+  - Depends on: S7.web.1
+
+- [ ] **S7.web.3 — Per-stage preview + row-count deltas**
+  - Files: `web/static/wrangler.js`.
+  - Done when: Run-up-to-here calls `wrangler_run_prefix`, renders a 25-row mini-grid below the card, and shows `input_count → output_count` on the card header. Hover-linking between adjacent previews works on shared `_id`.
+  - Depends on: S7.web.2, S7.mcp.2
+
+- [ ] **S7.web.4 — Live re-run debounce toggle**
+  - Files: `web/static/wrangler.js`.
+  - Done when: each card has a "live" toggle (default on). Edits debounce 300ms and re-trigger Run-up-to-here for that card and all below it.
+  - Depends on: S7.web.3
+
+- [ ] **S7.web.5 — Save / Load pipeline**
+  - Files: `web/main.py` (proxy routes), `web/static/wrangler.js`.
+  - Done when: "Save pipeline" prompts for a name, persists via `wrangler_save_pipeline`; "Load…" lists pipelines for the active collection and rehydrates one into the builder.
+  - Depends on: S7.mcp.3, S7.web.2
+
+- [ ] **S7.web.6 — "Ask agent for 3 starter queries"**
+  - Files: `web/main.py` (proxy route), `web/static/wrangler.js`.
+  - Done when: clicking the button calls `wrangler_suggest` and shows 2-3 cards with name + rationale + Load button. Each loaded pipeline runs end-to-end without manual editing.
+  - Depends on: S7.mcp.4, S7.web.5
+
+### S7.verify — End-to-end
+
+- [ ] **S7.verify.1 — `scripts/smoke_wrangler.sh`**
+  - Files: `scripts/smoke_wrangler.sh`.
+  - Done when: smokes `wrangler_sample`, `wrangler_run_prefix` (4-stage tickets pipeline), `wrangler_save_pipeline`+`wrangler_list_pipelines`, and `wrangler_suggest` (asserts the response has ≥2 validated pipelines).
+  - Depends on: S7.mcp.4
+
+- [ ] **S7.verify.2 — Manual UX walkthrough**
+  - Done when: §7i scenarios 1–7 all reproducible in the browser. Recorded as a checklist comment on this task.
+  - Depends on: S7.web.6, S7.verify.1
+
+---
 
 ## Stage 5 — GitHub Copilot as an upstream provider (TBD)
 
@@ -302,6 +657,9 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `DEEP_AGENT_BUDGET_PER_CALL` | `70000` | no | 4 | token ceiling per LLM call |
 | `DEEP_AGENT_MAX_STEPS` | `25` | no | 4 | hard cap on plan steps |
 | `DEEP_AGENT_MAX_SECONDS` | `600` | no | 4 | hard cap on total run time |
+| `SHEET_WRITES_ENABLED` | `true` | no | 6 | When `false`, all sheet write helpers fail closed |
+| `SHEET_AUDIT_COLLECTION` | `audit_log` | no | 6 | Audit-log collection for sheet writes |
+| `SHEET_APPLY_MAX_OPS` | `50` | no | 6 | Hard cap on ops per `sheet_apply_nl` run |
 
 ---
 

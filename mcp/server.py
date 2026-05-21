@@ -293,6 +293,89 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["goal"],
         },
     },
+    {
+        "name": "sheet_get_rows",
+        "description": (
+            "Paginated rows from an enterprise collection, for spreadsheet-style "
+            "display. Returns {collection, skip, limit, total, rows}."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "skip": {"type": "integer", "minimum": 0, "default": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 50},
+                "sort": {"type": "object", "description": "Optional {field: 1|-1} sort."},
+            },
+            "required": ["collection"],
+        },
+    },
+    {
+        "name": "sheet_update_cell",
+        "description": (
+            "Update a single field on a single row by _id. Mirrors a "
+            "spreadsheet cell edit. Writes an audit_log entry."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "_id": {"type": "string"},
+                "field": {"type": "string"},
+                "value": {
+                    "description": "New value. JSON-typed (string, number, bool, array, object).",
+                },
+            },
+            "required": ["collection", "_id", "field"],
+        },
+    },
+    {
+        "name": "sheet_insert_row",
+        "description": (
+            "Insert one row. _id may be supplied or auto-generated. Writes an "
+            "audit_log entry."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "doc": {"type": "object"},
+            },
+            "required": ["collection", "doc"],
+        },
+    },
+    {
+        "name": "sheet_delete_row",
+        "description": "Delete one row by _id. Writes an audit_log entry with the prior doc.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "_id": {"type": "string"},
+            },
+            "required": ["collection", "_id"],
+        },
+    },
+    {
+        "name": "sheet_apply_nl",
+        "description": (
+            "Apply a plain-English edit instruction to one of the enterprise "
+            "collections. Plans a sequence of cell/insert/delete ops and applies "
+            "them through the same audited write-layer the spreadsheet UI uses. "
+            "Returns markdown + JSON with applied/failed/summary."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "collection": {"type": "string", "enum": ["employees", "tickets", "documents"]},
+                "instruction": {
+                    "type": "string",
+                    "description": "Plain-English edit, e.g. \"set Alice's dept to Platform\".",
+                },
+            },
+            "required": ["collection", "instruction"],
+        },
+    },
 ]
 
 
@@ -570,6 +653,74 @@ async def _tool_deep_agent(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Stage 6 — sheet tools (write surface + NL editor)
+# ---------------------------------------------------------------------------
+
+
+def _sheet_render_rows(payload: dict[str, Any]) -> str:
+    rows = payload.get("rows", [])
+    md = (
+        f"# {payload['collection']} ({payload['skip']}..{payload['skip'] + len(rows)} of {payload['total']})\n\n"
+        + _markdown_table(rows)
+    )
+    return md
+
+
+async def _tool_sheet_get_rows(args: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = await dbmod.get_rows(
+        args["collection"],
+        skip=int(args.get("skip", 0) or 0),
+        limit=int(args.get("limit", 50) or 50),
+        sort=args.get("sort"),
+    )
+    return [
+        {"type": "text", "text": _sheet_render_rows(payload)},
+        {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+    ]
+
+
+async def _tool_sheet_update_cell(args: dict[str, Any]) -> list[dict[str, Any]]:
+    update: dict[str, Any]
+    field = args["field"]
+    if "value" in args:
+        update = {"$set": {field: args["value"]}}
+    else:
+        update = {"$unset": {field: ""}}
+    info = await dbmod.update_one(
+        args["collection"], args["_id"], update, source="sheet_cell"
+    )
+    return [
+        {"type": "text", "text": json.dumps(info, indent=2, default=str)},
+    ]
+
+
+async def _tool_sheet_insert_row(args: dict[str, Any]) -> list[dict[str, Any]]:
+    info = await dbmod.insert_one(args["collection"], args["doc"], source="sheet_insert")
+    return [{"type": "text", "text": json.dumps(info, indent=2, default=str)}]
+
+
+async def _tool_sheet_delete_row(args: dict[str, Any]) -> list[dict[str, Any]]:
+    info = await dbmod.delete_one(args["collection"], args["_id"], source="sheet_delete")
+    return [{"type": "text", "text": json.dumps(info, indent=2, default=str)}]
+
+
+async def _tool_sheet_apply_nl(args: dict[str, Any]) -> dict[str, Any]:
+    from sheet_apply import render_markdown as _sheet_render_md
+    from sheet_apply import run_sheet_apply
+
+    result = await run_sheet_apply(args["collection"], args["instruction"])
+    md = _sheet_render_md(result)
+    payload = result.model_dump(exclude_none=True, by_alias=True)
+    return {
+        "content": [
+            {"type": "text", "text": md},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": bool(result.error),
+    }
+
+
 async def _tool_ask_data(args: dict[str, Any]) -> dict[str, Any]:
     question = args["question"]
     state = await run_ask_data(question)
@@ -610,6 +761,10 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "fs_write": _tool_fs_write,
         "fs_edit": _tool_fs_edit,
         "shell_exec": _tool_shell_exec,
+        "sheet_get_rows": _tool_sheet_get_rows,
+        "sheet_update_cell": _tool_sheet_update_cell,
+        "sheet_insert_row": _tool_sheet_insert_row,
+        "sheet_delete_row": _tool_sheet_delete_row,
     }
     if name in multi_content_tools:
         try:
@@ -626,6 +781,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_run_plan(args)
     if name == "deep_agent":
         return await _tool_deep_agent(args)
+    if name == "sheet_apply_nl":
+        return await _tool_sheet_apply_nl(args)
 
     if name == "summarize_text":
         text = await _tool_summarize_text(args)

@@ -104,8 +104,12 @@ services:
     depends_on:
       agent:
         condition: service_healthy
+    env_file:
+      - .env.local
     environment:
       AGENT_URL: http://agent:8000
+      MCP_URL: http://mcp:8080/mcp
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
       DEFAULT_MODEL: ${UPSTREAM_MODEL:?UPSTREAM_MODEL is required (set in .env.local)}
     ports:
       - "${WEB_PORT:-5452}:3000"
