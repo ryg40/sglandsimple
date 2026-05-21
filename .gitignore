@@ -9,3 +9,5 @@ __pycache__/
 # Stage 4 sandbox content — runtime-only, never committed.
 sandbox/*
 !sandbox/.gitkeep
+# Stage 12: Mongo bind-mount data — host-persisted DB files, never committed.
+perm/

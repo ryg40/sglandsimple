@@ -1797,6 +1797,33 @@ Add one server-side aggregation the Overview can call: a **topology graph** desc
 7. `GET /api/topology` returns nodes+edges+concerns; `GET /api/connectors` reflects the enriched `sample_data` with `schema` hints. Killing MCP shows error+retry, not a blank canvas.
 8. `@xyflow/react` is the **only** new dependency in `web/package.json` (verify the diff adds nothing else); defaults keep every connector mocked/off.
 
+### 12h. Field fidelity — real ServiceNow ticketing + Atlassian structure
+
+The 12b mock data is domain-*shaped* but still simplified. To make the panes and any future live wiring faithful, model the **actual field structures** of each system. This is a documentation + mock-shape upgrade; the live adapters (Stage 9) consume the same shapes later.
+
+- **ServiceNow ticketing structure** — mirror the real ITSM/GRC tables and their canonical fields rather than ad-hoc keys:
+  - **Incident (`incident` table)**: `number` (INC-prefixed), `short_description`, `description`, `priority` (P1–P5 derived from `impact`×`urgency`), `impact`, `urgency`, `state` (New/In Progress/On Hold/Resolved/Closed), `assignment_group`, `assigned_to`, `cmdb_ci` (configuration item), `opened_at`, `sla_due`, `sys_id`.
+  - **Change Request (`change_request` table)**: `number` (CHG-prefixed), `short_description`, `type` (normal/standard/emergency), `risk`, `impact`, `state` (Assess/Authorize/Scheduled/Implement/Review/Closed), `start_date`/`end_date` (planned window), `cab_required`, `assignment_group`, `cmdb_ci`, `sys_id`.
+  - **GRC linkage**: incidents/changes reference a `cmdb_ci` and (where relevant) a `control`/`citation` so they tie back to `audit_findings`.
+  - Render the Hub pane as the two real queues (incident queue + change calendar) using these field names; keep `record_type` as the discriminator.
+- **Atlassian (Jira) field structure** — use canonical Jira issue fields rather than flat keys:
+  - **Issue**: `key`, `fields.summary`, `fields.issuetype` (Epic/Story/Task/Bug/Sub-task), `fields.status` (with `statusCategory`: To Do/In Progress/Done), `fields.priority`, `fields.assignee.displayName`, `fields.reporter`, `fields.labels[]`, `fields.components[]`, `fields.fixVersions[]`, `fields.customfield_story_points`, `fields.parent` (epic link), `fields.created`/`fields.updated`, `fields.duedate`.
+  - **Epic**: `key`, `name`, child issue list, `status`, `duedate`; epic→story is the `parent` link.
+  - **Sprint (Agile API)**: `id`, `name`, `state` (active/closed/future), `startDate`, `endDate`, `goal`, `boardId`; issues carry the sprint via `customfield_sprint`.
+  - Group the board by epic (`fields.parent`) and offer an assignee grouping; show `statusCategory` color, `duedate`, and `story_points`.
+- **Atlassian (Confluence) field structure** — model content + CQL relevance:
+  - **Page/content**: `id`, `type` (page/blogpost), `title`, `space.key`/`space.name`, `version.number`, `version.when`, `version.by.displayName`, `_links.webui` (full URL), `ancestors[]` (page tree), `labels[]`.
+  - **Relatedness** is expressed as the CQL-style match that surfaced the page (`matched_on`): shared `ticket_refs` (issue keys), `users` (mentions/authors), `projects`/`spaces`, and `keywords` — keep the Stage-12b `matched_on` but align field names to the above.
+- These shapes are captured here and reflected in each connector's mock `sample_data`; the Hub renders the canonical fields. No new live calls.
+
+### 12i. Mock-data persistence across rebuilds (bind mount)
+
+Seeded Mongo data **must survive `docker compose down/up` and `--build`**. The previous setup used a named volume (`mongo-data:/data/db`); under `down -v` / volume prune the seeded data was lost.
+
+- **Bind mount**: Mongo data is moved to a **host bind mount** — `./perm/db:/data/db` in `compose.yaml` (the user-requested `./perm` location; Mongo stores under `/data/db`). A host bind mount is never removed by `down -v` or `volume prune`, so data persists across rebuilds. `./perm/` is gitignored.
+- **First-init vs reseed**: the `mongo-seed/*.js` scripts under `/docker-entrypoint-initdb.d` only run when the data dir is **empty** (first init). With a persistent bind mount they won't re-run automatically — which is the desired "data survives" behavior. To (re)apply seeds after editing them or to refresh mock data, use `scripts/reseed.sh` (`--wipe` to drop+reseed). This is the supported path for landing new Stage-11/12 seed fields onto an already-initialized DB.
+- **Ownership**: Mongo runs as uid 999 in the container; the host `./perm/db` dir must be writable by it (created on first `up`; if pre-created, ensure permissions allow the container user to write).
+
 ---
 
 # Task checklist — Stage 12
@@ -1850,8 +1877,20 @@ Add one server-side aggregation the Overview can call: a **topology graph** desc
   - Done when: column rendering is keyed by `schema`; AWS and ServiceNow panes render their tables; Jira shows sprint header + epic grouping; GitHub shows commit tags + checks badge; Confluence shows `matched_on` chips. Name-based fallback retained.
   - Depends on: S12.mock.1–6.
 
+- [ ] **S12.field.1 — Proper ServiceNow ticketing structure**
+  - Files: `mcp/connectors/servicenow.py`, `web/src/routes/hub.tsx`.
+  - Done when: incident rows use canonical `incident`-table fields (`number`, `short_description`, `impact`, `urgency`, `priority`, `state`, `assignment_group`, `assigned_to`, `cmdb_ci`, `opened_at`, `sla_due`, `sys_id`) and change rows use `change_request` fields (`number`, `short_description`, `type`, `risk`, `impact`, `state`, `start_date`, `end_date`, `cab_required`, `assignment_group`, `cmdb_ci`, `sys_id`); the Hub renders the incident queue + change calendar with these field names. Per 12h.
+
+- [ ] **S12.field.2 — Proper Atlassian Jira/Confluence fields**
+  - Files: `mcp/connectors/jira.py`, `mcp/connectors/confluence.py`, `web/src/routes/hub.tsx`.
+  - Done when: Jira rows model canonical issue fields (`key`, `fields.{summary,issuetype,status+statusCategory,priority,assignee,labels,components,story_points,parent,created,updated,duedate}`) with sprint via the Agile-API shape (`id/name/state/startDate/endDate/goal`); Confluence rows model content fields (`id`, `type`, `title`, `space.{key,name}`, `version.{number,when,by}`, `_links.webui`, `ancestors`, `labels`) with `matched_on` relatedness; the Hub renders epic-grouped boards and content rows using these names. Per 12h.
+
+- [ ] **S12.persist.1 — Mongo data survives down/up/--build (bind mount)**
+  - Files: `compose.yaml`, `.gitignore`, `scripts/reseed.sh` (new).
+  - Done when: Mongo uses a host bind mount `./perm/db:/data/db` (named volume removed), `./perm/` is gitignored, and `scripts/reseed.sh` re-applies `mongo-seed/*.js` against the running container (`--wipe` to drop first). Verified: seed → `docker compose down && docker compose up --build -d` → data still present. Per 12i.
+
 - [ ] **S12.verify.1 — Smoke + intent checks**
   - Files: `scripts/smoke_topology.sh` (new).
-  - Done when: asserts `/api/topology` returns nodes/edges/concerns and `/api/connectors` carries `schema` + non-empty `sample_data` for AWS/ServiceNow; the 12g checks pass by inspection in the running app; `web/package.json` diff adds only `@xyflow/react`.
-  - Depends on: S12.topo.2, S12.web.2, S12.web.3.
+  - Done when: asserts `/api/topology` returns nodes/edges/concerns and `/api/connectors` carries `schema` + non-empty `sample_data` for AWS/ServiceNow; the 12g checks pass by inspection in the running app; `web/package.json` diff adds only `@xyflow/react`; persistence verified per S12.persist.1.
+  - Depends on: S12.topo.2, S12.web.2, S12.web.3, S12.persist.1.
 

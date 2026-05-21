@@ -4,7 +4,10 @@ services:
     container_name: sglandsimple-mongo
     restart: unless-stopped
     volumes:
-      - mongo-data:/data/db
+      # Persist Mongo data on the host so it survives `docker compose down`
+      # and `--build` (a host bind mount is never touched by `down -v` or
+      # `volume prune`). `./perm` is gitignored. Mongo stores under /data/db.
+      - ./perm/db:/data/db
       - ./mongo-seed:/docker-entrypoint-initdb.d:ro
     environment:
       MONGO_INITDB_DATABASE: ${MONGO_DB:-enterprise}
@@ -129,6 +132,3 @@ services:
 networks:
   proxy:
     external: true
-
-volumes:
-  mongo-data:
