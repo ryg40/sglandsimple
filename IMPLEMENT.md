@@ -2091,3 +2091,39 @@ A LangGraph workflow (reuse the Stage-9 orchestrator pattern + checkpointer), ex
   - Files: `scripts/smoke_docs.sh` (new).
   - Done when: asserts CRUD+revision+audit, flag transitions, dry-run sync plan mirrors the tree, and `docs_agent_run` emits proposals without applying; the 14g checks pass by inspection.
   - Depends on: S14.web.2, S14.sync.1, S14.agent.1.
+
+---
+
+## Stage 15 — Operational fixes & UX quick-wins
+
+> Standalone, independent fixes that don't belong to a themed stage. Each is self-contained; pick up either in any order.
+
+### 15a. Wrangler — bulk field projection ("Add all" / "Exclude all")
+
+**Problem.** In the Wrangler (`/wrangler`), a `project` stage builds its field list one row at a time via the "+ field" button (`web/src/routes/wrangler.tsx`, the `st.kind === "project"` block — `projects: [{field, include}]`). Building a projection over a wide collection is tedious; there's no way to seed all fields at once or to start from "exclude everything."
+
+**Goal.** Add two one-click actions to each `project` stage editor:
+- **Add all fields** — populate `projects` with every field from the current sample (`fieldNames`, already computed at `wrangler.tsx:59` from `sample.data.field_summary`) as `{field, include: true}` rows, de-duplicated against what's already there.
+- **Exclude all (`*:0`)** — set the stage to an exclude-everything projection. In Mongo terms that's every field at `:0` (`include:false`); offer it as a single action that fills `projects` with all `fieldNames` as `{field, include:false}` (and/or a compiled `{ "*": 0 }`-style shorthand if `compileStage` supports it — check `compileStage`/`newStage` in the wrangler-stages helper before assuming).
+
+Both should respect the existing live-rerun/debounce path (`liveRerun(idx)`), and a "clear fields" affordance is a nice-to-have. Faster pipeline building is the point.
+
+- [ ] **S15.wrangler.1 — Bulk projection actions on the project stage**
+  - Files: `web/src/routes/wrangler.tsx` (project-stage block + the field-chip helpers), the wrangler-stages helper (`compileStage`/`newStage`/`EditableStage` — locate it; imported at top of `wrangler.tsx`).
+  - Done when: a `project` stage shows **Add all fields** and **Exclude all (`*:0`)** buttons; "Add all" seeds all sampled fields as includes, "Exclude all" sets all fields to exclude; both flow through live-rerun and round-trip through save/`compileStage`; mixing include+exclude still respects Mongo's projection rules (don't emit an illegal mixed projection — exclude-all is all-`:0`, add-all is all-`:1`).
+
+### 15b. Ask Data — fix timeouts / empty responses
+
+**Problem.** The Chat **"Ask Data"** function (`/api/ask_data` → `mcp/ask_data.py::run_ask_data`, surfaced in `web/src/routes/chat.tsx`) **times out and returns no data**. The graph makes several **sequential** upstream LLM calls (`discover_schema → plan_query → execute_query → fan_out interpret_doc per doc → synthesize`) throttled by `LLM_CONCURRENCY=2` and fanned out up to `ASK_DATA_MAX_DOCS=10`; on the slow upstream the end-to-end latency exceeds the client/proxy timeout, so the UI gets nothing.
+
+**Goal.** Make Ask Data return within the request budget, and degrade gracefully instead of returning empty.
+
+Investigate and address (in priority order):
+1. **Timeout budget alignment** — confirm the actual failure: client fetch timeout vs. web `REQUEST_TIMEOUT` vs. agent/MCP upstream timeout vs. graph wall-clock. Align them, and give `run_ask_data` an explicit overall deadline (`asyncio.wait_for`) so it returns a partial/explanatory answer rather than hanging.
+2. **Reduce serial LLM hops** — the fan-out (`interpret_doc` per doc) is the main cost. Lower the default `ASK_DATA_MAX_DOCS`, raise `LLM_CONCURRENCY` if the upstream allows, or collapse per-doc interpretation into a single batched call when the doc set is small.
+3. **Graceful failure** — on timeout/partial, return the rows actually fetched (`execute_query` output) with a "summarization timed out, showing raw results" note, so the user always sees data. Surface a clear error in `chat.tsx` instead of a silent empty bubble.
+4. **Streaming/feedback (optional)** — if a quick win, emit progress so the UI shows it's working rather than appearing hung.
+
+- [ ] **S15.askdata.1 — Make Ask Data return within budget (no more timeouts)**
+  - Files: `mcp/ask_data.py` (graph deadline, fan-out tuning, partial-result fallback), `web/main.py` (`/api/ask_data` timeout + error passthrough), `web/src/routes/chat.tsx` (error/empty-state surfacing), env defaults (`ASK_DATA_MAX_DOCS`, `LLM_CONCURRENCY`, timeouts) in `.env.example`/compose.
+  - Done when: an Ask Data question over a seeded collection returns a useful answer (or a clear partial/error) within the request budget — never a silent empty response; verified with `scripts/smoke_ask_data.sh` against the running stack. Capture the root-cause finding (which timeout fired) in the commit/PR.
