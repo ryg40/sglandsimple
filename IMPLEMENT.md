@@ -1589,3 +1589,269 @@ Per-session budget target: **80k tokens**. Mechanism:
   - Done when: connectors verify and utilize scoped API keys, preventing global leakage if a single provider is degraded.
   - Depends on: S9.connect.2
 
+---
+
+## Stage 11 — Compliance command center (the main page as a live overview)
+
+> **Pick-up point.** Stage 9 built the **Hub** (`/hub` → `web/src/routes/hub.tsx`) as the place to enumerate connection bubbles and drill into one workflow. Stage 11 promotes the **Overview** (`/` → `web/src/routes/overview.tsx`) from a generic stat-grid into the **compliance command center**: a single dynamic surface that pulls together every service and every collection the Hub touches, fronted by the numbers and tables a compliance lead checks first thing each morning. Start at `S11.api.1` and proceed in task order. This is **additive** — it reuses Stage-9 collections, the Stage-9 web proxy, and Stage-8 UI primitives; no new compose services.
+
+**Goal:** A person lands on the dashboard and, without clicking, sees a live roll-up of the whole compliance estate — connector health, finding/epic/work-item/PR counts, and (most importantly) **what needs attention**: items that are currently prioritized or have an upcoming due date. Each number and table is a click-through into the Hub or the underlying record.
+
+### 11a. What changes (Overview, today → target)
+
+The current Overview (`overview.tsx`) shows raw Mongo collection counts (`employees`, `tickets`, `documents`) plus an audit-log write-trend. That made sense before Stage 9; it now under-uses the compliance data model. Stage 11 reframes the page around the Stage-9 collections (`audit_findings`, `epics`, `work_items`, `pr_records`, `doc_records`, `log_samples`, `workflow_runs`) and the connector registry, while keeping the existing audit-trend as a secondary panel.
+
+**The page is composed of dynamic regions, each backed by a live query (TanStack Query, polled), each with loading/empty/error+retry per Stage-8 robustness:**
+
+1. **KPI row** — numeric displays (reuse `StatCard`): open findings, active epics, in-flight work items, open PRs, connectors healthy / total, and an "attention" count (see 11c). Each card carries a small delta/sub-label (e.g. "3 due this week").
+2. **Attention panel** — the headline region (11c): a ranked table of items that are *prioritized* or *due soon*, drawn across collections, with a reason chip per row.
+3. **Connector health strip** — a condensed read of `/api/connectors` (the bubbles already powering the Hub) showing status dots + one-line summary; click → Hub bubble.
+4. **Collection tables** — a compact, multi-table region presenting the most recent rows of the key compliance collections (findings, epics, work items, PRs) side by side, each row click-through into the Hub / record.
+5. **Activity trend** — the existing audit-log per-day chart, retained but demoted below the compliance regions.
+
+### 11b. Architecture (keep the established shape)
+
+- **Server-side aggregation.** Add a single read endpoint that returns the whole overview payload in one round-trip, so the page makes one polled call rather than fanning out N queries from the browser. Logic lives in `mcp/` (a new aggregation tool, mirroring how `wrangler_*` / `connector_*` are exposed), and `web/main.py` proxies it.
+  - `mcp`: `overview_summary` tool → counts per compliance collection + the computed attention list (11c) + connector health roll-up. Reuses existing `mongo_*` reads and the connector registry; no new external calls.
+  - `web/main.py`: `GET /api/overview` → `_mcp_tool("overview_summary", …)`, returning `{ kpis, attention[], connectors[], tables: { findings[], epics[], work_items[], pr_records[] } }`.
+- **Web only proxies / renders.** No business logic in the SPA beyond formatting and grouping.
+- **One query, polled.** `useOverview()` in `web/src/lib/queries.ts` (`refetchInterval`, e.g. 30s) so the "dynamic view" stays live without manual refresh. Connector health may keep its own faster cadence if reused from the Hub.
+- **Components are reused first.** `StatCard` for KPIs; a small generic `MiniTable` (new, in `web/src/components/`) for the multi-table region; the Hub's status-dot styling for the connector strip; the existing chart for the trend. Anything genuinely new is a thin presentational component.
+
+### 11c. "Points of concern" — the attention model (the core of this stage)
+
+The defining feature is surfacing **what needs work now**. Define a server-side computed `attention[]` list, each item normalized to a common shape regardless of source collection:
+
+`{ id, kind (finding|epic|work_item|pr), title, reason, severity, priority, due_date?, days_until_due?, link }`
+
+An item earns a slot if **any** rule fires (rules evaluated server-side in `overview_summary`):
+
+| Reason | Source | Rule |
+| --- | --- | --- |
+| **Prioritized** | `epics`, `audit_findings` | `priority` ∈ {high, critical} **and** `status` not done/closed |
+| **Due soon** | any with a `due_date` | `due_date` within `OVERVIEW_DUE_SOON_DAYS` (default 14) and not done |
+| **Overdue** | any with a `due_date` | `due_date` in the past and not done |
+| **High severity** | `audit_findings` | `severity` ∈ {high, critical} and `status="open"` |
+| **Stalled** | `work_items`, `pr_records` | open/in-progress with no update in `OVERVIEW_STALE_DAYS` (default 7) |
+| **Blocked PR** | `pr_records` | `state` open with a failing check in `checks[]` |
+
+Items are ranked: overdue > due-soon > prioritized > high-severity > stalled, with severity/priority as the tiebreak. The panel renders the top N (default 10) with a reason chip and a "days until due" / "X days overdue" badge; a footer link expands the full list (could route to a filtered Hub view).
+
+> **Due dates don't exist in the seed yet.** `epics`/`audit_findings`/`work_items` currently carry `priority`/`severity`/`status` but no `due_date`. Stage 11 adds a `due_date` (and where useful `updated_at` for staleness) to the relevant seeds so the attention rules have real data to act on. This is the one data-model addition; everything else reads existing fields.
+
+### 11d. Data model (additions — minimal)
+
+- `audit_findings`: add `due_date` (ISO), keep `severity`/`status`.
+- `epics`: add `due_date`, keep `priority`/`status`.
+- `work_items`: add `due_date`, ensure `updated_at` is seeded with a spread of dates so "stalled" is demonstrable.
+- `pr_records`: ensure `checks[]` includes at least one failing example so "blocked PR" renders.
+- No new collections. The seed scripts (`mongo-seed/04-epics.js`, `05-audit_findings.js`, `06-work_items.js`, `07-pr_records.js`) gain these fields; `12-scale-data.js` should propagate a realistic spread of due dates across the scaled rows.
+
+### 11e. UX details
+
+- **Dynamic-first:** every region updates on the poll; no full-page reload. Stale-while-revalidate so the page never blanks on refetch.
+- **Click-through everywhere:** KPI cards, attention rows, connector dots, and table rows all deep-link to the Hub (and, where it exists, the specific record/drawer).
+- **Attention is visually dominant:** it sits directly under the KPI row, full-width, with severity/overdue color cues using existing theme tokens (`--destructive`, `--chart-*`) — no new color system.
+- **Multi-table region** uses a responsive grid (1 col mobile → 2 cols desktop), each `MiniTable` capped at ~5 rows with a "view all in Hub" link.
+- **Empty/error states** per region (Stage-8): an empty attention list reads "Nothing needs attention — all clear" rather than a blank box; a failed `/api/overview` shows a retry.
+- **A11y/theming:** reuse Stage-8 patterns (semantic headings per region, keyboard-focusable rows, dark/light tokens).
+
+### 11f. Env surface (additions — tunables, all defaulted)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `OVERVIEW_DUE_SOON_DAYS` | `14` | no | 11 | Window for the "due soon" attention rule |
+| `OVERVIEW_STALE_DAYS` | `7` | no | 11 | No-update window for the "stalled" rule |
+| `OVERVIEW_ATTENTION_LIMIT` | `10` | no | 11 | Max rows in the attention panel |
+| `OVERVIEW_TABLE_ROWS` | `5` | no | 11 | Rows shown per mini-table |
+| `OVERVIEW_POLL_MS` | `30000` | no | 11 | Front-end poll cadence for `/api/overview` |
+
+### 11g. Verification (intent)
+
+1. Opening `/` renders the KPI row with live counts that match the Stage-9 collections (cross-check against `/hub` and `mongo_*`).
+2. With seeded due dates, the attention panel lists the RDS priority epic (prioritized) and at least one due-soon / overdue item, correctly ranked, each with a reason chip and days-to-due badge.
+3. The connector strip mirrors the Hub bubbles' health (same `/api/connectors` source); clicking a dot lands on that bubble in the Hub.
+4. Each mini-table shows recent rows of its collection; a row click deep-links into the Hub/record.
+5. Leaving the page open shows regions updating on the poll without a manual refresh; refetch never blanks the page.
+6. Killing MCP shows per-region error+retry, not a white screen; an all-done dataset shows the "all clear" empty state.
+7. `/api/overview` returns the full payload in one call; the SPA makes one polled request per cadence (verify in network tab).
+
+---
+
+# Task checklist — Stage 11
+
+- [ ] **S11.api.1 — `overview_summary` aggregation tool (MCP)**
+  - Files: `mcp/server.py` (register tool), `mcp/` aggregation module (new, e.g. `mcp/overview.py`).
+  - Done when: a single MCP tool returns `{ kpis, attention[], connectors[], tables{} }` computed from existing `mongo_*` reads + the connector registry, with the 11c attention rules applied server-side. No new external calls.
+  - Depends on: S9.model.1, S9.connect (connector registry).
+
+- [ ] **S11.api.2 — `GET /api/overview` proxy (web)**
+  - Files: `web/main.py`.
+  - Done when: the route proxies `overview_summary` and returns the payload unchanged; documented in the route list at the top of `main.py`.
+  - Depends on: S11.api.1.
+
+- [ ] **S11.data.1 — Seed due dates + staleness/check fixtures**
+  - Files: `mongo-seed/04-epics.js`, `05-audit_findings.js`, `06-work_items.js`, `07-pr_records.js`, `12-scale-data.js`.
+  - Done when: findings/epics/work-items carry a realistic spread of `due_date` (some overdue, some due-soon, most future), work-items have varied `updated_at`, and at least one `pr_record` has a failing check — so every 11c rule has data to fire on.
+  - Depends on: none (data only).
+
+- [ ] **S11.web.1 — `useOverview()` query hook**
+  - Files: `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
+  - Done when: a polled (`OVERVIEW_POLL_MS`) `useOverview()` hook + typed response exist, stale-while-revalidate.
+  - Depends on: S11.api.2.
+
+- [ ] **S11.web.2 — KPI row + connector strip**
+  - Files: `web/src/routes/overview.tsx`.
+  - Done when: the KPI row (reusing `StatCard`) shows the compliance counts + attention count with sub-labels, and a condensed connector-health strip click-throughs to the Hub. Loading/empty/error per region.
+  - Depends on: S11.web.1.
+
+- [ ] **S11.web.3 — Attention panel (points of concern)**
+  - Files: `web/src/routes/overview.tsx`, `web/src/components/` (attention table component).
+  - Done when: the ranked attention list renders with reason chips + due/overdue badges, severity/overdue color cues from theme tokens, an "all clear" empty state, and row click-through. Sits directly under the KPI row, full-width.
+  - Depends on: S11.web.1.
+
+- [ ] **S11.web.4 — Multi-table region + retained trend**
+  - Files: `web/src/routes/overview.tsx`, `web/src/components/mini-table.tsx` (new).
+  - Done when: a responsive grid of `MiniTable`s (findings/epics/work-items/PRs, capped at `OVERVIEW_TABLE_ROWS`) renders with per-table "view all in Hub" links, and the existing audit trend is retained as a secondary panel below.
+  - Depends on: S11.web.1.
+
+- [ ] **S11.verify.1 — Smoke + intent checks**
+  - Files: `scripts/smoke_overview.sh` (new).
+  - Done when: the script asserts `/api/overview` returns all four payload sections and that the attention list is non-empty against the seeded data; the 11g intent checks pass by inspection in the running app.
+  - Depends on: S11.api.2, S11.data.1, S11.web.2–4.
+
+---
+
+## Stage 12 — Domain-rich connector data + cross-system topology visualization
+
+> **Pick-up point.** Stages 9–11 stood up the connector registry, the Hub detail panes, and the Overview command center. Today every connector's `summary()` returns a thin, mostly-identical `sample_data` shape (Jira/GitHub/Confluence/Snowflake) — and **AWS and ServiceNow return no `sample_data` at all**, so their Hub panes show the empty state. Stage 12 makes each connector's mock data **look like its real domain**, renders that data faithfully in the Hub, and adds a dedicated, **interactive "Architecture" page** whose sole focus is an AWS-architecture-style interconnectivity diagram tying every system together with endpoints, statuses, and highlighted weak-spots. Start at `S12.mock.1` and proceed in task order. Additive; no new compose services. The visualization uses a **flow/graph library (React Flow — `@xyflow/react`)** — the one new web dependency in this stage.
+
+**Goal:** Each connector pane reads like a screen from the real product (an AWS console row, a Jira sprint board grouped by epic, a ServiceNow incident queue + change calendar, a GitHub commit feed tagged to epics, a Confluence "related pages" panel). A dedicated **Architecture** page is given over entirely to an interactive diagram showing how those systems connect — nodes per system, edges for the real data relationships (finding→epic→ticket→branch/PR→doc→logs→cloud resource), endpoints and live status in tooltips/node details, and visually flagged **points of concern**: neglected Jira tickets, PRs with failing checks, and upcoming changes that threaten an outage or the business.
+
+### 12a. Why this exists / what's wrong today
+
+- **AWS / ServiceNow have no `sample_data`.** `aws.py.summary()` returns only `rds_instances_count`; `servicenow.py.summary()` returns only counts. The Hub (`hub.tsx`) has no column block for either, so selecting them yields "No simulation records loaded."
+- **The data is generic.** Jira rows are flat (key/summary/status/assignee/updated) with no sprint or epic grouping; GitHub shows PRs, not commits-per-project-with-epic-tags; Confluence shows pages, not *related* pages keyed off tickets/users/projects; Snowflake is fine but isolated.
+- **Nothing shows how the systems relate.** The relationships exist in the Stage-9 data model (cross-linked ids) but there's no visual that makes the estate legible at a glance or surfaces where it's weak.
+
+### 12b. Per-connector domain data (the mock content contract)
+
+Each connector keeps the existing `summary()` contract (`{status, …counts, sample_data[]}`) but `sample_data` becomes domain-shaped. To let the Hub pick the right columns without sniffing field names, add a `schema` hint to each summary: `"schema": "<connector-domain>"` (e.g. `"aws_resources"`, `"jira_sprint"`). The Hub renders columns by `schema`, falling back to the current name-based switch.
+
+- **AWS** — `schema: "aws_resources"`. Rows model real cloud inventory:
+  `{ account_id, account_alias, region, resource_id, service, resource_type, status, env, audit_logging }`
+  Span services beyond RDS so the "service type" request is met: `RDS` (db instances), `S3` (log archive bucket), `CloudTrail` (trail), `KMS` (CMK), `ELB/ALB` (load balancer), `IAM` (role). Vary `region` (`us-east-1`, `eu-west-1`, `us-west-2`), `env` (`prod`/`staging`), and `audit_logging` (`enabled`/`disabled`) — a `disabled` row on a prod RDS is a deliberate weak-spot the topology highlights. Keep `rds_instances_count` and add `resources_count`.
+- **Jira** — `schema: "jira_sprint"`. Add an `active_sprint` object (`{name, ends, committed, completed}`) and group `sample_data` so the pane can show **tickets grouped by epic and by assignee**. Each row: `{ key, summary, status, assignee, epic_key, epic_name, story_points, updated, age_days, flagged }`. Seed enough rows that the RDS epic (`RDS-LOG-1`) has several stories, plus `SEC-SCAN`/`ALB-ROT` epics. Mark at least one ticket `flagged` with a high `age_days` (no update in N days) — the "neglected ticket" weak-spot. Keep personas already in use (Alex SecOps, Sultan DevOps, Sarah SRE).
+- **ServiceNow** — `schema: "snow_grc"`. Two row kinds via a `record_type` field: **incidents** (`{record_type:"incident", number:"INC…", priority:"P1|P2", summary, ci, opened, sla_breach}`) showing **high-priority open incidents**, and **scheduled changes** (`{record_type:"change", number:"CHG…", summary, ci, window_start, window_end, risk, impact}`) for the **change calendar**. Include at least one `P1` open incident and one high-`risk`/high-`impact` upcoming change (the "upcoming change that could cause an outage" weak-spot). Add `open_incidents`/`upcoming_changes` counts.
+- **GitHub** — `schema: "github_commits"`. Shift from PRs to **recent commits across active projects**, each tagged to an epic via auto-applied labels: `{ sha, message, repo, project, author, committed, epic_key, tags[], pr_number?, checks_state }`. `tags[]` is the "automatically applied tags" (e.g. `["epic:RDS-LOG", "compliance", "sox-404"]`); `checks_state` ∈ {passing, failing, pending} — a `failing` row is a weak-spot. Keep a `prs_count` and add `commits_count`.
+- **Confluence** — `schema: "confluence_links"`. Model **auto-surfaced related articles** keyed off shared signals: `{ id, title, space, url, last_updated, matched_on{ keywords[], ticket_refs[], users[], projects[] }, relevance }`. `url` points at the enterprise base (e.g. `https://enterprise.atlassian.net/wiki/…`) configurable via `CONFLUENCE_BASE_URL`. `matched_on` explains *why* the page surfaced (shared ticket number `RDS-LOG-1`, user `Sultan DevOps`, project `infra-terraform`, keyword `audit logging`).
+- **Snowflake** — keep `schema: "snowflake_audit"` (current rows are already domain-correct); add a couple rows and ensure one `DENIED`/`sql-error` row remains as the visible anomaly.
+- **MongoDB** — `schema: "mongo_collections"`; surface the system-of-record collections + counts it already reads so it isn't blank.
+- **Archer** — `schema: "archer_findings"`; a small mock list of risk/audit findings feeding the workflow (placeholder, clearly labeled).
+
+> All of this is **mock data** living in each connector's `summary()` (disabled path) — no live calls, defaults stay off. Where a base URL makes the mock more realistic (Confluence/Jira), it's read from an env var with a sensible default and never requires credentials.
+
+### 12c. Topology / relationship payload (feeds the visualization)
+
+Add one server-side aggregation the Overview can call: a **topology graph** describing nodes (systems) and edges (relationships) plus per-node health and per-edge/per-node concern flags.
+
+- **MCP**: a `topology_graph` tool (new, e.g. `mcp/topology.py`) returns
+  `{ nodes:[{ id, label, kind, status, endpoint, metrics{}, concerns[] }], edges:[{ from, to, label, kind, concern? }], concerns:[{ id, severity, kind, title, node_id?, edge?, link }] }`.
+  - `nodes` = the 8 connectors (status/endpoint pulled from each connector's `health()`), plus optionally the MongoDB system-of-record as the hub node.
+  - `edges` = the workflow relationships: ServiceNow/Archer → finding → Jira epic/ticket → GitHub branch/PR → Confluence doc → MongoDB record; AWS resource ↔ the RDS epic it satisfies; Snowflake/Mongo log warehouse ↔ the control it proves. Derive from the Stage-9 cross-links where present; otherwise from the seeded mock relationships.
+  - `concerns` = computed weak-spots reusing Stage-11 attention rules **plus** connector-specific ones: neglected Jira ticket (`flagged`/stale), failing GitHub checks, AWS prod resource with `audit_logging:"disabled"`, ServiceNow P1 open incident, high-risk upcoming change. Each concern references the node/edge it sits on so the diagram can highlight it.
+- **web/main.py**: `GET /api/topology` → proxies `topology_graph`.
+
+### 12d. The visualization (dedicated "Architecture" page, React Flow)
+
+- **Placement**: its **own route** — a new `Architecture` page (`/architecture`) added to the sidebar (`app-sidebar.tsx`) and routed in `App.tsx`. The page is given over **strictly to the interactive visualization and the interconnectivity** — no KPI rows or unrelated panels; just the diagram, its controls, and the concern list/legend that supports it. (The Overview keeps its Stage-11 layout unchanged; it may carry a small "View architecture →" link, but the diagram itself does not live there.)
+- **Render**: **React Flow (`@xyflow/react`)** — the one new dependency this stage adds. Use custom node types (one per system "kind") rendered with a service-style icon (`lucide-react`), label, status dot, and key metric; edges are React Flow edges with labels and `MarkerType` arrowheads. Provide pan/zoom, a `Background`, `Controls`, and a `MiniMap`. Layout is deterministic (computed node positions in zoned columns: sources left → workflow systems middle → evidence stores right), grouped visually into labeled "zones" like an AWS architecture diagram.
+- **Tooltips / details**: hover a node for a tooltip (`@radix-ui/react-tooltip`, or React Flow's own hover affordance) showing `endpoint`, `status`, and key `metrics` (e.g. "RDS: 4 instances, 1 logging-disabled"); edges show the relationship label. Clicking a node opens a side detail panel with its full metrics + a deep-link to the matching Hub bubble.
+- **Weak-spot highlighting**: nodes/edges carrying a `concern` render with a destructive-token outline/glow and a warning badge (custom node styling + edge `style`/`animated`); a concern legend/list sits beside the canvas — clicking a concern pans/zooms to and selects its node and deep-links to the relevant Hub bubble / record. Color strictly from existing theme tokens (`--destructive`, `--chart-*`, `--border`); React Flow's theme variables are mapped to these.
+- **States**: loading skeleton, empty ("no systems registered"), error+retry — per Stage-8 robustness. Polls on the Stage-11 cadence; node/edge positions are stable across refetches.
+- **A11y**: nodes are focusable with `role`/`aria-label`; the concern list is a real list (and the page's primary readable artifact) so the canvas isn't the only way to read the weak-spots; keyboard users can tab the concern list to navigate.
+
+### 12e. Hub rendering updates
+
+- `hub.tsx`: replace the per-name column `switch` with a `schema`-keyed column registry, and **add column blocks for `aws_resources` and `snow_grc`** (today missing). For Jira, render the `active_sprint` header and group rows by `epic_name` (and offer an assignee grouping toggle if cheap). For GitHub, render commits with their epic tag chips and a checks-state badge. For Confluence, render the `matched_on` chips so it's clear *why* each article surfaced.
+- Keep the existing empty/selected behavior; the fallback name-based columns remain for any connector without a `schema`.
+
+### 12f. Env surface (additions — all defaulted, mock-friendly)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `CONFLUENCE_BASE_URL` | `https://enterprise.atlassian.net/wiki` | no | 12 | Base for mock Confluence article links |
+| `JIRA_BASE_URL` | `https://enterprise.atlassian.net` | no | 12 | Base for mock Jira issue links |
+| `TOPOLOGY_INCLUDE_DISABLED` | `true` | no | 12 | Show disabled connectors as nodes (greyed) vs hide them |
+
+> **New web dependency:** `@xyflow/react` (React Flow) is added to `web/package.json` for the Architecture page. It is the only new dependency in this stage; the Vite build picks it up on the next `docker compose build`. No new compose service.
+
+### 12g. Verification (intent)
+
+1. With all connectors disabled (default), selecting **AWS** in the Hub shows a multi-service resource table (RDS/S3/CloudTrail/KMS/ELB/IAM) with account/region/resource-id/service/status — not the empty state.
+2. Selecting **ServiceNow** shows high-priority open incidents and an upcoming-change calendar, with at least one P1 and one high-risk change.
+3. **Jira** shows the active sprint header and tickets grouped by epic (RDS-LOG-1 with several stories), with a visibly flagged/neglected ticket.
+4. **GitHub** shows recent commits per active project with auto-applied epic tags and a checks-state badge (one failing).
+5. **Confluence** shows related articles each annotated with what it matched on (ticket #, user, project, keyword) and links under the enterprise base URL.
+6. A dedicated **Architecture** page (`/architecture`, in the sidebar) renders the React Flow diagram: 8 system nodes in labeled zones, edges tracing finding→epic→ticket→PR→doc→logs and AWS↔RDS-epic, pan/zoom + minimap + controls, node/edge tooltips showing endpoint+status, node-click detail panel, and weak-spots (neglected ticket, failing checks, prod RDS logging disabled, P1 incident, risky change) highlighted with a clickable concern list that focuses the node. The Overview's Stage-11 layout is unchanged.
+7. `GET /api/topology` returns nodes+edges+concerns; `GET /api/connectors` reflects the enriched `sample_data` with `schema` hints. Killing MCP shows error+retry, not a blank canvas.
+8. `@xyflow/react` is the **only** new dependency in `web/package.json` (verify the diff adds nothing else); defaults keep every connector mocked/off.
+
+---
+
+# Task checklist — Stage 12
+
+- [ ] **S12.mock.1 — AWS multi-service resource data**
+  - Files: `mcp/connectors/aws.py`.
+  - Done when: `summary()` returns `schema:"aws_resources"` + `sample_data[]` spanning RDS/S3/CloudTrail/KMS/ELB/IAM with account/region/resource-id/service/status/env/audit_logging, including a prod RDS row with `audit_logging:"disabled"`.
+
+- [ ] **S12.mock.2 — Jira sprint + epic-grouped tickets**
+  - Files: `mcp/connectors/jira.py`.
+  - Done when: `summary()` returns `schema:"jira_sprint"`, an `active_sprint` object, and `sample_data[]` rows carrying `epic_key/epic_name/story_points/age_days/flagged`, with the RDS epic well-populated and ≥1 flagged/neglected ticket. Add `JIRA_BASE_URL` link building.
+
+- [ ] **S12.mock.3 — ServiceNow incidents + change calendar**
+  - Files: `mcp/connectors/servicenow.py`.
+  - Done when: `summary()` returns `schema:"snow_grc"` with `record_type`-tagged incidents (≥1 P1 open) and scheduled changes (≥1 high-risk/high-impact upcoming), plus `open_incidents`/`upcoming_changes` counts.
+
+- [ ] **S12.mock.4 — GitHub commits tagged to epics**
+  - Files: `mcp/connectors/github.py`.
+  - Done when: `summary()` returns `schema:"github_commits"` with recent commits per active project, auto-applied `tags[]` (incl. `epic:*`), and `checks_state` (≥1 failing). Keep PR fields available if cheap.
+
+- [ ] **S12.mock.5 — Confluence related-article linking**
+  - Files: `mcp/connectors/confluence.py`.
+  - Done when: `summary()` returns `schema:"confluence_links"` with articles annotated by `matched_on{keywords,ticket_refs,users,projects}` and `url` under `CONFLUENCE_BASE_URL`.
+
+- [ ] **S12.mock.6 — Snowflake/MongoDB/Archer schema hints + fill-out**
+  - Files: `mcp/connectors/snowflake.py`, `mcp/connectors/mongodb.py`, `mcp/connectors/archer.py`.
+  - Done when: each returns a `schema` hint and non-empty `sample_data` (Snowflake keeps a DENIED row; Mongo surfaces SoR collections+counts; Archer lists mock findings).
+
+- [ ] **S12.topo.1 — `topology_graph` MCP tool**
+  - Files: `mcp/topology.py` (new), `mcp/server.py` (register).
+  - Done when: returns `{nodes, edges, concerns}` computed from connector `health()` + the mock relationships + Stage-11/connector-specific weak-spot rules. No live calls.
+  - Depends on: S12.mock.1–6.
+
+- [ ] **S12.topo.2 — `GET /api/topology` proxy + query hook**
+  - Files: `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
+  - Done when: route proxies `topology_graph`; a polled `useTopology()` typed hook exists.
+  - Depends on: S12.topo.1.
+
+- [ ] **S12.web.1 — Add React Flow dependency + Architecture route/sidebar entry**
+  - Files: `web/package.json` (add `@xyflow/react`), `web/src/App.tsx` (route `/architecture`), `web/src/components/app-sidebar.tsx` (nav item, e.g. a `Network`/`Workflow` icon), `web/src/routes/architecture.tsx` (new, scaffold).
+  - Done when: `@xyflow/react` is installed and imported, `/architecture` routes to a new page, and the sidebar links to it; the page builds (empty scaffold acceptable here). `@xyflow/react` is the only dependency added.
+  - Depends on: S12.topo.2.
+
+- [ ] **S12.web.2 — Architecture page: React Flow topology visualization**
+  - Files: `web/src/routes/architecture.tsx`, `web/src/components/topology/` (custom node/edge components, layout helper).
+  - Done when: the page is *strictly* the interactive diagram — custom system nodes (icon/label/status/metric) in zoned columns, labeled edges with arrowheads, pan/zoom + `Background` + `Controls` + `MiniMap`, node hover tooltip (endpoint/status/metrics) and click→detail panel, weak-spot highlighting + a clickable concern list/legend that focuses its node and deep-links to the Hub. Loading/empty/error states; theme-token colors only (React Flow vars mapped to `--*`); a11y per 12d. Polls on the Stage-11 cadence with stable node positions.
+  - Depends on: S12.web.1.
+
+- [ ] **S12.web.3 — Hub schema-keyed columns (AWS + ServiceNow + grouping)**
+  - Files: `web/src/routes/hub.tsx`.
+  - Done when: column rendering is keyed by `schema`; AWS and ServiceNow panes render their tables; Jira shows sprint header + epic grouping; GitHub shows commit tags + checks badge; Confluence shows `matched_on` chips. Name-based fallback retained.
+  - Depends on: S12.mock.1–6.
+
+- [ ] **S12.verify.1 — Smoke + intent checks**
+  - Files: `scripts/smoke_topology.sh` (new).
+  - Done when: asserts `/api/topology` returns nodes/edges/concerns and `/api/connectors` carries `schema` + non-empty `sample_data` for AWS/ServiceNow; the 12g checks pass by inspection in the running app; `web/package.json` diff adds only `@xyflow/react`.
+  - Depends on: S12.topo.2, S12.web.2, S12.web.3.
+
