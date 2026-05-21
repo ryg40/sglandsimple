@@ -9,3 +9,6 @@ langchain-core==0.3.28
 motor==3.6.0
 pydantic==2.10.4
 tiktoken==0.8.0
+fpdf2==2.7.9
+python-pptx==1.0.2
+snowflake-connector-python==3.10.0

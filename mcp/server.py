@@ -29,6 +29,8 @@ from ask_data import run_ask_data
 from connectors import connector_tools, get_connector, init_connectors, list_connectors
 from deep_agent import Plan, run_deep_agent, run_plan_task, run_run_plan
 from workflow.graph import run_compliance_workflow
+from report.pdf import generate_pdf_report
+from report.ppt import generate_ppt_report
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
 
@@ -480,6 +482,28 @@ TOOLS: list[dict[str, Any]] = [
             },
             "required": ["finding_id"]
         }
+    },
+    {
+        "name": "report_pdf",
+        "description": "Aggregate findings and change events into a beautifully formatted narrative compliance PDF audit artifact.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "finding_id": {"type": "string", "description": "The compliance audit finding Identifier string."}
+            },
+            "required": ["finding_id"]
+        }
+    },
+    {
+        "name": "report_ppt",
+        "description": "Aggregate compliance evidence and live database query logging proofs into an executive summary slide deck presentation.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "finding_id": {"type": "string", "description": "The compliance audit finding Identifier string."}
+            },
+            "required": ["finding_id"]
+        }
     }
 ]
 
@@ -547,6 +571,52 @@ async def _tool_workflow_run(args: dict[str, Any]) -> dict[str, Any]:
         ],
         "isError": False,
     }
+
+
+async def _tool_report_pdf(args: dict[str, Any]) -> dict[str, Any]:
+    finding_id = args.get("finding_id")
+    if not finding_id:
+        return {"content": [{"type": "text", "text": "finding_id is required."}], "isError": True}
+
+    output_dir = "/sandbox/reports"
+    try:
+        path = await generate_pdf_report(finding_id, output_dir)
+        summary = f"### Compliance Audit PDF Report Generated Successfully\n- **Target path:** `{path}`\n- **Details:** Contains full compliance metrics, change tickets, Github branch mappings, Confluence wiki documentation, and live audit event log samples."
+        return {
+            "content": [
+                {"type": "text", "text": summary},
+                {"type": "text", "text": json.dumps({"status": "success", "filepath": path})}
+            ],
+            "isError": False
+        }
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[mcp tool error] report_pdf failed\n{tb}", flush=True)
+        return {"content": [{"type": "text", "text": f"Failed to compile PDF Report: {type(e).__name__}: {e}"}], "isError": True}
+
+
+async def _tool_report_ppt(args: dict[str, Any]) -> dict[str, Any]:
+    finding_id = args.get("finding_id")
+    if not finding_id:
+        return {"content": [{"type": "text", "text": "finding_id is required."}], "isError": True}
+
+    output_dir = "/sandbox/reports"
+    try:
+        path = await generate_ppt_report(finding_id, output_dir)
+        summary = f"### Executive Summary compliance Deck Generated Successfully\n- **Target path:** `{path}`\n- **Details:** Includes title milestone track lists, platform coverage profiles, SQL database evidence logs, and strategic compliance roadmap recomendations."
+        return {
+            "content": [
+                {"type": "text", "text": summary},
+                {"type": "text", "text": json.dumps({"status": "success", "filepath": path})}
+            ],
+            "isError": False
+        }
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[mcp tool error] report_ppt failed\n{tb}", flush=True)
+        return {"content": [{"type": "text", "text": f"Failed to generate Slide Deck: {type(e).__name__}: {e}"}], "isError": True}
 
 
 async def _upstream_chat(messages: list[dict[str, str]]) -> str:
@@ -1029,6 +1099,10 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_ask_data(args)
     if name == "workflow_run":
         return await _tool_workflow_run(args)
+    if name == "report_pdf":
+        return await _tool_report_pdf(args)
+    if name == "report_ppt":
+        return await _tool_report_ppt(args)
     if name == "plan_task":
         return await _tool_plan_task(args)
     if name == "run_plan":
