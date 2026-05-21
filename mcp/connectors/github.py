@@ -27,8 +27,16 @@ class GitHubConnector:
 
     async def summary(self) -> dict:
         if not self.enabled:
-            return {"status": "disabled", "prs_count": 0}
-        return {"status": "healthy", "prs_count": 2}
+            return {"status": "disabled", "prs_count": 0, "sample_data": [
+                {"number": 412, "title": "feat: configure code security analyzer rules", "repo": "sec-gates", "state": "open", "author": "alex-secops", "created": "2026-05-20"},
+                {"number": 398, "title": "fix: rds db secure parameter groups alignment", "repo": "infra-terraform", "state": "merged", "author": "sultan-devops", "created": "2026-05-19"},
+                {"number": 420, "title": "feat: setup continuous cert-manager helm chart and let's encrypt integration", "repo": "infra-k8s", "state": "draft", "author": "sarah-sre", "created": "2026-05-21"}
+            ]}
+        return {"status": "healthy", "prs_count": 2, "sample_data": [
+            {"number": 412, "title": "feat: configure code security analyzer rules", "repo": "sec-gates", "state": "open", "author": "alex-secops", "created": "2026-05-20"},
+            {"number": 398, "title": "fix: rds db secure parameter groups alignment", "repo": "infra-terraform", "state": "merged", "author": "sultan-devops", "created": "2026-05-19"},
+            {"number": 420, "title": "feat: setup continuous cert-manager helm chart and let's encrypt integration", "repo": "infra-k8s", "state": "draft", "author": "sarah-sre", "created": "2026-05-21"}
+        ]}
 
     def tools(self) -> list[dict]:
         return [

@@ -36,8 +36,16 @@ class SnowflakeConnector:
 
     async def summary(self) -> dict:
         if not self.enabled:
-            return {"status": "disabled", "audit_log_rows_count": 0}
-        return {"status": "healthy", "audit_log_rows_count": 14522902}
+            return {"status": "disabled", "audit_log_rows_count": 0, "sample_data": [
+                {"timestamp": "2026-05-21 02:11:03", "user_name": "admin_db", "event_type": "login", "sql_text": "—", "status": "SUCCESS"},
+                {"timestamp": "2026-05-21 02:11:05", "user_name": "app_user_stage", "event_type": "query", "sql_text": "SELECT * FROM employees", "status": "SUCCESS"},
+                {"timestamp": "2026-05-21 02:12:12", "user_name": "unknown_net", "event_type": "sql-error", "sql_text": "INSERT INTO admin_tbl VALUES (...)", "status": "DENIED"}
+            ]}
+        return {"status": "healthy", "audit_log_rows_count": 14522902, "sample_data": [
+            {"timestamp": "2026-05-21 02:11:03", "user_name": "admin_db", "event_type": "login", "sql_text": "—", "status": "SUCCESS"},
+            {"timestamp": "2026-05-21 02:11:05", "user_name": "app_user_stage", "event_type": "query", "sql_text": "SELECT * FROM employees", "status": "SUCCESS"},
+            {"timestamp": "2026-05-21 02:12:12", "user_name": "unknown_net", "event_type": "sql-error", "sql_text": "INSERT INTO admin_tbl VALUES (...)", "status": "DENIED"}
+        ]}
 
     def tools(self) -> list[dict]:
         return [

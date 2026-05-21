@@ -15,9 +15,11 @@ interface BubbleProps {
   name: string;
   health: { status: string; detail?: string };
   summary: Record<string, any>;
+  isSelected: boolean;
+  onSelect: () => void;
 }
 
-export function ConnectionBubble({ name, health, summary }: BubbleProps) {
+export function ConnectionBubble({ name, health, summary, isSelected, onSelect }: BubbleProps) {
   // Pick color and icon based on Status
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
@@ -73,7 +75,12 @@ export function ConnectionBubble({ name, health, summary }: BubbleProps) {
   };
 
   return (
-    <Card className="hover:border-primary/50 cursor-pointer transition-all duration-200 shadow-sm">
+    <Card 
+      onClick={onSelect}
+      className={`cursor-pointer transition-all duration-200 shadow-sm border ${
+        isSelected ? "border-primary ring-2 ring-primary/20 bg-primary/5 shadow-md scale-[1.02]" : "hover:border-primary/50"
+      }`}
+    >
       <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
         <CardTitle className="text-sm font-semibold capitalize flex items-center gap-2">
           {getSystemIcon(name)}

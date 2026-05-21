@@ -27,8 +27,16 @@ class ConfluenceConnector:
 
     async def summary(self) -> dict:
         if not self.enabled:
-            return {"status": "disabled", "pages_count": 0}
-        return {"status": "healthy", "pages_count": 12}
+            return {"status": "disabled", "pages_count": 0, "sample_data": [
+                {"id": "pg-01", "title": "Runbook: SOX-404 Database Audit Logging Procedure", "space": "Compliance-Runbooks", "editor": "Sultan DevOps", "last_updated": "2026-05-18"},
+                {"id": "pg-02", "title": "CI/CD Secure Branch Scanning Policy & Compliance Standards", "space": "Architecture-RFCs", "editor": "Alex SecOps", "last_updated": "2026-05-20"},
+                {"id": "pg-03", "title": "AWS certificate verification & Rotations (ALB Pipeline)", "space": "SRE-Guides", "editor": "Sarah SRE", "last_updated": "2026-05-21"}
+            ]}
+        return {"status": "healthy", "pages_count": 12, "sample_data": [
+            {"id": "pg-01", "title": "Runbook: SOX-404 Database Audit Logging Procedure", "space": "Compliance-Runbooks", "editor": "Sultan DevOps", "last_updated": "2026-05-18"},
+            {"id": "pg-02", "title": "CI/CD Secure Branch Scanning Policy & Compliance Standards", "space": "Architecture-RFCs", "editor": "Alex SecOps", "last_updated": "2026-05-20"},
+            {"id": "pg-03", "title": "AWS certificate verification & Rotations (ALB Pipeline)", "space": "SRE-Guides", "editor": "Sarah SRE", "last_updated": "2026-05-21"}
+        ]}
 
     def tools(self) -> list[dict]:
         return [

@@ -27,8 +27,16 @@ class JiraConnector:
 
     async def summary(self) -> dict:
         if not self.enabled:
-            return {"status": "disabled", "open_issues_count": 0}
-        return {"status": "healthy", "open_issues_count": 3}
+            return {"status": "disabled", "open_issues_count": 0, "sample_data": [
+                {"key": "SEC-SCAN-101", "summary": "Integrate GitHub repo scanner alerts for branch compliance", "status": "To Do", "assignee": "Alex SecOps", "updated": "2026-05-20"},
+                {"key": "RDS-LOG-1", "summary": "Enable AWS RDS database engine audit trail logs", "status": "In Progress", "assignee": "Sultan DevOps", "updated": "2026-05-21"},
+                {"key": "ALB-ROT-202", "summary": "Automate certificate verification rotators in AWS load balancer pipeline", "status": "Deferred", "assignee": "Sarah SRE", "updated": "2026-05-18"}
+            ]}
+        return {"status": "healthy", "open_issues_count": 3, "sample_data": [
+            {"key": "SEC-SCAN-101", "summary": "Integrate GitHub repo scanner alerts for branch compliance", "status": "To Do", "assignee": "Alex SecOps", "updated": "2026-05-20"},
+            {"key": "RDS-LOG-1", "summary": "Enable AWS RDS database engine audit trail logs", "status": "In Progress", "assignee": "Sultan DevOps", "updated": "2026-05-21"},
+            {"key": "ALB-ROT-202", "summary": "Automate certificate verification rotators in AWS load balancer pipeline", "status": "Deferred", "assignee": "Sarah SRE", "updated": "2026-05-18"}
+        ]}
 
     def tools(self) -> list[dict]:
         return [

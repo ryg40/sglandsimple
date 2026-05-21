@@ -29,7 +29,18 @@ MONGO_URL = os.environ.get("MONGO_URL", "mongodb://mongo:27017")
 MONGO_DB = os.environ.get("MONGO_DB", "enterprise")
 LIMIT_CEILING = int(os.environ.get("ASK_DATA_LIMIT_CEILING", "50"))
 
-KNOWN_COLLECTIONS = ("employees", "tickets", "documents")
+KNOWN_COLLECTIONS = (
+    "employees",
+    "tickets",
+    "documents",
+    "audit_findings",
+    "epics",
+    "work_items",
+    "pr_records",
+    "doc_records",
+    "log_samples",
+    "workflow_runs",
+)
 
 # Stage 9 — workflow collections
 WORKFLOW_COLLECTIONS = (
@@ -98,7 +109,7 @@ async def list_collections() -> list[dict[str, Any]]:
 
     db = get_db()
     names = await db.list_collection_names()
-    visible = [n for n in names if n in KNOWN_COLLECTIONS]
+    visible = [n for n in names if n in KNOWN_COLLECTIONS or n in WORKFLOW_COLLECTIONS]
     out: list[dict[str, Any]] = []
     for name in visible:
         count = await db[name].estimated_document_count()
@@ -135,7 +146,7 @@ def _truncate_example(value: Any, max_len: int = 80) -> Any:
 
 
 async def describe_collection(name: str, sample: int = 5) -> dict[str, Any]:
-    if name not in KNOWN_COLLECTIONS:
+    if name not in KNOWN_COLLECTIONS and name not in WORKFLOW_COLLECTIONS:
         raise SpecError(f"unknown collection: {name}")
 
     now = time.time()
@@ -200,7 +211,7 @@ def validate_spec(spec: dict[str, Any]) -> dict[str, Any]:
         raise SpecError("spec must be an object")
 
     collection = spec.get("collection")
-    if collection not in KNOWN_COLLECTIONS:
+    if collection not in KNOWN_COLLECTIONS and collection not in WORKFLOW_COLLECTIONS:
         raise SpecError(f"unknown collection: {collection!r}")
 
     kind = spec.get("kind")
@@ -326,7 +337,7 @@ def _require_writes_enabled() -> None:
 
 
 def _require_known_collection(name: Any) -> str:
-    if name not in KNOWN_COLLECTIONS:
+    if name not in KNOWN_COLLECTIONS and name not in WORKFLOW_COLLECTIONS:
         raise SpecError(f"unknown collection: {name!r}")
     return name
 
