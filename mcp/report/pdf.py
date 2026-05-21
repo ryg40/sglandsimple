@@ -61,7 +61,7 @@ async def generate_pdf_report(finding_id: str, output_dir: str) -> str:
     # 2. Section: Findings & Scope
     pdf.set_font("helvetica", "B", 11)
     pdf.set_text_color(51, 65, 85)
-    pdf.cell(0, 10, "1. Regulatory Deficiency Scope & Requirement Gap", lineterminator="\n")
+    pdf.cell(0, 10, "1. Regulatory Deficiency Scope & Requirement Gap", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("helvetica", "", 9.5)
     pdf.set_text_color(30, 30, 30)
 
@@ -72,7 +72,7 @@ async def generate_pdf_report(finding_id: str, output_dir: str) -> str:
     # 3. Section: Implementation Evidence (Jira tickets, PRs, Confluence docs)
     pdf.set_font("helvetica", "B", 11)
     pdf.set_text_color(51, 65, 85)
-    pdf.cell(0, 10, "2. Integrated Change-Control Verification Trail", lineterminator="\n")
+    pdf.cell(0, 10, "2. Integrated Change-Control Verification Trail", new_x="LMARGIN", new_y="NEXT")
 
     # Table Grid of Change Artifacts
     pdf.set_font("helvetica", "B", 9)
@@ -110,7 +110,7 @@ async def generate_pdf_report(finding_id: str, output_dir: str) -> str:
     # 4. Section: Live Database Log Proof Excerpts (from log_samples)
     pdf.set_font("helvetica", "B", 11)
     pdf.set_text_color(51, 65, 85)
-    pdf.cell(0, 10, "3. Live Control Verification Event Logs Auditing Proof", lineterminator="\n")
+    pdf.cell(0, 10, "3. Live Control Verification Event Logs Auditing Proof", new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font("helvetica", "B", 9)
     pdf.set_fill_color(241, 245, 249)

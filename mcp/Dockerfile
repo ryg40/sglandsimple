@@ -23,6 +23,9 @@ RUN pip install -r requirements.txt
 
 COPY *.py ./
 COPY deep_agent ./deep_agent
+COPY connectors ./connectors
+COPY workflow ./workflow
+COPY report ./report
 
 EXPOSE 8080
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]
