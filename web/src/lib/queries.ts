@@ -19,6 +19,7 @@ import type {
   SheetRowsResponse,
   Stage,
   SuggestResult,
+  TopologyGraph,
   WranglerSample,
 } from "./types";
 
@@ -223,6 +224,15 @@ export function useWorkflowRun() {
   return useMutation({
     mutationFn: (a: { finding_id: string; resume_decision?: string; checkpoint_id?: string }) =>
       api.post<any>("/api/workflow/run", a),
+  });
+}
+
+// Stage 12 — cross-system topology graph for the Architecture page.
+export function useTopology() {
+  return useQuery({
+    queryKey: ["topology"] as const,
+    queryFn: () => api.get<TopologyGraph>("/api/topology"),
+    refetchInterval: 30_000,
   });
 }
 

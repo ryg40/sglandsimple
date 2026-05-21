@@ -183,3 +183,42 @@ export interface ChatCompletion {
   choices?: { message?: { content?: string } }[];
   error?: unknown;
 }
+
+// Stage 12 — cross-system topology graph (see mcp/topology.py).
+export interface TopologyNode {
+  id: string;
+  label: string;
+  kind: string;
+  zone: string;
+  status: string;
+  endpoint: string;
+  metrics: Record<string, number>;
+  concerns: string[];
+}
+export interface TopologyEdge {
+  from: string;
+  to: string;
+  label: string;
+  kind: string;
+  concern?: boolean;
+}
+export interface TopologyConcern {
+  id: string;
+  severity: "critical" | "high" | "medium" | "low";
+  kind: string;
+  title: string;
+  node_id?: string;
+  edge?: { from: string; to: string };
+  link?: string;
+}
+export interface TopologyZone {
+  id: string;
+  label: string;
+  order: number;
+}
+export interface TopologyGraph {
+  nodes: TopologyNode[];
+  edges: TopologyEdge[];
+  concerns: TopologyConcern[];
+  zones: TopologyZone[];
+}

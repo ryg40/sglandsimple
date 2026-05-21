@@ -6,6 +6,7 @@ import { AlertCircle, HelpCircle, Shield, RefreshCw, Terminal, ArrowRight, Table
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
+import { SCHEMA_COLUMNS, fallbackColumns } from "../components/hub-columns";
 
 export default function Hub() {
   const { data, isLoading, isError, error, refetch, isRefetching } = useConnectors();
@@ -182,118 +183,55 @@ export default function Hub() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {!selectedConnector.summary?.sample_data || selectedConnector.summary.sample_data.length === 0 ? (
-                    <div className="p-8 border border-dashed rounded-lg text-center text-muted-foreground flex flex-col items-center justify-center">
-                      <Server className="h-8 w-8 mb-2 text-slate-400" />
-                      <p className="text-xs font-semibold">No simulation records loaded</p>
-                      <p className="text-[11px] mt-1">Select Jira, GitHub, Confluence or Snowflake to preview interactive metrics panes and sample datasets.</p>
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-100 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold">
-                            {selectedConnectorName === "jira" && (
-                              <>
-                                <th className="p-3 font-mono">Key</th>
-                                <th className="p-3">Summary</th>
-                                <th className="p-3">Status</th>
-                                <th className="p-3">Assignee</th>
-                                <th className="p-3 text-right">Updated</th>
-                              </>
-                            )}
-                            {selectedConnectorName === "github" && (
-                              <>
-                                <th className="p-3 font-mono">PR #</th>
-                                <th className="p-3">Title</th>
-                                <th className="p-3 font-mono">Repository</th>
-                                <th className="p-3">State</th>
-                                <th className="p-3">Author</th>
-                              </>
-                            )}
-                            {selectedConnectorName === "confluence" && (
-                              <>
-                                <th className="p-3">Title</th>
-                                <th className="p-3 font-mono">Space Override</th>
-                                <th className="p-3">Last Editor</th>
-                                <th className="p-3 text-right">Synched On</th>
-                              </>
-                            )}
-                            {selectedConnectorName === "snowflake" && (
-                              <>
-                                <th className="p-3">Timestamp</th>
-                                <th className="p-3">User Name</th>
-                                <th className="p-3">Event Type</th>
-                                <th className="p-3 font-mono">SQL Text</th>
-                                <th className="p-3">Status</th>
-                              </>
-                            )}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                          {selectedConnector.summary.sample_data.map((row: any, idx: number) => (
-                            <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50 transition-colors">
-                              {selectedConnectorName === "jira" && (
-                                <>
-                                  <td className="p-3 font-mono font-bold text-blue-600 dark:text-blue-400">{row.key}</td>
-                                  <td className="p-3 max-w-[240px] truncate" title={row.summary}>{row.summary}</td>
-                                  <td className="p-3">
-                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                      row.status === "To Do" ? "bg-slate-100 text-slate-800 border" :
-                                      row.status === "In Progress" ? "bg-blue-50 text-blue-700 border border-blue-200 animate-pulse" :
-                                      "bg-amber-50 text-amber-700 border border-amber-200"
-                                    }`}>
-                                      {row.status}
-                                    </span>
-                                  </td>
-                                  <td className="p-3 text-muted-foreground font-serif">{row.assignee}</td>
-                                  <td className="p-3 text-right font-mono text-muted-foreground">{row.updated}</td>
-                                </>
-                              )}
-                              {selectedConnectorName === "github" && (
-                                <>
-                                  <td className="p-3 font-mono font-semibold text-emerald-600 dark:text-emerald-400">#{row.number}</td>
-                                  <td className="p-3 max-w-[200px] truncate font-sans text-slate-800 dark:text-slate-200" title={row.title}>{row.title}</td>
-                                  <td className="p-3 font-mono text-xs">{row.repo}</td>
-                                  <td className="p-3">
-                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                      row.state === "merged" ? "bg-purple-100 text-purple-800" :
-                                      row.state === "open" ? "bg-green-100 text-green-800 animate-pulse" :
-                                      "bg-slate-150 text-slate-600 font-mono"
-                                    }`}>
-                                      {row.state}
-                                    </span>
-                                  </td>
-                                  <td className="p-3 font-mono text-muted-foreground">@{row.author}</td>
-                                </>
-                              )}
-                              {selectedConnectorName === "confluence" && (
-                                <>
-                                  <td className="p-3 font-medium text-cyan-600 dark:text-cyan-400 max-w-[250px] truncate" title={row.title}>{row.title}</td>
-                                  <td className="p-3 font-mono text-[10.5px]">{row.space}</td>
-                                  <td className="p-3 font-serif">{row.editor}</td>
-                                  <td className="p-3 text-right font-mono text-muted-foreground text-[10.5px]">{row.last_updated}</td>
-                                </>
-                              )}
-                              {selectedConnectorName === "snowflake" && (
-                                <>
-                                  <td className="p-3 font-mono text-muted-foreground">{row.timestamp}</td>
-                                  <td className="p-3 font-sans font-semibold text-sky-600 dark:text-sky-400">{row.user_name}</td>
-                                  <td className="p-3 uppercase font-mono text-[10.5px]">{row.event_type}</td>
-                                  <td className="p-3 max-w-[180px] truncate font-mono text-slate-500 text-[10px]" title={row.sql_text}>{row.sql_text}</td>
-                                  <td className="p-3">
-                                    <Badge variant={row.status === "SUCCESS" ? "default" : "destructive"} className="text-[9px] py-0 px-1 font-mono">
-                                      {row.status}
-                                    </Badge>
-                                  </td>
-                                </>
-                              )}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  {(() => {
+                    const rows: any[] = selectedConnector.summary?.sample_data ?? [];
+                    const schema: string | undefined = selectedConnector.summary?.schema;
+                    const sprint = selectedConnector.summary?.active_sprint;
+                    const columns = (schema && SCHEMA_COLUMNS[schema]) || fallbackColumns(rows);
+                    if (rows.length === 0) {
+                      return (
+                        <div className="p-8 border border-dashed rounded-lg text-center text-muted-foreground flex flex-col items-center justify-center">
+                          <Server className="h-8 w-8 mb-2 text-slate-400" />
+                          <p className="text-xs font-semibold">No simulation records loaded</p>
+                          <p className="text-[11px] mt-1">This connector has not published sample records for the current state.</p>
+                        </div>
+                      );
+                    }
+                    return (
+                      <>
+                        {/* Jira active-sprint header */}
+                        {schema === "jira_sprint" && sprint && (
+                          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-blue-200/60 bg-blue-50/50 dark:border-blue-900/40 dark:bg-blue-950/20 px-3 py-2 text-xs">
+                            <span className="font-semibold text-blue-700 dark:text-blue-300">{sprint.name}</span>
+                            <Badge variant="outline" className="text-[9px] uppercase">{sprint.state}</Badge>
+                            <span className="text-muted-foreground">{sprint.startDate} → {sprint.endDate}</span>
+                            <span className="ml-auto font-mono text-muted-foreground">{sprint.completed}/{sprint.committed} pts done</span>
+                            {sprint.goal && <span className="w-full text-[11px] text-muted-foreground italic">🎯 {sprint.goal}</span>}
+                          </div>
+                        )}
+                        <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="bg-slate-100 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold">
+                                {columns.map((c) => (
+                                  <th key={c.header} className={`p-3 ${c.align === "right" ? "text-right" : ""}`}>{c.header}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                              {rows.map((row: any, idx: number) => (
+                                <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50 transition-colors">
+                                  {columns.map((c) => (
+                                    <td key={c.header} className={`p-3 ${c.align === "right" ? "text-right" : ""}`}>{c.cell(row)}</td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    );
+                  })()}
 
                   {/* Flow Orchestrator Direct Cross-Link Shortcut */}
                   <div className="mt-4 p-4 rounded-lg bg-primary/5 border border-primary/10 flex items-center justify-between">
