@@ -870,117 +870,117 @@ Exposed as MCP tools (`report_pdf`, `report_ppt`) so the agent can also generate
 
 ### S9.model — Data model + decisions
 
-- [ ] **S9.model.1 — New MongoDB collections + seed**
+- [x] **S9.model.1 — New MongoDB collections + seed**
   - Files: `mongo-seed/` (new seed for `epics` with the RDS priority epic + a sample `audit_findings` row), `mcp/db.py` (extend `KNOWN_COLLECTIONS`? — decide: workflow collections are **separate** from the read-only enterprise allowlist; add a dedicated workflow allowlist instead).
   - Done when: `audit_findings`, `epics`, `work_items`, `pr_records`, `doc_records`, `log_samples`, `workflow_runs` exist with seed data for the RDS epic + one finding.
   - Depends on: —
 
-- [ ] **S9.connect.1 — Lock connector decisions**
+- [x] **S9.connect.1 — Lock connector decisions**
   - Files: this doc (record in §9b).
   - Done when: chosen MCP servers (image/version/auth) for Jira/Confluence/GitHub/AWS recorded; ServiceNow + Snowflake adapter approach confirmed; Archer placeholder contract defined.
   - Depends on: —
 
 ### S9.connect — Connector layer (server-side, mock-first)
 
-- [ ] **S9.connect.2 — `Connector` protocol + registry**
+- [x] **S9.connect.2 — `Connector` protocol + registry**
   - Files: `mcp/connectors/__init__.py`, `mcp/connectors/base.py`, `mcp/server.py` (registry → `tools/list`).
   - Done when: a common `health()/summary()/tools` contract exists; a registry enumerates connectors with enable flags; `audit_recent`-style proxying works for connector tools.
   - Depends on: S9.connect.1
 
-- [ ] **S9.connect.3 — MongoDB connector (wrap existing)**
+- [x] **S9.connect.3 — MongoDB connector (wrap existing)**
   - Files: `mcp/connectors/mongodb.py`.
   - Done when: existing `mongo_*` tools surface through the registry with health/summary; serves as the reference connector.
   - Depends on: S9.connect.2
 
-- [ ] **S9.connect.4 — MCP-client connectors: Jira, Confluence, GitHub, AWS**
+- [x] **S9.connect.4 — MCP-client connectors: Jira, Confluence, GitHub, AWS**
   - Files: `mcp/connectors/{jira,confluence,github,aws}.py`.
   - Done when: each connects to its upstream MCP server when `CONN_*_ENABLED=true`, else returns mock `health()/summary()` + sample items; tools refuse cleanly when disabled.
   - Depends on: S9.connect.2
 
-- [ ] **S9.connect.5 — ServiceNow REST adapter**
+- [x] **S9.connect.5 — ServiceNow REST adapter**
   - Files: `mcp/connectors/servicenow.py`, `mcp/server.py`.
   - Done when: read tools (findings/CRs) over `SERVICENOW_BASE_URL`; mock mode when disabled.
   - Depends on: S9.connect.2
 
-- [ ] **S9.connect.6 — Snowflake SQL adapter (tool_calls)**
+- [x] **S9.connect.6 — Snowflake SQL adapter (tool_calls)**
   - Files: `mcp/connectors/snowflake.py`, `mcp/server.py`.
   - Done when: a read-only `snowflake_query` tool runs warehoused-log queries (validated/limited like `mongo_query`); mock rows when disabled.
   - Depends on: S9.connect.2
 
-- [ ] **S9.connect.7 — Archer placeholder connector**
+- [x] **S9.connect.7 — Archer placeholder connector**
   - Files: `mcp/connectors/archer.py`.
   - Done when: typed contract + mock findings; bubble renders "placeholder/not-connected"; no outbound calls.
   - Depends on: S9.connect.2
 
 ### S9.workflow — Orchestrator (steps 1→6, dry-run first)
 
-- [ ] **S9.workflow.1 — Workflow state model + collections wiring**
+- [x] **S9.workflow.1 — Workflow state model + collections wiring**
   - Files: `mcp/workflow/models.py`.
   - Done when: Pydantic models for the run + each artifact; cross-link ids resolved against the 9d collections.
   - Depends on: S9.model.1
 
-- [ ] **S9.workflow.2 — LangGraph orchestrator with approval interrupts**
+- [x] **S9.workflow.2 — LangGraph orchestrator with approval interrupts**
   - Files: `mcp/workflow/graph.py`, checkpointer reuse.
   - Done when: steps 1→6 run in dry-run (writes gated by `WORKFLOW_WRITES_ENABLED` + per-step `interrupt()`); each step persists its artifact + cross-links; `workflow_runs` updated; audited (`source="workflow_<step>"`).
   - Depends on: S9.workflow.1, S9.connect.4
 
-- [ ] **S9.workflow.3 — Jira ticket generation from epic template**
+- [x] **S9.workflow.3 — Jira ticket generation from epic template**
   - Files: `mcp/workflow/jira_template.py`.
   - Done when: given a finding + epic, emits a best-practice ticket payload (dry-run returns it; live creates via the Jira connector when enabled).
   - Depends on: S9.workflow.2, S9.connect.4
 
-- [ ] **S9.workflow.4 — PR template + Actions/review wiring (dry-run)**
+- [x] **S9.workflow.4 — PR template + Actions/review wiring (dry-run)**
   - Files: `mcp/workflow/pr_template.py`.
   - Done when: produces the branch name (references Jira key), PR body template, required checks list, and reviewer set (Copilot + 2); live opens the PR via the GitHub connector when enabled.
   - Depends on: S9.workflow.2, S9.connect.4
 
-- [ ] **S9.workflow.5 — Confluence Epic-Log documentation (dry-run)**
+- [x] **S9.workflow.5 — Confluence Epic-Log documentation (dry-run)**
   - Files: `mcp/workflow/epic_log.py`.
   - Done when: renders the Epic-Log section for the work item; live publishes via the Confluence connector when enabled; `doc_records` updated.
   - Depends on: S9.workflow.2, S9.connect.4
 
 ### S9.report — PDF / PPT artifacts
 
-- [ ] **S9.report.1 — Pick libraries + report data aggregator**
+- [x] **S9.report.1 — Pick libraries + report data aggregator**
   - Files: `mcp/report/aggregate.py`, `mcp/requirements.txt`.
   - Done when: PDF + PPTX libs chosen/pinned; aggregator pulls a finding's full graph from the 9d collections + live reads into one report model.
   - Depends on: S9.workflow.2
 
-- [ ] **S9.report.2 — `report_pdf` + `report_ppt` MCP tools**
+- [x] **S9.report.2 — `report_pdf` + `report_ppt` MCP tools**
   - Files: `mcp/report/pdf.py`, `mcp/report/ppt.py`, `mcp/server.py`.
   - Done when: both tools write to `REPORT_OUTPUT_DIR`, audience-tuned (layman/manager/audit-manager); returned path is downloadable by the web.
   - Depends on: S9.report.1
 
 ### S9.web — Dashboard hub UI
 
-- [ ] **S9.web.1 — Connector proxy routes + types/hooks**
+- [x] **S9.web.1 — Connector proxy routes + types/hooks**
   - Files: `web/main.py` (`/api/connectors`, `/api/connectors/{name}`), `web/src/lib/{types,queries}.ts`.
   - Done when: the SPA can enumerate bubbles + health and read each connector's recent items via typed hooks.
   - Depends on: S9.connect.2
 
-- [ ] **S9.web.2 — Connections grid (bubbles)**
+- [x] **S9.web.2 — Connections grid (bubbles)**
   - Files: `web/src/routes/overview.tsx` (or a new `hub.tsx`), `web/src/components/connection-bubble.tsx`.
   - Done when: 8 bubbles render with status dot/summary/last-sync; click opens a detail drawer; mock states render with no live calls.
   - Depends on: S9.web.1
 
-- [ ] **S9.web.3 — Workflow lane + "Relate everything" view**
+- [x] **S9.web.3 — Workflow lane + "Relate everything" view**
   - Files: `web/src/routes/workflow.tsx`, components.
   - Done when: select a finding/epic → horizontal stepper (1→9) with each artifact + cross-links; a single relate-everything panel pulls all associated records; click-through opens records.
   - Depends on: S9.web.1, S9.workflow.2
 
-- [ ] **S9.web.4 — Report export buttons**
+- [x] **S9.web.4 — Report export buttons**
   - Files: `web/main.py` (download proxy), `web/src/routes/workflow.tsx`.
   - Done when: "Export PDF"/"Export PPT" scoped to the current finding/epic call the report tools and download the file.
   - Depends on: S9.report.2, S9.web.3
 
 ### S9.verify — End-to-end
 
-- [ ] **S9.verify.1 — `scripts/smoke_workflow.sh` (mock mode)**
+- [x] **S9.verify.1 — `scripts/smoke_workflow.sh` (mock mode)**
   - Files: `scripts/smoke_workflow.sh`.
   - Done when: seeds a finding → dry-run orchestrator → asserts `audit_findings/epics/work_items/pr_records/doc_records/log_samples/workflow_runs` populated + cross-linked → generates a PDF; exit 0.
   - Depends on: S9.workflow.5, S9.report.2
 
-- [ ] **S9.verify.2 — Build + dashboard walkthrough**
+- [x] **S9.verify.2 — Build + dashboard walkthrough**
   - Done when: §9i scenarios 1–8 reproducible (mock mode); one connector flipped live verified; recorded as a note here.
   - Depends on: S9.web.4, S9.verify.1
 

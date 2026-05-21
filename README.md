@@ -243,3 +243,43 @@ flowchart LR
   sf -.->|cloud DB audit logs| mongo
 ```
 
+## Built Compliance Features (Stage 9 Integrated)
+
+The Compliance Orchestrator and Connections Hub is **fully implemented, compiled, and integrated** into the active stack!
+
+### Architectural Highlights
+
+1. **System Connector Registry (`mcp/connectors`)**:
+   - Integrates 8 central audit modules under a standard protocol.
+   - Live state-polling checks connection health and populates bubbles automatically.
+   - Clean, mock-first stubs prevent failures when API keys are absent, keeping the dashboard 100% stable.
+
+2. **LangGraph compliance orchestrator (`mcp/workflow`)**:
+   - Executes finding-mapping pipelines automatically in safe dry-run or live-trigger write states.
+   - Enforces two human-gate approval interrupts (Gate-1 PR creation, Gate-2 Wiki updates), allowing evaluators to step and approve changes.
+   - Upserts intermediate runner statuses to MongoDB `workflow_runs` and log-safeguards auditing trails under `source="workflow_*"` prefixes.
+
+3. **Laity-Friendly Evidentiary Exports (`mcp/report`)**:
+   - **Compliance PDF:** Aggregates change logs, branch structures, PR checklist results, and SQL database audit trails into a beautiful corporate-designed narrative verification report.
+   - **Executive Slide Decks:** Builds programmatic 16:9 widescreen PowerPoint briefs displaying progress milestones, coverage matrices, and audit recommendations.
+
+4. **Web SPA Dashboard (`web/src`)**:
+   - Spawns live compliance workers and displays dynamic Horizontal progress lanes.
+   - Resolves approval interrupts directly from the Web-UI.
+   - Exposes report generation download triggers.
+
+### Running End-to-End Verification
+
+A comprehensive automated smoke test script is built at **`scripts/smoke_workflow.sh`** to test the whole workflow in mock/dry-run mode:
+
+```bash
+# Ensure containers are running first
+docker compose up -d
+
+# Trigger the automated smoke verification tests
+./scripts/smoke_workflow.sh
+```
+
+Follow manual walkthrough steps, officer guidelines, and verification rules logged under **`scripts/VERIFY.md`** to evaluate UI actions!
+
+
