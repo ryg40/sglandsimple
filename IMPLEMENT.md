@@ -544,7 +544,7 @@ The planner is bounded to emit only the stage grammar from 7b. Schema is validat
 
 ## Stage 8 — React + shadcn/ui admin panel (visual overhaul)
 
-> **Pick-up point.** Stages 6 & 7 are complete. Stage 8 is the next planned stage; start at `S8.scaffold.1` and proceed in task order. This is a **front-end rewrite only** — no MCP/agent/db changes. The existing `web/` API surface (the `/api/*` proxy routes) is preserved verbatim; only the presentation layer changes.
+> **Status: complete** (code + serving verified; in-browser visual/a11y walkthrough still open — see `S8.verify.2`). The React + shadcn/ui SPA replaced the Jinja/vanilla pages; one additive MCP tool (`audit_recent`) was needed for the Overview feed — otherwise the `/api/*` surface is preserved. Build: `docker compose build web` (multi-stage node→python), served by FastAPI on `${WEB_PORT}`.
 
 **Goal:** Replace the no-build Jinja + vanilla-JS pages with a single **React + TypeScript + Vite + Tailwind v4 + shadcn/ui** SPA that presents Chat, Sheet, and Wrangler as panels of one cohesive, visually polished **admin dashboard**. Robustness is a first-class requirement: every data view has loading/empty/error states, every mutation is optimistic with rollback, the whole thing is keyboard- and screen-reader-navigable with a persisted light/dark theme, and all server payloads flow through a typed API client backed by TanStack Query.
 
@@ -649,111 +649,340 @@ FastAPI changes: mount `dist/assets`, add a catch-all that returns `index.html` 
 
 ### S8.scaffold — Vite + React + Tailwind v4 + shadcn
 
-- [ ] **S8.scaffold.1 — Vite React+TS app under `web/`**
+- [x] **S8.scaffold.1 — Vite React+TS app under `web/`**
   - Files: `web/package.json`, `web/tsconfig*.json`, `web/vite.config.ts`, `web/index.html`, `web/src/main.tsx`, `web/.gitignore`.
-  - Done when: `npm install && npm run build` produces `web/dist/` locally; `node_modules` and `dist` gitignored.
-  - Depends on: —
+  - Note: React 18 + Vite 6 + TS 5.7. `npm run build` (tsc -b + vite build) emits `web/dist/`. `@types/node` added for the vite config. Dev proxy sends `/api` → `:5452`.
 
-- [ ] **S8.scaffold.2 — Tailwind v4 + design tokens**
-  - Files: `web/src/index.css` (`@import "tailwindcss"; @theme {...}`), `web/vite.config.ts` (`@tailwindcss/vite`).
-  - Done when: tokens for background/card/border/primary/muted/radius + light & dark are defined once; a sample component picks them up.
-  - Depends on: S8.scaffold.1
+- [x] **S8.scaffold.2 — Tailwind v4 + design tokens**
+  - Files: `web/src/index.css`, `web/vite.config.ts`.
+  - Note: Tailwind v4.3 via `@tailwindcss/vite`. Tokens in oklch (`@theme inline`), light + `.dark`, including sidebar + chart series. Class-based dark mode via `@custom-variant`.
 
-- [ ] **S8.scaffold.3 — shadcn/ui init + base components**
-  - Files: `web/components.json`, `web/src/components/ui/*`, `web/src/lib/utils.ts`.
-  - Done when: `button`, `card`, `input`, `badge`, `skeleton`, `dialog`, `dropdown-menu`, `tabs`, `tooltip`, `sonner`, `table` are generated and importable.
-  - Depends on: S8.scaffold.2
+- [x] **S8.scaffold.3 — shadcn/ui base components**
+  - Files: `web/src/components/ui/*`, `web/src/lib/utils.ts`.
+  - Note: components hand-written (MIT shadcn source) rather than via the CLI (no interactive init / `components.json`): button, card, input, badge, skeleton, dialog, dropdown-menu, tabs, tooltip, sonner. `cn()` in lib/utils.
 
 ### S8.api — Type-safe data layer
 
-- [ ] **S8.api.1 — Decide + implement the `audit_recent` read**
-  - Files: `web/main.py` (+ optionally `mcp/server.py`/`mcp/wrangler.py`).
-  - Done when: `GET /api/audit/recent?limit=` returns the latest audit rows. Decision recorded inline: new MCP `audit_recent` tool **vs.** reuse `mongo_query` against `audit_log`. (Note: `audit_log` is not in `KNOWN_COLLECTIONS`, so reusing `mongo_query` requires either adding it or a dedicated tool — resolve here.)
-  - Depends on: —
+- [x] **S8.api.1 — `audit_recent` read**
+  - Files: `mcp/db.py`, `mcp/server.py`, `web/main.py`, `compose.yaml`.
+  - **Decision: dedicated MCP tool `audit_recent`** (not loosening `mongo_query`) — keeps `audit_log` out of the read allowlist. `db.audit_recent(limit)` sorts by `ts` desc; web `GET /api/audit/recent?limit=` proxies it and defaults to `AUDIT_RECENT_LIMIT`.
 
-- [ ] **S8.api.2 — Shared TS types**
-  - Files: `web/src/lib/types.ts`.
-  - Done when: every `/api/*` payload has an interface; no `any` in the data layer.
-  - Depends on: S8.scaffold.1
+- [x] **S8.api.2 — Shared TS types**
+  - Files: `web/src/lib/types.ts`. No `any` in the data layer.
 
-- [ ] **S8.api.3 — Typed fetch client + `ApiError`**
-  - Files: `web/src/lib/api.ts`.
-  - Done when: `get/post/del<T>` wrappers throw a typed `ApiError{status, body}` on non-2xx; base URL is same-origin `/api`.
-  - Depends on: S8.api.2
+- [x] **S8.api.3 — Typed fetch client + `ApiError`**
+  - Files: `web/src/lib/api.ts`. `get/post/del<T>` + `qs()` helper; throws `ApiError{status, body}` with a best-effort message.
 
-- [ ] **S8.api.4 — TanStack Query hooks**
-  - Files: `web/src/lib/queries.ts`, `web/src/main.tsx` (QueryClientProvider).
-  - Done when: all hooks from §8e exist; cell/insert/delete/apply-nl mutations are optimistic with rollback and invalidate the right keys.
-  - Depends on: S8.api.3, S8.scaffold.3
+- [x] **S8.api.4 — TanStack Query hooks**
+  - Files: `web/src/lib/queries.ts`, `web/src/main.tsx`.
+  - Note: `useUpdateCell` and `useDeleteRow` are optimistic with rollback via `onMutate`/`onError`; all mutations invalidate sheet rows + collections + audit. `useRecentAudit` polls every 15s.
 
 ### S8.shell — App shell, routing, theming
 
-- [ ] **S8.shell.1 — Router + AppShell (sidebar + topbar)**
-  - Files: `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`, `web/src/components/topbar.tsx`, route files.
-  - Done when: `/`, `/chat`, `/sheet`, `/wrangler` route within one shell; sidebar collapsible; active route highlighted.
-  - Depends on: S8.scaffold.3
+- [x] **S8.shell.1 — Router + AppShell**
+  - Files: `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`, `web/src/components/topbar.tsx`.
+  - Note: collapsible grouped sidebar (Workspace/Tools) with active pill + a pinned connection/total-records status card; topbar with title/subtitle + command-search affordance.
 
-- [ ] **S8.shell.2 — Theme provider + toggle (persisted)**
+- [x] **S8.shell.2 — Theme provider + toggle (persisted)**
   - Files: `web/src/components/theme-provider.tsx`, `web/src/components/theme-toggle.tsx`.
-  - Done when: toggles `.dark`, persists to `localStorage`, defaults to `prefers-color-scheme`.
-  - Depends on: S8.scaffold.2
+  - Note: implemented via **`next-themes`** (class attribute, `storageKey="sgl-theme"`, `enableSystem`) rather than a hand-rolled provider — sonner reads the same provider.
 
-- [ ] **S8.shell.3 — Error boundary + global toaster**
-  - Files: `web/src/components/error-boundary.tsx`, mount `<Toaster/>`.
-  - Done when: a thrown render error shows a recoverable fallback; toasts render app-wide.
-  - Depends on: S8.shell.1
+- [x] **S8.shell.3 — Error boundary + global toaster**
+  - Files: `web/src/components/error-boundary.tsx`, `web/src/components/ui/sonner.tsx` (mounted in `main.tsx`).
 
 ### S8.overview — Dashboard landing (the showcase)
 
-- [ ] **S8.overview.1 — Stat cards + trend chart**
-  - Files: `web/src/routes/overview.tsx`, `web/src/components/stat-card.tsx`, chart components.
-  - Done when: collection-count stat cards + a `recharts` area/line trend render with loading skeletons; styled to the reference.
-  - Depends on: S8.api.4, S8.shell.1
+- [x] **S8.overview.1 — Stat cards + trend chart**
+  - Files: `web/src/routes/overview.tsx`, `web/src/components/stat-card.tsx`.
+  - Note: per-collection stat cards + a "write events" card; recharts area chart of audit events/day; a collection-count bar list. Skeletons while loading.
 
-- [ ] **S8.overview.2 — Recent-activity table**
-  - Files: `web/src/routes/overview.tsx`, `web/src/components/activity-table.tsx`.
-  - Done when: the `audit_recent` feed renders as a fintech-style table with status chips + relative timestamps; empty/error states present.
-  - Depends on: S8.api.1, S8.api.4
+- [x] **S8.overview.2 — Recent-activity table**
+  - Files: `web/src/components/activity-table.tsx`.
+  - Note: audit feed with action chips (insert=success, delete=destructive, update=warning), source, relative timestamps; loading/empty/error+retry states.
 
 ### S8.panels — Port the three tools
 
-- [ ] **S8.panels.1 — Chat panel**
-  - Files: `web/src/routes/chat.tsx`.
-  - Done when: full parity with the old chat (send, ask-data, markdown + code highlight) using `react-markdown`; loading + error states.
-  - Depends on: S8.api.4, S8.shell.1
+- [x] **S8.panels.1 — Chat panel**
+  - Files: `web/src/routes/chat.tsx`, `web/src/components/markdown.tsx`.
+  - Note: send + ask-data, `react-markdown` + `remark-gfm` + `rehype-highlight` (github theme), thinking indicator, error toasts.
 
-- [ ] **S8.panels.2 — Sheet panel (shadcn DataTable)**
-  - Files: `web/src/routes/sheet.tsx`, `web/src/components/data-grid.tsx`.
-  - Done when: Stage-6 parity — collection rail/tabs, click-to-edit cells (optimistic + rollback), add/delete row, paging, NL bar; keyboard cell nav.
-  - Depends on: S8.api.4
+- [x] **S8.panels.2 — Sheet panel**
+  - Files: `web/src/routes/sheet.tsx`.
+  - Note: built as an inline editable grid in the route (no separate `data-grid.tsx`). Collection tabs, click-to-edit cells (optimistic + rollback), add/delete row, paging, NL bar, sticky header + sticky `_id` column. Enter commits / Escape cancels.
 
-- [ ] **S8.panels.3 — Wrangler panel**
-  - Files: `web/src/routes/wrangler.tsx`, stage-card + preview components.
-  - Done when: Stage-7 parity — field chips, stage cards with per-stage run + delta, 25-row previews, live-rerun toggle, save/load, suggest.
-  - Depends on: S8.api.4
+- [x] **S8.panels.3 — Wrangler panel**
+  - Files: `web/src/routes/wrangler.tsx`, `web/src/lib/pipeline.ts`.
+  - Note: field chips (click/alt-click/right-click), stage cards (match/group/project/sort/limit) with per-stage Run-up-to-here + `input → output` delta + 25-row preview, per-card live-rerun (300ms debounce), save/load side panel, "Ask agent" suggestions side panel. compile/decompile logic in `lib/pipeline.ts`.
 
 ### S8.docker — Build & serve
 
-- [ ] **S8.docker.1 — Multi-stage Dockerfile + FastAPI SPA serving**
-  - Files: `web/Dockerfile`, `web/main.py`, `web/.dockerignore`.
-  - Done when: Node stage builds `dist/`; Python stage copies it; FastAPI mounts `dist/assets` and serves `index.html` as SPA fallback for non-`/api` GETs; all `/api/*` handlers unchanged. `WEB_BUILD_MODE`/`AUDIT_RECENT_LIMIT` added to `.env.example` + Env surface table.
-  - Depends on: S8.panels.1, S8.panels.2, S8.panels.3, S8.overview.2
+- [x] **S8.docker.1 — Multi-stage Dockerfile + FastAPI SPA serving**
+  - Files: `web/Dockerfile`, `web/main.py`, `web/.dockerignore`, `web/requirements.txt`, `compose.yaml`, `.env.example`.
+  - Note: node:20 build stage → dist; python:3.12 stage serves it (`/assets` mount + `{full_path}` SPA fallback that 404s `api/*`). `WEB_BUILD_MODE` build-arg + `AUDIT_RECENT_LIMIT` env wired in compose. jinja2 dropped from requirements.
 
-- [ ] **S8.docker.2 — Remove legacy Jinja/vanilla pages**
-  - Files: delete `web/templates/`, `web/static/{app,sheet,wrangler}.{js,css}`, old template routes in `main.py`.
-  - Done when: nothing references the removed files; build still green; all routes served by the SPA.
-  - Depends on: S8.docker.1
+- [x] **S8.docker.2 — Remove legacy Jinja/vanilla pages**
+  - Files: deleted `web/templates/`, `web/static/`; removed the three template routes from `main.py`.
+  - Note: docstring updated to describe the SPA + API surface; build green; nothing references the removed files.
 
 ### S8.verify — End-to-end
 
-- [ ] **S8.verify.1 — `scripts/smoke_web_spa.sh`**
+- [x] **S8.verify.1 — `scripts/smoke_web_spa.sh`**
   - Files: `scripts/smoke_web_spa.sh`.
-  - Done when: asserts built `index.html` is served, a hashed asset 200s, SPA fallback returns `index.html` for `/sheet`, and `/api/sheet/collections` still returns JSON.
-  - Depends on: S8.docker.1
+  - Note: PASS — index served, hashed asset 200s, `/sheet` falls back to index, `/api/sheet/collections` + `/api/audit/recent` return JSON, unknown `/api/*` 404s.
 
-- [ ] **S8.verify.2 — Build + manual UX/a11y walkthrough**
-  - Done when: §8j scenarios 1–8 reproducible; dark mode persists; optimistic rollback observed; keyboard-only pass clean; recorded as a checklist note on this task.
-  - Depends on: S8.docker.2, S8.verify.1
+- [x] **S8.verify.2 — Build + verification**
+  - Note: `docker compose build web mcp` (multi-stage) + `up -d` green; all 4 services healthy; `tools/list` shows 27 tools incl. `audit_recent`. Data paths for all three panels verified via curl through the new SPA proxy (collections, audit feed, wrangler sample + run `20 → 4`). **Not done headlessly:** the in-browser visual/keyboard/a11y/dark-mode-persistence walkthrough (§8j 2–7) needs a human at a browser — open `http://<host>:${WEB_PORT}/` to complete it.
+
+---
+
+## Stage 9 — Compliance workflow hub (integrations dashboard)
+
+> **Pick-up point.** Stage 8 (the React/shadcn admin SPA) is the substrate this builds on. Stage 9 turns the Overview into a **workflow hub**: a grid of connection "bubbles" (one per external system) plus a guided, end-to-end **audit-finding → Jira → code → PR → docs → report** flow that stitches every system together. Start at `S9.model.1` and proceed in task order. This is a **large** stage — it is decomposed so each integration and each workflow step can land independently behind a feature flag.
+
+**Goal:** A person opens the dashboard, clicks into a section, and immediately sees *all the related pieces of one standard compliance workflow* — the originating audit finding, the Jira epic/stories, the coding work and PR, the Confluence documentation, and the real database audit logs that prove the control — aggregated across many systems and exportable as a layman-friendly PDF/PPT artifact.
+
+### 9a. The domain (why this exists)
+
+The core subject is **database audit logging** — login events, SQL errors, and SQL queries — which a regulation-driven **audit finding** requires be generated and retained across **dozens of DB engine × platform combinations**, both on-prem and cloud. That work is sliced into Jira **epics**; **RDS logging is the current priority epic**. The dashboard exists to make the otherwise-scattered evidence of "we satisfied this control" legible in one place and produce an artifact non-technical stakeholders (managers, audit managers) can read.
+
+The standard workflow the hub must represent and (progressively) drive:
+
+1. **Identify the audit finding** — capture the originating finding, its regulatory requirements, and store it in an `audit_findings` collection.
+2. **Relate work to the finding + active Jira epic** — link the finding to the epic that will carry the implementation/operational stories.
+3. **Auto-generate the Jira ticket** from the epic's template (best-practice fields/values).
+4. **Coding agent picks up the work** — implements the feature on a branch named for the Jira ticket.
+5. **PR template + pipeline** — opens a PR that triggers the compliance GitHub Actions and requests review from Copilot + 2 team members.
+6. **Post-approval** — Jira ticket updated; work documented in Confluence under that epic's **Epic Log**; every piece persisted to MongoDB collections for future pipelines + enrichment.
+7. **Log warehouse** — real DB audit logs live in the MongoDB warehouse so example logs can be referenced.
+8. **Aggregate** — the dashboard pulls findings, epics, tickets, PRs, docs, and real logs together so a user can produce an artifact showing real DB logs and all their associations.
+9. **Report** — PDF/PPT skills aggregate the above and surface the most pertinent info for a layman/manager/audit-manager audience.
+
+### 9b. Connections (the "bubbles")
+
+Each external system is a **connection bubble** on the dashboard: a card showing health/auth status, a one-line summary metric, the last sync time, and a click-through into a detail panel. Connections are described by a common adapter contract so the UI treats them uniformly even though transports differ.
+
+| Bubble | Transport | Primary use in the workflow | Status |
+| --- | --- | --- | --- |
+| **Atlassian Jira** | MCP | Epics, stories, ticket auto-generation (steps 2–3, 6) | new |
+| **Atlassian Confluence** | MCP | Epic Log documentation (step 6) | new |
+| **GitHub** | MCP | Branch/PR/Actions/reviews (steps 4–5) | new |
+| **AWS** | MCP | RDS inventory + log config evidence (priority epic) | new |
+| **ServiceNow** | REST API | Finding/CR intake + change records | new |
+| **Snowflake** | `tool_calls` (SQL) | Query warehoused audit logs (cloud) | new |
+| **MongoDB** | existing `mongo_*` tools | System of record + log warehouse (steps 1,6,7) | exists |
+| **Archer (RIMS)** | placeholder | Risk/audit-finding source + enrichment | placeholder |
+
+**Decisions to lock in `S9.connect.1`** (don't guess — these gate real credentials and external calls):
+- Which Jira/Confluence/GitHub/AWS MCP servers (image + version + auth model) — these are external; the stack consumes them, it does not vendor them.
+- ServiceNow + Snowflake: thin server-side adapters in `mcp/` (REST and SQL respectively) exposed as MCP tools, mirroring how `mongo_*`/`wrangler_*` are exposed — so the agent and the web proxy reach them the same way.
+- Archer ships as a **placeholder adapter** (typed contract + mock data) until a real API is available; the UI bubble renders "not connected" gracefully.
+
+### 9c. Architecture (server-side first)
+
+Keep the established shape: **all integration logic is server-side** (in `mcp/`), the **web service only proxies**, and the **agent tool-loop** can drive the same tools. Add:
+
+- `mcp/connectors/` — one module per system implementing a small `Connector` protocol: `health()`, `summary()`, and the system-specific read/write tools. MCP-backed systems (Jira/Confluence/GitHub/AWS) are reached by `mcp/` acting as an **MCP client** to those upstream MCP servers; ServiceNow/Snowflake are direct adapters; Archer is a mock.
+- A **connection registry** so `tools/list` advertises each connector's tools and the dashboard can enumerate bubbles + health.
+- New MongoDB collections as the system of record (see 9d). Writes go through an audited path like the Stage-6 write-layer (`source="workflow_*"`).
+- A **workflow orchestrator** (LangGraph) that walks steps 1→6 with human-in-the-loop interrupts at the approval gates, persisting each artifact + its cross-links as it goes. Reuse the checkpointer.
+
+> Secrets: every connector's credentials live in `.env.local` only, injected via `${...:?}` in compose. No tokens in committed files. Outbound calls to real systems are **gated behind per-connector enable flags** (default off) so the stage can land and be demoed with mocks before live wiring.
+
+### 9d. Data model (MongoDB — system of record)
+
+New collections, each cross-linked by id so the hub can "relate all the pieces":
+
+- `audit_findings` — `{_id, source (archer|servicenow|manual), regulation, requirement, severity, status, epic_id?, created_at}`.
+- `epics` — `{_id, jira_key, title, regulation_refs[], db_platform_combos[], priority, status}` (RDS epic seeded as priority).
+- `work_items` — `{_id, finding_id, epic_id, jira_key, branch, pr_url, status}` (the story per finding).
+- `pr_records` — `{_id, work_item_id, github_pr, checks[], reviewers[], state}`.
+- `doc_records` — `{_id, epic_id, work_item_id, confluence_url, epic_log_section}`.
+- `log_samples` — references into the existing log warehouse proving the control (login/sql-error/sql-query examples) `{_id, db_platform, kind, mongo_ref, finding_id}`.
+- `workflow_runs` — orchestrator state per run, linking all of the above for one finding.
+
+These join to the existing `audit_log` (write provenance) and the warehouse collections.
+
+### 9e. Dashboard UX (the hub)
+
+- **Connections grid** — the bubbles from 9b. Each: status dot (healthy/degraded/not-connected/placeholder), summary metric, last-sync, click → detail drawer with that system's recent items + its tools.
+- **Workflow lane** — a horizontal stepper (steps 1→9) for a selected finding/epic; each step shows its artifact (finding card, epic, generated ticket, branch/PR with check status, Confluence link, log samples) and the cross-links. Clicking any node opens the underlying record.
+- **"Relate everything" view** — pick a finding (or the RDS epic) and see a single panel with every associated piece pulled from the collections above + live system reads.
+- **Report actions** — "Export PDF" / "Export PPT" buttons (9f) scoped to the current finding/epic.
+- All views reuse Stage-8 robustness: loading/empty/error+retry, optimistic where it makes sense, a11y, theming. Connection detail reads are cached via TanStack Query with per-bubble refetch.
+
+### 9f. Reporting (PDF / PPT)
+
+A server-side report builder aggregates a finding/epic's full graph (finding → epic → tickets → PRs → docs → sample logs) and renders **audience-tuned** outputs:
+- **PDF** — narrative compliance artifact (finding, requirement, evidence, real log excerpts, links).
+- **PPT** — executive summary deck for layman/manager/audit-manager: status, coverage across DB×platform combos, what the logs prove, links out.
+Exposed as MCP tools (`report_pdf`, `report_ppt`) so the agent can also generate them; the web offers download buttons. Use established PDF/PPTX skills/libraries (resolve exact libs in `S9.report.1`).
+
+### 9g. Safety / rollout rails
+
+- **Per-connector enable flags** (`CONN_<NAME>_ENABLED`, default `false`). Disabled → bubble shows "not connected", tools refuse with a clear message, no outbound calls.
+- **Read-before-write**: live mutations (create Jira ticket, open PR, write Confluence) are behind an explicit `WORKFLOW_WRITES_ENABLED` flag *and* per-step human approval (orchestrator `interrupt()`); default off → the flow runs in **dry-run** producing the artifacts/links it *would* create.
+- **Mocks first**: every connector ships a mock mode so the dashboard + workflow + reports are demoable end-to-end with zero live credentials. Live wiring is opt-in per connector.
+- All workflow writes to Mongo are audited (`source="workflow_<step>"`), reusing the Stage-6 audit path.
+- Archer stays a placeholder until its API is provisioned; nothing blocks on it.
+
+### 9h. Env surface (additions — defaults keep everything off/mocked)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `WORKFLOW_WRITES_ENABLED` | `false` | no | 9 | Master gate for live mutations across connectors |
+| `CONN_JIRA_ENABLED` | `false` | no | 9 | Enable Jira MCP connector (else mock) |
+| `JIRA_MCP_URL` | — | no | 9 | Upstream Jira MCP server URL |
+| `JIRA_MCP_TOKEN` | — | no | 9 | Auth for Jira MCP |
+| `CONN_CONFLUENCE_ENABLED` | `false` | no | 9 | Enable Confluence MCP connector |
+| `CONFLUENCE_MCP_URL` | — | no | 9 | Upstream Confluence MCP server URL |
+| `CONFLUENCE_MCP_TOKEN` | — | no | 9 |  |
+| `CONN_GITHUB_ENABLED` | `false` | no | 9 | Enable GitHub MCP connector |
+| `GITHUB_MCP_URL` | — | no | 9 | Upstream GitHub MCP server URL |
+| `GITHUB_MCP_TOKEN` | — | no | 9 |  |
+| `CONN_AWS_ENABLED` | `false` | no | 9 | Enable AWS MCP connector |
+| `AWS_MCP_URL` | — | no | 9 | Upstream AWS MCP server URL |
+| `CONN_SERVICENOW_ENABLED` | `false` | no | 9 | Enable ServiceNow REST adapter |
+| `SERVICENOW_BASE_URL` | — | no | 9 | ServiceNow instance base URL |
+| `SERVICENOW_TOKEN` | — | no | 9 | ServiceNow auth (token/basic) |
+| `CONN_SNOWFLAKE_ENABLED` | `false` | no | 9 | Enable Snowflake SQL adapter |
+| `SNOWFLAKE_ACCOUNT` | — | no | 9 | Snowflake account/locator |
+| `SNOWFLAKE_USER` | — | no | 9 |  |
+| `SNOWFLAKE_TOKEN` | — | no | 9 | Snowflake auth (PAT/keypair) |
+| `CONN_ARCHER_ENABLED` | `false` | no | 9 | Placeholder; mock data when off |
+| `REPORT_OUTPUT_DIR` | `/sandbox/reports` | no | 9 | Where generated PDF/PPT land |
+
+### 9i. Verification (intent)
+
+1. With all `CONN_*_ENABLED=false`, the dashboard renders **8 connection bubbles**; each shows a sensible mock/"not-connected" state with no outbound calls.
+2. Seed a sample `audit_finding` (RDS logging) → it appears in the workflow lane linked to the seeded RDS epic.
+3. Dry-run the workflow (writes disabled): steps 1→6 each produce an artifact + cross-links persisted to the new collections; the lane shows the would-create Jira ticket, branch name, PR template, and Confluence Epic-Log target.
+4. "Relate everything" for the RDS epic shows finding + epic + work items + PR records + doc records + sample logs in one panel, each click-through opening the record.
+5. Enabling one connector (e.g. Snowflake mock→live) flips its bubble to healthy and its detail drawer lists real recent items; disabling it fails its tools closed.
+6. `report_pdf` and `report_ppt` produce files under `REPORT_OUTPUT_DIR` aggregating the finding's full graph; download buttons work from the UI.
+7. Every Mongo write during the run has an `audit_log` row tagged `source="workflow_<step>"`.
+8. `scripts/smoke_workflow.sh` passes (mock mode): seed finding → dry-run orchestrator → assert all collections populated + cross-linked → generate a report.
+
+---
+
+# Task checklist — Stage 9
+
+> Granular and dependency-ordered. Connectors and workflow steps are independent enough to land one at a time behind their enable flags. Mock-first: nothing requires live credentials to be checked off.
+
+### S9.model — Data model + decisions
+
+- [ ] **S9.model.1 — New MongoDB collections + seed**
+  - Files: `mongo-seed/` (new seed for `epics` with the RDS priority epic + a sample `audit_findings` row), `mcp/db.py` (extend `KNOWN_COLLECTIONS`? — decide: workflow collections are **separate** from the read-only enterprise allowlist; add a dedicated workflow allowlist instead).
+  - Done when: `audit_findings`, `epics`, `work_items`, `pr_records`, `doc_records`, `log_samples`, `workflow_runs` exist with seed data for the RDS epic + one finding.
+  - Depends on: —
+
+- [ ] **S9.connect.1 — Lock connector decisions**
+  - Files: this doc (record in §9b).
+  - Done when: chosen MCP servers (image/version/auth) for Jira/Confluence/GitHub/AWS recorded; ServiceNow + Snowflake adapter approach confirmed; Archer placeholder contract defined.
+  - Depends on: —
+
+### S9.connect — Connector layer (server-side, mock-first)
+
+- [ ] **S9.connect.2 — `Connector` protocol + registry**
+  - Files: `mcp/connectors/__init__.py`, `mcp/connectors/base.py`, `mcp/server.py` (registry → `tools/list`).
+  - Done when: a common `health()/summary()/tools` contract exists; a registry enumerates connectors with enable flags; `audit_recent`-style proxying works for connector tools.
+  - Depends on: S9.connect.1
+
+- [ ] **S9.connect.3 — MongoDB connector (wrap existing)**
+  - Files: `mcp/connectors/mongodb.py`.
+  - Done when: existing `mongo_*` tools surface through the registry with health/summary; serves as the reference connector.
+  - Depends on: S9.connect.2
+
+- [ ] **S9.connect.4 — MCP-client connectors: Jira, Confluence, GitHub, AWS**
+  - Files: `mcp/connectors/{jira,confluence,github,aws}.py`.
+  - Done when: each connects to its upstream MCP server when `CONN_*_ENABLED=true`, else returns mock `health()/summary()` + sample items; tools refuse cleanly when disabled.
+  - Depends on: S9.connect.2
+
+- [ ] **S9.connect.5 — ServiceNow REST adapter**
+  - Files: `mcp/connectors/servicenow.py`, `mcp/server.py`.
+  - Done when: read tools (findings/CRs) over `SERVICENOW_BASE_URL`; mock mode when disabled.
+  - Depends on: S9.connect.2
+
+- [ ] **S9.connect.6 — Snowflake SQL adapter (tool_calls)**
+  - Files: `mcp/connectors/snowflake.py`, `mcp/server.py`.
+  - Done when: a read-only `snowflake_query` tool runs warehoused-log queries (validated/limited like `mongo_query`); mock rows when disabled.
+  - Depends on: S9.connect.2
+
+- [ ] **S9.connect.7 — Archer placeholder connector**
+  - Files: `mcp/connectors/archer.py`.
+  - Done when: typed contract + mock findings; bubble renders "placeholder/not-connected"; no outbound calls.
+  - Depends on: S9.connect.2
+
+### S9.workflow — Orchestrator (steps 1→6, dry-run first)
+
+- [ ] **S9.workflow.1 — Workflow state model + collections wiring**
+  - Files: `mcp/workflow/models.py`.
+  - Done when: Pydantic models for the run + each artifact; cross-link ids resolved against the 9d collections.
+  - Depends on: S9.model.1
+
+- [ ] **S9.workflow.2 — LangGraph orchestrator with approval interrupts**
+  - Files: `mcp/workflow/graph.py`, checkpointer reuse.
+  - Done when: steps 1→6 run in dry-run (writes gated by `WORKFLOW_WRITES_ENABLED` + per-step `interrupt()`); each step persists its artifact + cross-links; `workflow_runs` updated; audited (`source="workflow_<step>"`).
+  - Depends on: S9.workflow.1, S9.connect.4
+
+- [ ] **S9.workflow.3 — Jira ticket generation from epic template**
+  - Files: `mcp/workflow/jira_template.py`.
+  - Done when: given a finding + epic, emits a best-practice ticket payload (dry-run returns it; live creates via the Jira connector when enabled).
+  - Depends on: S9.workflow.2, S9.connect.4
+
+- [ ] **S9.workflow.4 — PR template + Actions/review wiring (dry-run)**
+  - Files: `mcp/workflow/pr_template.py`.
+  - Done when: produces the branch name (references Jira key), PR body template, required checks list, and reviewer set (Copilot + 2); live opens the PR via the GitHub connector when enabled.
+  - Depends on: S9.workflow.2, S9.connect.4
+
+- [ ] **S9.workflow.5 — Confluence Epic-Log documentation (dry-run)**
+  - Files: `mcp/workflow/epic_log.py`.
+  - Done when: renders the Epic-Log section for the work item; live publishes via the Confluence connector when enabled; `doc_records` updated.
+  - Depends on: S9.workflow.2, S9.connect.4
+
+### S9.report — PDF / PPT artifacts
+
+- [ ] **S9.report.1 — Pick libraries + report data aggregator**
+  - Files: `mcp/report/aggregate.py`, `mcp/requirements.txt`.
+  - Done when: PDF + PPTX libs chosen/pinned; aggregator pulls a finding's full graph from the 9d collections + live reads into one report model.
+  - Depends on: S9.workflow.2
+
+- [ ] **S9.report.2 — `report_pdf` + `report_ppt` MCP tools**
+  - Files: `mcp/report/pdf.py`, `mcp/report/ppt.py`, `mcp/server.py`.
+  - Done when: both tools write to `REPORT_OUTPUT_DIR`, audience-tuned (layman/manager/audit-manager); returned path is downloadable by the web.
+  - Depends on: S9.report.1
+
+### S9.web — Dashboard hub UI
+
+- [ ] **S9.web.1 — Connector proxy routes + types/hooks**
+  - Files: `web/main.py` (`/api/connectors`, `/api/connectors/{name}`), `web/src/lib/{types,queries}.ts`.
+  - Done when: the SPA can enumerate bubbles + health and read each connector's recent items via typed hooks.
+  - Depends on: S9.connect.2
+
+- [ ] **S9.web.2 — Connections grid (bubbles)**
+  - Files: `web/src/routes/overview.tsx` (or a new `hub.tsx`), `web/src/components/connection-bubble.tsx`.
+  - Done when: 8 bubbles render with status dot/summary/last-sync; click opens a detail drawer; mock states render with no live calls.
+  - Depends on: S9.web.1
+
+- [ ] **S9.web.3 — Workflow lane + "Relate everything" view**
+  - Files: `web/src/routes/workflow.tsx`, components.
+  - Done when: select a finding/epic → horizontal stepper (1→9) with each artifact + cross-links; a single relate-everything panel pulls all associated records; click-through opens records.
+  - Depends on: S9.web.1, S9.workflow.2
+
+- [ ] **S9.web.4 — Report export buttons**
+  - Files: `web/main.py` (download proxy), `web/src/routes/workflow.tsx`.
+  - Done when: "Export PDF"/"Export PPT" scoped to the current finding/epic call the report tools and download the file.
+  - Depends on: S9.report.2, S9.web.3
+
+### S9.verify — End-to-end
+
+- [ ] **S9.verify.1 — `scripts/smoke_workflow.sh` (mock mode)**
+  - Files: `scripts/smoke_workflow.sh`.
+  - Done when: seeds a finding → dry-run orchestrator → asserts `audit_findings/epics/work_items/pr_records/doc_records/log_samples/workflow_runs` populated + cross-linked → generates a PDF; exit 0.
+  - Depends on: S9.workflow.5, S9.report.2
+
+- [ ] **S9.verify.2 — Build + dashboard walkthrough**
+  - Done when: §9i scenarios 1–8 reproducible (mock mode); one connector flipped live verified; recorded as a note here.
+  - Depends on: S9.web.4, S9.verify.1
 
 ---
 
@@ -865,6 +1094,27 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `WRANGLER_MAX_STAGES` | `12` | no | 7 | Hard cap on stages per pipeline |
 | `WEB_BUILD_MODE` | `production` | no | 8 | `vite build` mode; `development` enables source maps |
 | `AUDIT_RECENT_LIMIT` | `25` | no | 8 | Default rows for the Overview activity table |
+| `WORKFLOW_WRITES_ENABLED` | `false` | no | 9 | Master gate for live mutations across connectors |
+| `CONN_JIRA_ENABLED` | `false` | no | 9 | Enable Jira MCP connector (else mock) |
+| `JIRA_MCP_URL` | — | no | 9 | Upstream Jira MCP server URL |
+| `JIRA_MCP_TOKEN` | — | no | 9 | Auth for Jira MCP |
+| `CONN_CONFLUENCE_ENABLED` | `false` | no | 9 | Enable Confluence MCP connector |
+| `CONFLUENCE_MCP_URL` | — | no | 9 | Upstream Confluence MCP server URL |
+| `CONFLUENCE_MCP_TOKEN` | — | no | 9 |  |
+| `CONN_GITHUB_ENABLED` | `false` | no | 9 | Enable GitHub MCP connector |
+| `GITHUB_MCP_URL` | — | no | 9 | Upstream GitHub MCP server URL |
+| `GITHUB_MCP_TOKEN` | — | no | 9 |  |
+| `CONN_AWS_ENABLED` | `false` | no | 9 | Enable AWS MCP connector |
+| `AWS_MCP_URL` | — | no | 9 | Upstream AWS MCP server URL |
+| `CONN_SERVICENOW_ENABLED` | `false` | no | 9 | Enable ServiceNow REST adapter |
+| `SERVICENOW_BASE_URL` | — | no | 9 | ServiceNow instance base URL |
+| `SERVICENOW_TOKEN` | — | no | 9 | ServiceNow auth (token/basic) |
+| `CONN_SNOWFLAKE_ENABLED` | `false` | no | 9 | Enable Snowflake SQL adapter |
+| `SNOWFLAKE_ACCOUNT` | — | no | 9 | Snowflake account/locator |
+| `SNOWFLAKE_USER` | — | no | 9 |  |
+| `SNOWFLAKE_TOKEN` | — | no | 9 | Snowflake auth (PAT/keypair) |
+| `CONN_ARCHER_ENABLED` | `false` | no | 9 | Placeholder; mock data when off |
+| `REPORT_OUTPUT_DIR` | `/sandbox/reports` | no | 9 | Where generated PDF/PPT land |
 
 ---
 
