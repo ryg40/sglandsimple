@@ -70,12 +70,16 @@ def build_workflow_graph() -> Any:
     builder.add_edge("post_approval_docs_node", END)
 
     # Compile with checkpoint or raw memory
-    return builder.compile()
+    return builder.compile(checkpointer=_global_checkpointer)
 
 
 # ---------------------------------------------------------------------------
 # Direct workflow execution wrapper tools
 # ---------------------------------------------------------------------------
+
+
+from langgraph.checkpoint.memory import MemorySaver
+_global_checkpointer = MemorySaver()
 
 
 async def run_compliance_workflow(finding_id: str, resume_decision: str | None = None, checkpoint_id: str | None = None) -> dict[str, Any]:
