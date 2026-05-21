@@ -130,6 +130,50 @@ export interface AuditRecentResponse {
   rows: AuditRow[];
 }
 
+// Stage 9 — Compliance Connector & Workflow types
+export interface ConnectorBubble {
+  name: string;
+  health: {
+    status: "healthy" | "disabled" | "degraded" | "error" | "placeholder";
+    detail?: string;
+  };
+  summary: {
+    status: string;
+    collections?: Array<{ name: string; count: number }>;
+    pages_count?: number;
+    open_issues_count?: number;
+    prs_count?: number;
+    rds_instances_count?: number;
+    open_incidents?: number;
+    change_requests?: number;
+    audit_log_rows_count?: number;
+    findings_tracked?: number;
+    detail?: string;
+  };
+}
+
+export interface WorkflowRunMetadata {
+  run_id: string;
+  status: "running" | "waiting_approval" | "completed" | "failed";
+  step_index: number;
+  artifacts: {
+    finding?: Record<string, any>;
+    epic?: Record<string, any>;
+    ticket_payload?: Record<string, any>;
+    ticket_key?: string;
+    branch_name?: string;
+    pr_spec?: Record<string, any>;
+    pr_url?: string;
+    pr_number?: number;
+    confluence_doc_text?: string;
+    confluence_url?: string;
+  };
+  next_action_preview?: {
+    message?: string;
+    preview?: string;
+  } | null;
+}
+
 // OpenAI-shaped chat completion (only the bits we read).
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";

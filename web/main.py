@@ -342,6 +342,96 @@ async def api_ask_data(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Stage 9 — Compliance Connector & Reports proxy endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/connectors")
+async def api_get_connectors() -> JSONResponse:
+    try:
+        # Pings connectors to aggregate bubble statuses
+        connectors_list = ["mongodb", "jira", "confluence", "github", "aws", "servicenow", "snowflake", "archer"]
+        out = []
+        for name in connectors_list:
+            health_res = await _mcp_tool("connector_health", {"name": name})
+            summary_res = await _mcp_tool("connector_summary", {"name": name})
+
+            health = _extract_json_block(health_res)
+            summary = _extract_json_block(summary_res)
+
+            out.append({
+                "name": name,
+                "health": health,
+                "summary": summary,
+            })
+        return JSONResponse({"connectors": out})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch connector bubbles: {e}")
+
+
+@app.get("/api/connectors/{name}")
+async def api_get_connector_detail(name: str) -> JSONResponse:
+    try:
+        health_res = await _mcp_tool("connector_health", {"name": name})
+        summary_res = await _mcp_tool("connector_summary", {"name": name})
+        return JSONResponse({
+            "name": name,
+            "health": _extract_json_block(health_res),
+            "summary": _extract_json_block(summary_res)
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reports/download")
+async def api_download_report(finding_id: str, format: str) -> FileResponse:
+    if format not in ("pdf", "ppt"):
+        raise HTTPException(status_code=400, detail="Invalid format. Supported: pdf, ppt")
+
+    tool_name = "report_pdf" if format == "pdf" else "report_ppt"
+    try:
+        res = await _mcp_tool(tool_name, {"finding_id": finding_id})
+        if res.get("isError"):
+            raise HTTPException(status_code=400, detail="Failed tool report generation")
+
+        payload = _extract_json_block(res)
+        filepath = payload.get("filepath")
+        if not filepath or not os.path.exists(filepath):
+            raise HTTPException(status_code=404, detail=f"Generated file not found: {filepath}")
+
+        # Set headers & mime return values
+        media_type = "application/pdf" if format == "pdf" else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        filename = os.path.basename(filepath)
+
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type=media_type
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report build download failure: {e}")
+
+
+@app.post("/api/workflow/run")
+async def api_run_workflow(request: Request) -> JSONResponse:
+    body = await request.json()
+    finding_id = body.get("finding_id")
+    if not finding_id:
+        raise HTTPException(status_code=400, detail="finding_id is required")
+
+    args = {"finding_id": finding_id}
+    if "resume_decision" in body:
+        args["resume_decision"] = body["resume_decision"]
+    if "checkpoint_id" in body:
+        args["checkpoint_id"] = body["checkpoint_id"]
+
+    result = await _mcp_tool("workflow_run", args)
+    if result.get("isError"):
+        return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
+    return JSONResponse(_extract_json_block(result))
+
+
+# ---------------------------------------------------------------------------
 # SPA serving (mounted last so /api/* and /healthz win)
 #
 # Vite emits hashed assets under dist/assets and a dist/index.html. We mount
