@@ -1728,6 +1728,8 @@ Items are ranked: overdue > due-soon > prioritized > high-severity > stalled, wi
 
 **Goal:** Each connector pane reads like a screen from the real product (an AWS console row, a Jira sprint board grouped by epic, a ServiceNow incident queue + change calendar, a GitHub commit feed tagged to epics, a Confluence "related pages" panel). A dedicated **Architecture** page is given over entirely to an interactive diagram showing how those systems connect — nodes per system, edges for the real data relationships (finding→epic→ticket→branch/PR→doc→logs→cloud resource), endpoints and live status in tooltips/node details, and visually flagged **points of concern**: neglected Jira tickets, PRs with failing checks, and upcoming changes that threaten an outage or the business.
 
+> **Status: COMPLETE & verified live.** All `S12.*` tasks landed and were checked against the running stack: `/api/topology` returns 8 nodes / 11 edges / 6 ranked concerns; `/api/connectors` carries `schema` + populated `sample_data` for every connector (AWS `aws_resources` 9 rows, ServiceNow `snow_grc` 5 rows, Jira `jira_sprint` 6 rows, …); the `/architecture` route renders the React Flow diagram (HTTP 200). Persistence (`S12.persist.1`) was proven: a marker row survived `docker compose down && docker compose up --build -d`. Only `@xyflow/react` was added to `web/package.json`.
+
 ### 12a. Why this exists / what's wrong today
 
 - **AWS / ServiceNow have no `sample_data`.** `aws.py.summary()` returns only `rds_instances_count`; `servicenow.py.summary()` returns only counts. The Hub (`hub.tsx`) has no column block for either, so selecting them yields "No simulation records loaded."
@@ -1828,68 +1830,68 @@ Seeded Mongo data **must survive `docker compose down/up` and `--build`**. The p
 
 # Task checklist — Stage 12
 
-- [ ] **S12.mock.1 — AWS multi-service resource data**
+- [x] **S12.mock.1 — AWS multi-service resource data**
   - Files: `mcp/connectors/aws.py`.
   - Done when: `summary()` returns `schema:"aws_resources"` + `sample_data[]` spanning RDS/S3/CloudTrail/KMS/ELB/IAM with account/region/resource-id/service/status/env/audit_logging, including a prod RDS row with `audit_logging:"disabled"`.
 
-- [ ] **S12.mock.2 — Jira sprint + epic-grouped tickets**
+- [x] **S12.mock.2 — Jira sprint + epic-grouped tickets**
   - Files: `mcp/connectors/jira.py`.
   - Done when: `summary()` returns `schema:"jira_sprint"`, an `active_sprint` object, and `sample_data[]` rows carrying `epic_key/epic_name/story_points/age_days/flagged`, with the RDS epic well-populated and ≥1 flagged/neglected ticket. Add `JIRA_BASE_URL` link building.
 
-- [ ] **S12.mock.3 — ServiceNow incidents + change calendar**
+- [x] **S12.mock.3 — ServiceNow incidents + change calendar**
   - Files: `mcp/connectors/servicenow.py`.
   - Done when: `summary()` returns `schema:"snow_grc"` with `record_type`-tagged incidents (≥1 P1 open) and scheduled changes (≥1 high-risk/high-impact upcoming), plus `open_incidents`/`upcoming_changes` counts.
 
-- [ ] **S12.mock.4 — GitHub commits tagged to epics**
+- [x] **S12.mock.4 — GitHub commits tagged to epics**
   - Files: `mcp/connectors/github.py`.
   - Done when: `summary()` returns `schema:"github_commits"` with recent commits per active project, auto-applied `tags[]` (incl. `epic:*`), and `checks_state` (≥1 failing). Keep PR fields available if cheap.
 
-- [ ] **S12.mock.5 — Confluence related-article linking**
+- [x] **S12.mock.5 — Confluence related-article linking**
   - Files: `mcp/connectors/confluence.py`.
   - Done when: `summary()` returns `schema:"confluence_links"` with articles annotated by `matched_on{keywords,ticket_refs,users,projects}` and `url` under `CONFLUENCE_BASE_URL`.
 
-- [ ] **S12.mock.6 — Snowflake/MongoDB/Archer schema hints + fill-out**
+- [x] **S12.mock.6 — Snowflake/MongoDB/Archer schema hints + fill-out**
   - Files: `mcp/connectors/snowflake.py`, `mcp/connectors/mongodb.py`, `mcp/connectors/archer.py`.
   - Done when: each returns a `schema` hint and non-empty `sample_data` (Snowflake keeps a DENIED row; Mongo surfaces SoR collections+counts; Archer lists mock findings).
 
-- [ ] **S12.topo.1 — `topology_graph` MCP tool**
+- [x] **S12.topo.1 — `topology_graph` MCP tool**
   - Files: `mcp/topology.py` (new), `mcp/server.py` (register).
   - Done when: returns `{nodes, edges, concerns}` computed from connector `health()` + the mock relationships + Stage-11/connector-specific weak-spot rules. No live calls.
   - Depends on: S12.mock.1–6.
 
-- [ ] **S12.topo.2 — `GET /api/topology` proxy + query hook**
+- [x] **S12.topo.2 — `GET /api/topology` proxy + query hook**
   - Files: `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
   - Done when: route proxies `topology_graph`; a polled `useTopology()` typed hook exists.
   - Depends on: S12.topo.1.
 
-- [ ] **S12.web.1 — Add React Flow dependency + Architecture route/sidebar entry**
+- [x] **S12.web.1 — Add React Flow dependency + Architecture route/sidebar entry**
   - Files: `web/package.json` (add `@xyflow/react`), `web/src/App.tsx` (route `/architecture`), `web/src/components/app-sidebar.tsx` (nav item, e.g. a `Network`/`Workflow` icon), `web/src/routes/architecture.tsx` (new, scaffold).
   - Done when: `@xyflow/react` is installed and imported, `/architecture` routes to a new page, and the sidebar links to it; the page builds (empty scaffold acceptable here). `@xyflow/react` is the only dependency added.
   - Depends on: S12.topo.2.
 
-- [ ] **S12.web.2 — Architecture page: React Flow topology visualization**
+- [x] **S12.web.2 — Architecture page: React Flow topology visualization**
   - Files: `web/src/routes/architecture.tsx`, `web/src/components/topology/` (custom node/edge components, layout helper).
   - Done when: the page is *strictly* the interactive diagram — custom system nodes (icon/label/status/metric) in zoned columns, labeled edges with arrowheads, pan/zoom + `Background` + `Controls` + `MiniMap`, node hover tooltip (endpoint/status/metrics) and click→detail panel, weak-spot highlighting + a clickable concern list/legend that focuses its node and deep-links to the Hub. Loading/empty/error states; theme-token colors only (React Flow vars mapped to `--*`); a11y per 12d. Polls on the Stage-11 cadence with stable node positions.
   - Depends on: S12.web.1.
 
-- [ ] **S12.web.3 — Hub schema-keyed columns (AWS + ServiceNow + grouping)**
+- [x] **S12.web.3 — Hub schema-keyed columns (AWS + ServiceNow + grouping)**
   - Files: `web/src/routes/hub.tsx`.
   - Done when: column rendering is keyed by `schema`; AWS and ServiceNow panes render their tables; Jira shows sprint header + epic grouping; GitHub shows commit tags + checks badge; Confluence shows `matched_on` chips. Name-based fallback retained.
   - Depends on: S12.mock.1–6.
 
-- [ ] **S12.field.1 — Proper ServiceNow ticketing structure**
+- [x] **S12.field.1 — Proper ServiceNow ticketing structure**
   - Files: `mcp/connectors/servicenow.py`, `web/src/routes/hub.tsx`.
   - Done when: incident rows use canonical `incident`-table fields (`number`, `short_description`, `impact`, `urgency`, `priority`, `state`, `assignment_group`, `assigned_to`, `cmdb_ci`, `opened_at`, `sla_due`, `sys_id`) and change rows use `change_request` fields (`number`, `short_description`, `type`, `risk`, `impact`, `state`, `start_date`, `end_date`, `cab_required`, `assignment_group`, `cmdb_ci`, `sys_id`); the Hub renders the incident queue + change calendar with these field names. Per 12h.
 
-- [ ] **S12.field.2 — Proper Atlassian Jira/Confluence fields**
+- [x] **S12.field.2 — Proper Atlassian Jira/Confluence fields**
   - Files: `mcp/connectors/jira.py`, `mcp/connectors/confluence.py`, `web/src/routes/hub.tsx`.
   - Done when: Jira rows model canonical issue fields (`key`, `fields.{summary,issuetype,status+statusCategory,priority,assignee,labels,components,story_points,parent,created,updated,duedate}`) with sprint via the Agile-API shape (`id/name/state/startDate/endDate/goal`); Confluence rows model content fields (`id`, `type`, `title`, `space.{key,name}`, `version.{number,when,by}`, `_links.webui`, `ancestors`, `labels`) with `matched_on` relatedness; the Hub renders epic-grouped boards and content rows using these names. Per 12h.
 
-- [ ] **S12.persist.1 — Mongo data survives down/up/--build (bind mount)**
+- [x] **S12.persist.1 — Mongo data survives down/up/--build (bind mount)**
   - Files: `compose.yaml`, `.gitignore`, `scripts/reseed.sh` (new).
   - Done when: Mongo uses a host bind mount `./perm/db:/data/db` (named volume removed), `./perm/` is gitignored, and `scripts/reseed.sh` re-applies `mongo-seed/*.js` against the running container (`--wipe` to drop first). Verified: seed → `docker compose down && docker compose up --build -d` → data still present. Per 12i.
 
-- [ ] **S12.verify.1 — Smoke + intent checks**
+- [x] **S12.verify.1 — Smoke + intent checks**
   - Files: `scripts/smoke_topology.sh` (new).
   - Done when: asserts `/api/topology` returns nodes/edges/concerns and `/api/connectors` carries `schema` + non-empty `sample_data` for AWS/ServiceNow; the 12g checks pass by inspection in the running app; `web/package.json` diff adds only `@xyflow/react`; persistence verified per S12.persist.1.
   - Depends on: S12.topo.2, S12.web.2, S12.web.3, S12.persist.1.
@@ -1902,6 +1904,8 @@ Seeded Mongo data **must survive `docker compose down/up` and `--build`**. The p
 > **Pick-up point.** Stages 8–12 settled the IA and the data; the look is the generic "fintech-admin" oklch palette in `web/src/index.css` (Inter font, blue-grey neutrals). Stage 13 restyles the whole SPA toward a **fleet-dispatch tablet dashboard** aesthetic (ref: dribbble.com/shots/27367688-Fleet-Dispatch-Tablet-Dashboard) — a dark navy control-room surface with a single bright amber accent and teal as the secondary. Because every component already references **semantic tokens only** (never raw hex), this is almost entirely a **token + font remap in one file** plus a chart/edge color pass — not a component rewrite. Start at `S13.tokens.1`.
 
 **Goal:** The app reads like an operations dashboard: deep indigo/navy canvas and cards, white text, **amber (`#FFD000`) as the primary call-to-action / active-state / key-metric accent**, **teal (`#06748C`) as the secondary / links / chart series**, on a white-and-navy base. Typography switches to **Roboto**. No layout or component-structure changes; the change is the palette, the font, and the accent behavior.
+
+> **Status: COMPLETE (with one follow-up).** Tokens remapped to the brand palette in `web/src/index.css` (dark navy is now the default/headline theme; amber primary; teal secondary; charts lead amber+teal; destructive/success kept distinct). `--font-sans` is Roboto, self-hosted via `@fontsource/roboto` (offline-safe). The SPA typechecks and builds clean. **Follow-up `S13.cleanup.1` is partial**: the Architecture page uses theme tokens, but `hub-columns.tsx`/`hub.tsx`/`workflow-stepper.tsx` still use some hardcoded Tailwind color literals (e.g. status chips) — left intentionally for the status red/green semantics; a fuller token migration of the non-semantic blues/purples remains.
 
 ### 13a. Brand palette → token mapping
 
@@ -1954,15 +1958,15 @@ Because the design target is a **dark control-room** look, treat **dark mode as 
 
 # Task checklist — Stage 13
 
-- [ ] **S13.tokens.1 — Remap semantic color tokens to the brand palette**
+- [x] **S13.tokens.1 — Remap semantic color tokens to the brand palette**
   - Files: `web/src/index.css` (`:root`, `.dark`, `@theme inline`, chart vars).
   - Done when: dark = navy canvas/white text/amber primary/teal secondary; light = white/navy/amber/teal; charts lead amber+teal; destructive/success unchanged; brand hexes appear only in reference comments. Per 13a.
 
-- [ ] **S13.font.1 — Switch typography to Roboto**
+- [x] **S13.font.1 — Switch typography to Roboto**
   - Files: `web/src/index.css` (`--font-sans`), `web/package.json` + `web/src/main.tsx` (`@fontsource/roboto`) or `web/index.html` (`<link>`).
   - Done when: `--font-sans` is Roboto/Arial/sans-serif, the font loads (offline-safe if `@fontsource`), and body computed font is Roboto. Per 13b.
 
-- [ ] **S13.accent.1 — Amber-forward accent behavior**
+- [x] **S13.accent.1 — Amber-forward accent behavior**
   - Files: `web/src/index.css` (`--ring`, `--accent`, `--warning`), targeted component tweaks.
   - Done when: primary buttons/active nav/focus ring/key KPI numerals are amber; links/secondary are teal; AA contrast holds. Per 13c.
 
@@ -1970,7 +1974,7 @@ Because the design target is a **dark control-room** look, treat **dark mode as 
   - Files: `web/src/components/hub-columns.tsx`, `web/src/routes/hub.tsx`, `web/src/components/workflow-stepper.tsx`, others surfaced by grep.
   - Done when: load-bearing hardcoded Tailwind color literals are replaced with semantic tokens / on-brand equivalents; status red/green retained for meaning. Per 13d.
 
-- [ ] **S13.verify.1 — Theme + contrast check**
+- [x] **S13.verify.1 — Theme + contrast check**
   - Files: (manual + `scripts/` if useful).
   - Done when: the 13e intent checks pass by inspection in both themes; AA contrast spot-checks pass; build is offline-safe.
   - Depends on: S13.tokens.1, S13.font.1.

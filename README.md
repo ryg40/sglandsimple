@@ -23,6 +23,15 @@ docker compose up --build -d
 
 `.env.local` is gitignored. The required vars (`UPSTREAM_BASE_URL`, `UPSTREAM_MODEL`, `SEARXNG_URL`) have no defaults — compose will refuse to start if they're unset.
 
+### Data persistence & reseeding
+
+MongoDB data lives on a **host bind mount at `./perm/db`** (gitignored), so it survives `docker compose down` and `--build` — a bind mount is never removed by `down -v` or `volume prune`. The `mongo-seed/*.js` scripts only run on **first init** (empty data dir); after that, refresh or re-apply seed data with:
+
+```bash
+scripts/reseed.sh          # re-apply every mongo-seed/*.js
+scripts/reseed.sh --wipe   # drop the enterprise DB first, then reseed
+```
+
 Services:
 
 - **Agent (OpenAI-compatible)** — public via Caddy at `https://${PUBLIC_HOSTNAME}/v1`, internal host bind on `:${AGENT_PORT}` (default `5450`).
@@ -142,6 +151,18 @@ and export it all as a layman-friendly PDF/PPT artifact.
 
 > Full spec, data model, and task breakdown live in `IMPLEMENT.md` (Stage 9).
 > The diagrams below are the target design.
+
+**Connector data & Architecture view (Stage 12).** Each connector's Hub pane now
+renders domain-shaped mock data keyed by a `schema` hint (AWS multi-service
+inventory, Jira sprint board grouped by epic, ServiceNow incident queue + change
+calendar, GitHub epic-tagged commits, Confluence related articles). A dedicated
+**Architecture** page (`/architecture`) renders an interactive cross-system
+topology (React Flow) — nodes per system with endpoints/status/metrics, edges for
+the workflow relationships, and a ranked **points-of-concern** list (neglected
+tickets, failing checks, prod RDS audit-logging disabled, P1 incidents, high-risk
+changes). Backed by `GET /api/topology` → the `topology_graph` MCP tool. The SPA
+is restyled (Stage 13) to a fleet-dispatch look: navy canvas, amber primary, teal
+secondary, Roboto.
 
 ### Dashboard mockup
 
