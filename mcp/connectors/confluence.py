@@ -17,6 +17,7 @@ class ConfluenceConnector:
         self.enabled = enabled
         self.mcp_url = os.environ.get("CONFLUENCE_MCP_URL", "")
         self.mcp_token = os.environ.get("CONFLUENCE_MCP_TOKEN", "")
+        self.base_url = os.environ.get("CONFLUENCE_BASE_URL", "https://enterprise.atlassian.net/wiki")
 
     async def health(self) -> dict:
         if not self.enabled:
@@ -25,18 +26,45 @@ class ConfluenceConnector:
             return {"status": "degraded", "error": "Missing CONFLUENCE_MCP_URL or CONFLUENCE_MCP_TOKEN"}
         return {"status": "healthy", "url": self.mcp_url}
 
+    # Auto-surfaced related articles. `matched_on` explains *why* each page was
+    # linked in: shared ticket numbers, users, projects, or keywords.
+    def _sample(self) -> list[dict]:
+        b = self.base_url.rstrip("/")
+        return [
+            {"id": "pg-01", "title": "Runbook: SOX-404 Database Audit Logging Procedure",
+             "space": "Compliance-Runbooks", "last_updated": "2026-05-18", "relevance": 0.94,
+             "url": f"{b}/spaces/COMP/pages/100401",
+             "matched_on": {"keywords": ["audit logging", "RDS"], "ticket_refs": ["RDS-LOG-1"],
+                            "users": ["Sultan DevOps"], "projects": ["infra-terraform"]}},
+            {"id": "pg-02", "title": "CI/CD Secure Branch Scanning Policy & Compliance Standards",
+             "space": "Architecture-RFCs", "last_updated": "2026-05-20", "relevance": 0.88,
+             "url": f"{b}/spaces/ARCH/pages/100412",
+             "matched_on": {"keywords": ["branch protection", "secret scanning"], "ticket_refs": ["SEC-SCAN-101"],
+                            "users": ["Alex SecOps"], "projects": ["sec-gates"]}},
+            {"id": "pg-03", "title": "AWS Certificate Rotation Playbook (ALB Pipeline)",
+             "space": "SRE-Guides", "last_updated": "2026-05-21", "relevance": 0.81,
+             "url": f"{b}/spaces/SRE/pages/100420",
+             "matched_on": {"keywords": ["certificate", "rotation", "ALB"], "ticket_refs": ["ALB-ROT-202"],
+                            "users": ["Sarah SRE"], "projects": ["infra-k8s"]}},
+            {"id": "pg-04", "title": "Epic Log: RDS Audit Logging — Evidence Index",
+             "space": "Compliance-Runbooks", "last_updated": "2026-05-21", "relevance": 0.97,
+             "url": f"{b}/spaces/COMP/pages/100433",
+             "matched_on": {"keywords": ["evidence", "PCI-DSS-10.2"], "ticket_refs": ["RDS-LOG-1", "RDS-LOG-2"],
+                            "users": ["Sultan DevOps"], "projects": ["infra-terraform"]}},
+        ]
+
+    def _summary_payload(self, status: str) -> dict:
+        sample = self._sample()
+        return {
+            "status": status,
+            "schema": "confluence_links",
+            "pages_count": len(sample),
+            "base_url": self.base_url,
+            "sample_data": sample,
+        }
+
     async def summary(self) -> dict:
-        if not self.enabled:
-            return {"status": "disabled", "pages_count": 0, "sample_data": [
-                {"id": "pg-01", "title": "Runbook: SOX-404 Database Audit Logging Procedure", "space": "Compliance-Runbooks", "editor": "Sultan DevOps", "last_updated": "2026-05-18"},
-                {"id": "pg-02", "title": "CI/CD Secure Branch Scanning Policy & Compliance Standards", "space": "Architecture-RFCs", "editor": "Alex SecOps", "last_updated": "2026-05-20"},
-                {"id": "pg-03", "title": "AWS certificate verification & Rotations (ALB Pipeline)", "space": "SRE-Guides", "editor": "Sarah SRE", "last_updated": "2026-05-21"}
-            ]}
-        return {"status": "healthy", "pages_count": 12, "sample_data": [
-            {"id": "pg-01", "title": "Runbook: SOX-404 Database Audit Logging Procedure", "space": "Compliance-Runbooks", "editor": "Sultan DevOps", "last_updated": "2026-05-18"},
-            {"id": "pg-02", "title": "CI/CD Secure Branch Scanning Policy & Compliance Standards", "space": "Architecture-RFCs", "editor": "Alex SecOps", "last_updated": "2026-05-20"},
-            {"id": "pg-03", "title": "AWS certificate verification & Rotations (ALB Pipeline)", "space": "SRE-Guides", "editor": "Sarah SRE", "last_updated": "2026-05-21"}
-        ]}
+        return self._summary_payload("disabled" if not self.enabled else "healthy")
 
     def tools(self) -> list[dict]:
         return [

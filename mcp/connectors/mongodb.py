@@ -33,10 +33,19 @@ class MongoDbConnector:
 
     async def summary(self) -> dict:
         if not self.enabled:
-            return {"status": "disabled", "collections": []}
+            return {"status": "disabled", "schema": "mongo_collections", "collections": [], "sample_data": []}
         try:
             cols = await dbmod.list_collections()
-            return {"status": "ok", "collections": cols}
+            # `cols` is a list of {name, count} dicts; expose it both as the
+            # historical `collections` field and as `sample_data` so the Hub's
+            # schema-keyed renderer can show the system-of-record tables.
+            return {
+                "status": "ok",
+                "schema": "mongo_collections",
+                "collections": cols,
+                "collections_count": len(cols),
+                "sample_data": cols,
+            }
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "detail": str(exc)}
 

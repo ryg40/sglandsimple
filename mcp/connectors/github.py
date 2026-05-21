@@ -25,18 +25,38 @@ class GitHubConnector:
             return {"status": "degraded", "error": "Missing GITHUB_MCP_URL or GITHUB_MCP_TOKEN"}
         return {"status": "healthy", "url": self.mcp_url}
 
+    # Recent commits across active projects, auto-tagged to epics. A failing
+    # checks_state is a weak-spot the topology highlights.
+    _SAMPLE = [
+        {"sha": "a1f9c02", "message": "feat(rds): emit MySQL audit events to S3 sink", "repo": "infra-terraform",
+         "project": "RDS Audit Logging", "author": "sultan-devops", "committed": "2026-05-21",
+         "epic_key": "RDS-LOG-1", "tags": ["epic:RDS-LOG", "compliance", "sox-404"], "pr_number": 398, "checks_state": "passing"},
+        {"sha": "7d3e1b8", "message": "fix(rds): pgaudit role grants for postgres prod", "repo": "infra-terraform",
+         "project": "RDS Audit Logging", "author": "sultan-devops", "committed": "2026-05-21",
+         "epic_key": "RDS-LOG-1", "tags": ["epic:RDS-LOG", "compliance"], "pr_number": 401, "checks_state": "failing"},
+        {"sha": "c52a9f4", "message": "feat(scan): wire repo scanner alerts into branch gate", "repo": "sec-gates",
+         "project": "CI Branch Security Gates", "author": "alex-secops", "committed": "2026-05-20",
+         "epic_key": "SEC-SCAN", "tags": ["epic:SEC-SCAN", "security"], "pr_number": 412, "checks_state": "passing"},
+        {"sha": "e08b7aa", "message": "chore(scan): enable push protection org-wide", "repo": "sec-gates",
+         "project": "CI Branch Security Gates", "author": "alex-secops", "committed": "2026-05-19",
+         "epic_key": "SEC-SCAN", "tags": ["epic:SEC-SCAN", "security"], "pr_number": 414, "checks_state": "pending"},
+        {"sha": "9b1d460", "message": "feat(alb): cert-manager helm chart for edge LB", "repo": "infra-k8s",
+         "project": "Cert Rotation Automation", "author": "sarah-sre", "committed": "2026-05-18",
+         "epic_key": "ALB-ROT", "tags": ["epic:ALB-ROT", "tls"], "pr_number": 420, "checks_state": "passing"},
+    ]
+
+    def _summary_payload(self, status: str) -> dict:
+        return {
+            "status": status,
+            "schema": "github_commits",
+            "commits_count": len(self._SAMPLE),
+            "prs_count": len({r["pr_number"] for r in self._SAMPLE if r.get("pr_number")}),
+            "failing_checks": sum(1 for r in self._SAMPLE if r["checks_state"] == "failing"),
+            "sample_data": self._SAMPLE,
+        }
+
     async def summary(self) -> dict:
-        if not self.enabled:
-            return {"status": "disabled", "prs_count": 0, "sample_data": [
-                {"number": 412, "title": "feat: configure code security analyzer rules", "repo": "sec-gates", "state": "open", "author": "alex-secops", "created": "2026-05-20"},
-                {"number": 398, "title": "fix: rds db secure parameter groups alignment", "repo": "infra-terraform", "state": "merged", "author": "sultan-devops", "created": "2026-05-19"},
-                {"number": 420, "title": "feat: setup continuous cert-manager helm chart and let's encrypt integration", "repo": "infra-k8s", "state": "draft", "author": "sarah-sre", "created": "2026-05-21"}
-            ]}
-        return {"status": "healthy", "prs_count": 2, "sample_data": [
-            {"number": 412, "title": "feat: configure code security analyzer rules", "repo": "sec-gates", "state": "open", "author": "alex-secops", "created": "2026-05-20"},
-            {"number": 398, "title": "fix: rds db secure parameter groups alignment", "repo": "infra-terraform", "state": "merged", "author": "sultan-devops", "created": "2026-05-19"},
-            {"number": 420, "title": "feat: setup continuous cert-manager helm chart and let's encrypt integration", "repo": "infra-k8s", "state": "draft", "author": "sarah-sre", "created": "2026-05-21"}
-        ]}
+        return self._summary_payload("disabled" if not self.enabled else "healthy")
 
     def tools(self) -> list[dict]:
         return [

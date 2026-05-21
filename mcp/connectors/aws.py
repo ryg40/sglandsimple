@@ -25,10 +25,51 @@ class AWSConnector:
             return {"status": "degraded", "error": "Missing AWS_MCP_URL"}
         return {"status": "healthy", "url": self.mcp_url}
 
+    # Mock cloud inventory spanning multiple services so the Hub pane reads like
+    # an AWS console. One prod RDS row deliberately has audit logging disabled —
+    # the topology surfaces it as a weak-spot.
+    _SAMPLE = [
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
+         "resource_id": "rds-mysql-prod-01", "service": "RDS", "resource_type": "db.r6g.xlarge",
+         "status": "available", "env": "prod", "audit_logging": "enabled"},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
+         "resource_id": "rds-postgres-prod-02", "service": "RDS", "resource_type": "db.r6g.large",
+         "status": "available", "env": "prod", "audit_logging": "disabled"},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "eu-west-1",
+         "resource_id": "rds-mariadb-prod-03", "service": "RDS", "resource_type": "db.r6g.large",
+         "status": "available", "env": "prod", "audit_logging": "enabled"},
+        {"account_id": "771045820013", "account_alias": "compliance-stage", "region": "us-west-2",
+         "resource_id": "rds-postgres-stg-01", "service": "RDS", "resource_type": "db.t4g.medium",
+         "status": "available", "env": "staging", "audit_logging": "enabled"},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
+         "resource_id": "audit-logs-archive-prod", "service": "S3", "resource_type": "bucket (object-lock)",
+         "status": "active", "env": "prod", "audit_logging": "enabled"},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
+         "resource_id": "compliance-org-trail", "service": "CloudTrail", "resource_type": "multi-region trail",
+         "status": "logging", "env": "prod", "audit_logging": "enabled"},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
+         "resource_id": "alias/rds-audit-cmk", "service": "KMS", "resource_type": "symmetric CMK",
+         "status": "enabled", "env": "prod", "audit_logging": "n/a"},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
+         "resource_id": "alb-compliance-edge", "service": "ELB", "resource_type": "application LB",
+         "status": "active", "env": "prod", "audit_logging": "enabled"},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "global",
+         "resource_id": "role/RDSAuditPublisher", "service": "IAM", "resource_type": "service role",
+         "status": "active", "env": "prod", "audit_logging": "n/a"},
+    ]
+
     async def summary(self) -> dict:
+        rds = sum(1 for r in self._SAMPLE if r["service"] == "RDS")
+        base = {
+            "schema": "aws_resources",
+            "rds_instances_count": rds,
+            "resources_count": len(self._SAMPLE),
+            "logging_gaps": sum(1 for r in self._SAMPLE if r["audit_logging"] == "disabled"),
+            "sample_data": self._SAMPLE,
+        }
         if not self.enabled:
-            return {"status": "disabled", "rds_instances_count": 0}
-        return {"status": "healthy", "rds_instances_count": 4}
+            return {"status": "disabled", **base}
+        return {"status": "healthy", **base}
 
     def tools(self) -> list[dict]:
         return [

@@ -36,10 +36,39 @@ class ServiceNowConnector:
         except Exception as e:  # noqa: BLE001
             return {"status": "error", "detail": str(e)}
 
+    # GRC queue: high-priority open incidents + the upcoming change calendar.
+    # The P1 incident and the high-risk/high-impact change are weak-spots the
+    # topology highlights (potential outage / business impact).
+    _SAMPLE = [
+        {"record_type": "incident", "number": "INC0048213", "priority": "P1",
+         "summary": "RDS PostgreSQL prod audit pipeline not shipping logs", "ci": "rds-postgres-prod-02",
+         "opened": "2026-05-21", "state": "In Progress", "sla_breach": True},
+        {"record_type": "incident", "number": "INC0048190", "priority": "P2",
+         "summary": "CloudTrail digest delivery delayed in eu-west-1", "ci": "compliance-org-trail",
+         "opened": "2026-05-20", "state": "On Hold", "sla_breach": False},
+        {"record_type": "incident", "number": "INC0048155", "priority": "P3",
+         "summary": "Confluence runbook link rot on SOX-404 page", "ci": "Compliance-Runbooks",
+         "opened": "2026-05-19", "state": "New", "sla_breach": False},
+        {"record_type": "change", "number": "CHG0012004", "summary": "Cut over RDS MySQL prod to audit-enabled parameter group",
+         "ci": "rds-mysql-prod-01", "window_start": "2026-05-24 02:00", "window_end": "2026-05-24 04:00",
+         "risk": "high", "impact": "high", "state": "Scheduled"},
+        {"record_type": "change", "number": "CHG0012011", "summary": "Rotate ALB TLS certificate (edge)",
+         "ci": "alb-compliance-edge", "window_start": "2026-05-26 23:00", "window_end": "2026-05-26 23:30",
+         "risk": "medium", "impact": "low", "state": "Scheduled"},
+    ]
+
+    def _summary_payload(self, status: str) -> dict:
+        return {
+            "status": status,
+            "schema": "snow_grc",
+            "open_incidents": sum(1 for r in self._SAMPLE if r["record_type"] == "incident"),
+            "p1_incidents": sum(1 for r in self._SAMPLE if r.get("priority") == "P1"),
+            "upcoming_changes": sum(1 for r in self._SAMPLE if r["record_type"] == "change"),
+            "sample_data": self._SAMPLE,
+        }
+
     async def summary(self) -> dict:
-        if not self.enabled:
-            return {"status": "disabled"}
-        return {"status": "healthy", "open_incidents": 5, "change_requests": 2}
+        return self._summary_payload("disabled" if not self.enabled else "healthy")
 
     def tools(self) -> list[dict]:
         return [

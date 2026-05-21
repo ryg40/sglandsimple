@@ -34,18 +34,26 @@ class SnowflakeConnector:
         except Exception as e:  # noqa: BLE001
             return {"status": "error", "detail": str(e)}
 
+    _SAMPLE = [
+        {"timestamp": "2026-05-21 02:11:03", "user_name": "admin_db", "event_type": "login", "sql_text": "—", "status": "SUCCESS"},
+        {"timestamp": "2026-05-21 02:11:05", "user_name": "app_user_stage", "event_type": "query", "sql_text": "SELECT * FROM employees", "status": "SUCCESS"},
+        {"timestamp": "2026-05-21 02:11:48", "user_name": "rds_audit_publisher", "event_type": "query", "sql_text": "SELECT COUNT(*) FROM audit_events WHERE ts > ...", "status": "SUCCESS"},
+        {"timestamp": "2026-05-21 02:12:12", "user_name": "unknown_net", "event_type": "sql-error", "sql_text": "INSERT INTO admin_tbl VALUES (...)", "status": "DENIED"},
+    ]
+
+    def _summary_payload(self, status: str, rows: int) -> dict:
+        return {
+            "status": status,
+            "schema": "snowflake_audit",
+            "audit_log_rows_count": rows,
+            "denied_count": sum(1 for r in self._SAMPLE if r["status"] == "DENIED"),
+            "sample_data": self._SAMPLE,
+        }
+
     async def summary(self) -> dict:
         if not self.enabled:
-            return {"status": "disabled", "audit_log_rows_count": 0, "sample_data": [
-                {"timestamp": "2026-05-21 02:11:03", "user_name": "admin_db", "event_type": "login", "sql_text": "—", "status": "SUCCESS"},
-                {"timestamp": "2026-05-21 02:11:05", "user_name": "app_user_stage", "event_type": "query", "sql_text": "SELECT * FROM employees", "status": "SUCCESS"},
-                {"timestamp": "2026-05-21 02:12:12", "user_name": "unknown_net", "event_type": "sql-error", "sql_text": "INSERT INTO admin_tbl VALUES (...)", "status": "DENIED"}
-            ]}
-        return {"status": "healthy", "audit_log_rows_count": 14522902, "sample_data": [
-            {"timestamp": "2026-05-21 02:11:03", "user_name": "admin_db", "event_type": "login", "sql_text": "—", "status": "SUCCESS"},
-            {"timestamp": "2026-05-21 02:11:05", "user_name": "app_user_stage", "event_type": "query", "sql_text": "SELECT * FROM employees", "status": "SUCCESS"},
-            {"timestamp": "2026-05-21 02:12:12", "user_name": "unknown_net", "event_type": "sql-error", "sql_text": "INSERT INTO admin_tbl VALUES (...)", "status": "DENIED"}
-        ]}
+            return self._summary_payload("disabled", 0)
+        return self._summary_payload("healthy", 14522902)
 
     def tools(self) -> list[dict]:
         return [

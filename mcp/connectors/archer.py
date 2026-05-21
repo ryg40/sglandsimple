@@ -19,8 +19,25 @@ class ArcherConnector:
         # Archer is intentionally only supported in placeholder mode
         return {"status": "placeholder"}
 
+    # Risk/audit findings feeding the workflow. Placeholder until a real
+    # Archer (RIMS) API is provisioned.
+    _SAMPLE = [
+        {"finding_id": "arch-f-1", "control": "SOX-404-SEC3", "title": "Database audit logging not enforced on prod RDS",
+         "severity": "high", "status": "open", "owner": "Sultan DevOps", "epic_key": "RDS-LOG-1"},
+        {"finding_id": "arch-f-2", "control": "PCI-DSS-10.2", "title": "Log retention below required 365 days",
+         "severity": "medium", "status": "open", "owner": "Sarah SRE", "epic_key": "RDS-LOG-1"},
+        {"finding_id": "arch-f-3", "control": "SOX-404-SEC1", "title": "Branch protection gaps in infra repos",
+         "severity": "medium", "status": "closed", "owner": "Alex SecOps", "epic_key": "SEC-SCAN"},
+    ]
+
     async def summary(self) -> dict:
-        return {"status": "placeholder", "findings_tracked": 2}
+        return {
+            "status": "placeholder",
+            "schema": "archer_findings",
+            "findings_tracked": len(self._SAMPLE),
+            "open_findings": sum(1 for r in self._SAMPLE if r["status"] == "open"),
+            "sample_data": self._SAMPLE,
+        }
 
     def tools(self) -> list[dict]:
         return [
