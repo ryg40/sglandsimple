@@ -28,6 +28,7 @@ from ask_data import render_markdown as render_ask_data_markdown
 from ask_data import run_ask_data
 from connectors import connector_tools, get_connector, init_connectors, list_connectors
 from deep_agent import Plan, run_deep_agent, run_plan_task, run_run_plan
+from workflow.graph import run_compliance_workflow
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
 
@@ -467,6 +468,19 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "workflow_run",
+        "description": "Trigger/Step/Resume a compliance audit finding workflow runner lifecycle step.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "finding_id": {"type": "string", "description": "The string _id of the compliance audit finding."},
+                "resume_decision": {"type": "string", "description": "Optional human approval input ('approve' or 'reject') to resume an interrupted workflow run."},
+                "checkpoint_id": {"type": "string", "description": "Optional thread id of the run to resume. Defaults to run-<finding_id>."}
+            },
+            "required": ["finding_id"]
+        }
+    }
 ]
 
 # Stage 9 — append connector tools dynamically after the static list is defined.
@@ -494,6 +508,45 @@ async def _tool_connector_summary(args: dict[str, Any]) -> dict[str, Any]:
         return {"content": [{"type": "text", "text": f"Connector '{name}' not found. Registered: {[c.name for c in list_connectors()]}"}], "isError": True}
     result = await conn.summary()
     return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}], "isError": False}
+
+
+async def _tool_workflow_run(args: dict[str, Any]) -> dict[str, Any]:
+    finding_id = args.get("finding_id")
+    if not finding_id:
+        return {"content": [{"type": "text", "text": "finding_id is required."}], "isError": True}
+
+    res = await run_compliance_workflow(
+        finding_id=finding_id,
+        resume_decision=args.get("resume_decision"),
+        checkpoint_id=args.get("checkpoint_id"),
+    )
+
+    md_lines = [
+        f"# Compliance Workflow Run",
+        f"- **Run ID:** `{res['run_id']}`",
+        f"- **Workflow Status:** `{res['status'].upper()}`",
+        f"- **Current Step Index:** `{res['step_index']}/6`",
+    ]
+    if res.get("next_action_preview"):
+        preview = res["next_action_preview"] or {}
+        msg = preview.get("message", "Approve step?")
+        md_lines.append(f"- **Awaiting Approval:** *{msg}*")
+
+    md_lines.append("\n## Current Artifacts")
+    for key, val in res.get("artifacts", {}).items():
+        if key in ("finding", "epic", "ticket_payload", "pr_spec", "confluence_doc_text"):
+            # Truncate large dicts in summary view
+            md_lines.append(f"- **{key}:** *populated (dictionary)*")
+        else:
+            md_lines.append(f"- **{key}:** `{val}`")
+
+    return {
+        "content": [
+            {"type": "text", "text": "\n".join(md_lines)},
+            {"type": "text", "text": json.dumps(res, indent=2, default=str)},
+        ],
+        "isError": False,
+    }
 
 
 async def _upstream_chat(messages: list[dict[str, str]]) -> str:
@@ -974,6 +1027,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if name == "ask_data":
         return await _tool_ask_data(args)
+    if name == "workflow_run":
+        return await _tool_workflow_run(args)
     if name == "plan_task":
         return await _tool_plan_task(args)
     if name == "run_plan":
