@@ -996,6 +996,21 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     elif name == "connector_summary":
         return await _tool_connector_summary(args)
     else:
+        # Route to registered connectors dynamically
+        for conn in list_connectors():
+            for t in conn.tools():
+                if t.get("name") == name:
+                    try:
+                        # Connectors return a standard {content, isError} envelope
+                        return await conn.dispatch(name, args)
+                    except Exception as e:  # noqa: BLE001
+                        import traceback
+                        tb = traceback.format_exc()
+                        print(f"[connector error] name={name} args={args}\n{tb}", flush=True)
+                        return {
+                            "content": [{"type": "text", "text": f"[ConnectorError] {type(e).__name__}: {e}"}],
+                            "isError": True,
+                        }
         return {
             "content": [{"type": "text", "text": f"Unknown tool: {name}"}],
             "isError": True,

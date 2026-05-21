@@ -7,12 +7,26 @@ from typing import Any
 
 from .base import Connector
 from .mongodb import MongoDbConnector
+from .jira import JiraConnector
+from .confluence import ConfluenceConnector
+from .github import GitHubConnector
+from .aws import AWSConnector
+from .servicenow import ServiceNowConnector
+from .snowflake import SnowflakeConnector
+from .archer import ArcherConnector
 
 _registry: dict[str, Connector] = {}
 
 # Map env-var prefix -> connector class
 _CONNECTOR_CLASSES: dict[str, type[Connector]] = {
     "MONGODB": MongoDbConnector,
+    "JIRA": JiraConnector,
+    "CONFLUENCE": ConfluenceConnector,
+    "GITHUB": GitHubConnector,
+    "AWS": AWSConnector,
+    "SERVICENOW": ServiceNowConnector,
+    "SNOWFLAKE": SnowflakeConnector,
+    "ARCHER": ArcherConnector,
 }
 
 
