@@ -815,6 +815,21 @@ Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventin
   - Done: MCP tools `standup_link_context` and `standup_summarize` summarize chat + selected Jira context into takeaways, blockers, follow-ups, Jira proposals, bulk-edit proposals, and cross-service associations with rationale/source IDs. Outputs are normalized to `status="proposed"` and `dry_run=true`; no external writes or Jira staging occur.
   - Depends on: S20.model.1, S20.links.1.
 
+- [ ] **S20.identity.1 — Wire standup chat to S19 auth identity (display name + cross-service user handle)**
+  - Files: `web/standup_ws.py`, `web/main.py`, `web/src/components/standup-chat.tsx`, `web/standup_store.py`.
+  - Problem: standup chat shows "Browser f382" / "Browser a324" as participant names instead of the logged-in user's display name. Two separate gaps:
+    1. **Frontend**: `standup-chat.tsx` hardcodes `authorRef = \`Browser ${clientId.slice(-4)}\`` — it never asks `/api/me` or passes the auth identity when connecting.
+    2. **Backend**: `standup_ws._header_identity()` falls back to raw proxy headers / query-param `?author=` / `"anonymous"`. It never consults the S19 auth system (`auth.resolve_user`), so even if the browser had a valid Basic Auth or SSO session, the websocket handler would ignore it.
+  - Done when:
+    1. Frontend calls `useAuth()` / `useMe()` on mount to get the logged-in user's `display_name` and `email`; sets `authorRef` to `display_name` (falls back to current `Browser {id}` behavior when auth is disabled or no user resolves).
+    2. Frontend sends the resolved identity (display name + email) in the `join` event payload so the server has a trustworthy author.
+    3. Backend websocket connect path resolves the user via `auth.resolve_user(request)` (same S19 identity resolution that `/api/me` uses), falling back to header/query-param only when `auth_mode=disabled` or no user resolves.
+    4. `ClientState` gains an `email` field alongside `author` (display name). Chat messages store both `author` (display name) and `author_email` for cross-service references (MCP tools, Jira staging, audit).
+    5. Presence payloads include `display_name` + `email` so the participant list shows human-readable names.
+    6. Frontend renders the display name in message bubbles and the participant list instead of "Browser xxxx".
+    7. Backwards-compatible: if auth is disabled or no user resolves, gracefully falls back to current behavior (header / query param / "anonymous").
+  - Depends on: S20.ws.1, S19.backend.1.
+
 - [ ] **S20.agent.2 — Give agent docs/workflow/template context**
   - Files: `mcp/standup_agent.py`, Stage-14 docs tools/templates, `docs/standup.md`.
   - Done when: generated Jira work uses story templates, acceptance-criteria format, labels/tags, priority/story-point estimates, epic/workflow docs, and direct Confluence links when relevant.
