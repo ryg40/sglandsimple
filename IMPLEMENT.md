@@ -1050,11 +1050,14 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
 
 ---
 
-## Stage 5 — GitHub Copilot as an upstream provider (TBD)
+## Stage 5 — GitHub Copilot as an upstream provider (SHELVED)
 
 **Goal:** Let the stack target a GitHub Copilot subscription as `UPSTREAM_*` so the same agent + MCP plumbing can run on Copilot-hosted models.
 
-> Status: **TBD.** Not started. The §5e open questions must be resolved before scheduling.
+> **Status: SHELVED (2026-05-22) — do not pick up.** Permanently parked at the user's
+> direction until they say otherwise. No tasks below are eligible. The narrative is kept
+> for reference only; do not start S5.* work, and skip Stage 5 when grabbing units from
+> this backlog. (Also listed under "Out of scope" below.)
 
 ### 5a. Why this is non-trivial
 
@@ -1142,6 +1145,7 @@ Pick one in S5.decide.1.
 - Vector search / semantic retrieval.
 - SSE server-push of POST responses (deferred in S3.transport.2).
 - Public Caddy routing for MCP (deferred in S3.expose.2).
+- GitHub Copilot as an upstream provider (Stage 5 — **shelved 2026-05-22** at user direction; full narrative retained under Stage 5 for if/when it's revived).
 
 ---
 
