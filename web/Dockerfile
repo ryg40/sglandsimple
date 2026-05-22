@@ -24,7 +24,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY main.py auth.py ./
+COPY main.py auth.py auth_seed.py ./
 COPY standup_store.py standup_ws.py ./
 COPY --from=build /app/dist ./dist
 
