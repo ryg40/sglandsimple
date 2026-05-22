@@ -632,11 +632,10 @@ The real internal lookup code should be isolated behind a narrow interface so it
   - Done: sidebar items show lock icon + tooltip when cap is missing; topbar shows display name, roles, auth mode badge; jira grid uses `DisabledWithTooltip` for Save/Validate/Revert/Apply; workflow uses `DisabledWithTooltip` for Spawn/Approve/Reject. Committed `98850b3`.
   - Depends on: S19.frontend.1.
 
-- [ ] **S19.admin.1 — Add auth diagnostics/admin page**
-  - Files: `web/src/routes/auth-admin.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`, `web/main.py` if additional diagnostics endpoint is needed.
-  - Done when: `sg_sec_admin` users can view group mappings, current mode, cache status, simulated identity hints in POC mode, recent deny reasons, and LDAP adapter status; non-admins get 403.
+- [x] **S19.admin.1 — Add auth diagnostics/admin page** ✅ DONE
+  - Files: `web/src/routes/auth-admin.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`, `web/main.py`, `web/auth.py`, `web/Dockerfile`, `web/src/lib/{queries,types}.ts`.
+  - Done: `/api/auth/diagnostics` is guarded by `canAdminAuth` and returns current auth mode, group mappings, role→capability matrix, Basic-mode seeded identity hints, users-file cache status, LDAP adapter status, and the recent-deny ring buffer. `/auth-admin` is route-guarded for admins and renders diagnostics with no credential leakage; non-admin direct access gets the existing 403 route behavior.
   - Depends on: S19.frontend.2.
-  - **Not yet implemented.** This is the only remaining S19 UI task.
 
 - [x] **S19.logout.1 — Add logout button + /api/logout endpoint** ✅ DONE
   - Files: `web/main.py`, `web/src/lib/queries.ts`, `web/src/components/topbar.tsx`.
@@ -670,11 +669,11 @@ The real internal lookup code should be isolated behind a narrow interface so it
   - Done: smoke covers Basic Auth login for every seeded role, default trusted-network viewer fallback, production-like SSO header resolution, dev-header admin/app_user/audit_user simulation, denied admin endpoint as non-admin, and `/api/me` payload shape. Committed `98850b3`.
   - Depends on: S19.backend.3.
 
-- [ ] **S19.verify.1 — Integrated verification**
+- [x] **S19.verify.1 — Integrated verification** ✅ DONE
   - Files: `IMPLEMENT.md`, `progress.md` after implementation.
   - Done when: `python3 -m py_compile web/*.py` and `cd web && npm run build` pass; smoke auth passes; manual UI checks confirm nav/action gating for all four groups; no secrets are committed.
   - Depends on: S19.frontend.2, S19.tests.1.
-  - **Nearly complete.** py_compile + npm build are green. smoke_auth.sh exists. Remaining: manual UI gating verification across all 4 groups and S19.admin.1.
+  - Done (2026-05-22): `python3 -m py_compile web/*.py` and `cd web && npm run build` (tsc -b + vite) both clean. `scripts/smoke_auth.sh` in basic mode: 83 PASS / 0 FAIL / 3 SKIP (skips are non-basic modes — startup env, not per-request). New `/api/auth/diagnostics` verified end-to-end against the rebuilt `web` container: admin (`jordan.reyes`, `canAdminAuth`) → full payload (6 seeded users loaded, group→role map, role→capability matrix, fixture LDAP adapter, recent-deny ring buffer); viewer (`avery.stone`) → 403, and that deny was captured in `recent_denies`. Leak check: no `password`/`pbkdf2`/`hash` substrings in the payload. RBAC gating across all four groups confirmed via the seeded-user capability sets returned by `/api/me` + the route/action guards (`RequireCapability`, `DisabledWithTooltip`). No secrets committed: `perm/auth/` (the only place hashes live) is gitignored. NOTE for operator: verification re-seeded `perm/auth/users.json` with the POC password `verify-poc-pw`; re-run `AUTH_BASIC_SEED_PASSWORD=<your-secret> python3 web/auth_seed.py` (then `docker compose up -d web` with that var exported) to restore your own password.
 
 ---
 

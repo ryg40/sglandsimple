@@ -8,6 +8,7 @@ import {
   PanelLeft,
   Activity,
   Shield,
+  ShieldCheck,
   Clock,
   Network,
   BookText,
@@ -48,6 +49,18 @@ const NAV: { group: string; items: NavItem[] }[] = [
       },
       { to: "/docs", label: "Docs Wiki", icon: BookText },
       { to: "/standup", label: "Standup", icon: UsersRound },
+    ],
+  },
+  {
+    group: "Admin",
+    items: [
+      {
+        to: "/auth-admin",
+        label: "Auth Admin",
+        icon: ShieldCheck,
+        requiresCap: Capability.CAN_ADMIN_AUTH,
+        capTooltip: "Requires canAdminAuth (sg_sec_admin role)",
+      },
     ],
   },
 ];

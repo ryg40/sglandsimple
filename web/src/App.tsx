@@ -15,6 +15,7 @@ import Workflow from "@/routes/workflow";
 import Architecture from "@/routes/architecture";
 import DocsWiki from "@/routes/docs";
 import Standup from "@/routes/standup";
+import AuthAdmin from "@/routes/auth-admin";
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
@@ -58,6 +59,19 @@ export default function App() {
                   element={
                     <RequireCapability capability={Capability.CAN_RUN_WORKFLOW}>
                       <Workflow />
+                    </RequireCapability>
+                  }
+                />
+
+                {/*
+                 * /auth-admin: hard-gated — diagnostics for the auth subsystem;
+                 * only sg_sec_admin (canAdminAuth) should ever reach this page.
+                 */}
+                <Route
+                  path="/auth-admin"
+                  element={
+                    <RequireCapability capability={Capability.CAN_ADMIN_AUTH}>
+                      <AuthAdmin />
                     </RequireCapability>
                   }
                 />

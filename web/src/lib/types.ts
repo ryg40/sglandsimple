@@ -555,6 +555,48 @@ export interface ArchitectureGraph {
   concerns: ArchConcern[];
 }
 
+// Stage 19 — /api/auth/diagnostics response (canAdminAuth only).
+
+export interface AuthDiagnosticsCache {
+  file_path: string;
+  ttl_seconds: number;
+  loaded: boolean;
+  user_count: number;
+  last_load_age_seconds: number | null;
+}
+
+export interface AuthDiagnosticsLdap {
+  adapter_class: string;
+  is_fixture: boolean;
+  ldap_url_configured: boolean;
+}
+
+export interface AuthDiagnosticsSeededUser {
+  username: string;
+  display_name: string;
+  groups: string[];
+  roles: string[];
+}
+
+export interface AuthDiagnosticsRecentDeny {
+  username: string;
+  capability: string;
+  reason: string;
+  ts: string;
+}
+
+export interface AuthDiagnostics {
+  auth_mode: string;
+  sso_required: boolean;
+  dev_headers_enabled: boolean;
+  groups: Record<string, string>;
+  role_capabilities: Record<string, string[]>;
+  cache: AuthDiagnosticsCache;
+  ldap: AuthDiagnosticsLdap;
+  seeded_users: AuthDiagnosticsSeededUser[];
+  recent_denies: AuthDiagnosticsRecentDeny[];
+}
+
 // Stage 19 — /api/me identity + capability response.
 // capabilities values are the Capability constant strings from web/auth.py.
 export type Capability = string;

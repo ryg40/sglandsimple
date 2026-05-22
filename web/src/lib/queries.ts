@@ -7,6 +7,7 @@ import {
 import { api, qs } from "./api";
 import type {
   AuditRecentResponse,
+  AuthDiagnostics,
   ChatCompletion,
   ChatMessage,
   CollectionsResponse,
@@ -436,6 +437,23 @@ export function useMe() {
     queryKey: ["me"] as const,
     queryFn: () => api.get<MeResponse>("/api/me"),
     staleTime: 60_000,
+  });
+}
+
+// ---- Stage 19 — auth diagnostics (canAdminAuth only) ----------------------
+
+/** Fetch the auth subsystem diagnostics from /api/auth/diagnostics.
+ *
+ * The endpoint returns 403 for non-admins; React Query surfaces this as an
+ * error which the page can display.  No `enabled` gate is applied here —
+ * the route is already wrapped in <RequireCapability capability={Capability.CAN_ADMIN_AUTH}>,
+ * so by the time this hook runs the capability is confirmed.
+ */
+export function useAuthDiagnostics() {
+  return useQuery({
+    queryKey: ["auth-diagnostics"] as const,
+    queryFn: () => api.get<AuthDiagnostics>("/api/auth/diagnostics"),
+    staleTime: 30_000,
   });
 }
 

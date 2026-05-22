@@ -40,6 +40,7 @@ API surface (all JSON):
 - POST /api/docs/{slug}/flags  → MCP docs_set_flags (status / visibility / tags)
 - POST /api/docs/sync          → MCP docs_sync (Confluence reconciliation, dry-run by default)
 - POST /api/docs/agent         → MCP docs_agent_run (reconcile→triage→suggest)
+- GET  /api/auth/diagnostics   → auth internals for sg_sec_admin users (S19.admin.1)
 """
 
 from __future__ import annotations
@@ -250,6 +251,63 @@ async def api_me(request: Request) -> JSONResponse:
         "auth_mode": user.auth_mode,
         "source": user.source,
     })
+
+
+@app.get("/api/auth/diagnostics", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_ADMIN_AUTH))])
+async def api_auth_diagnostics(request: Request) -> JSONResponse:
+    """S19.admin.1 — auth internals visible only to sg_sec_admin users.
+
+    Returns a structured snapshot of the auth subsystem state: configured mode,
+    group→role mapping, role→capability matrix, users-file cache health, LDAP
+    adapter status, seeded POC user identity hints (basic mode only), and the
+    recent capability-deny ring buffer.
+
+    Non-admin requests receive HTTP 403.
+    Passwords and sensitive attributes are never included.
+    """
+    # Groups: configured group name → role
+    groups: dict[str, str] = _auth.CONFIG.group_role_map()
+
+    # Role capabilities: role → sorted list of capability strings
+    role_capabilities: dict[str, list[str]] = {
+        role: sorted(caps)
+        for role, caps in _auth.ROLE_CAPABILITIES.items()
+    }
+
+    # Seeded users: only in basic mode; derive roles from groups, no passwords
+    seeded_users: list[dict] = []
+    if _auth.CONFIG.auth_mode == "basic":
+        try:
+            import sys as _sys
+            import importlib as _importlib
+            _web_dir = str(__import__("pathlib").Path(__file__).parent)
+            if _web_dir not in _sys.path:
+                _sys.path.insert(0, _web_dir)
+            _seed_mod = _importlib.import_module("auth_seed")
+            for u in _seed_mod.SEED_USERS:
+                ugroups = u.get("groups", [])
+                uroles = _auth.groups_to_roles(ugroups)
+                seeded_users.append({
+                    "username": u.get("email", ""),
+                    "display_name": u.get("display_name", ""),
+                    "groups": ugroups,
+                    "roles": uroles,
+                })
+        except Exception:  # noqa: BLE001
+            seeded_users = []
+
+    payload: dict[str, Any] = {
+        "auth_mode": _auth.CONFIG.auth_mode,
+        "sso_required": _auth.CONFIG.sso_required,
+        "dev_headers_enabled": _auth.CONFIG.dev_headers_enabled,
+        "groups": groups,
+        "role_capabilities": role_capabilities,
+        "cache": _auth.cache_status(),
+        "ldap": _auth.ldap_adapter_status(),
+        "seeded_users": seeded_users,
+        "recent_denies": _auth.recent_denies(),
+    }
+    return JSONResponse(payload)
 
 
 async def _proxy_chat(body: dict[str, Any]) -> dict[str, Any]:

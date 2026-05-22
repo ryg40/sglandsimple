@@ -16,6 +16,8 @@ Downstream tasks (not yet wired):
 from __future__ import annotations
 
 import base64
+import collections
+import datetime
 import json
 import logging
 import os
@@ -324,6 +326,38 @@ def build_user_context(
 # ---------------------------------------------------------------------------
 
 _UNAUTHENTICATED: None = None  # type alias marker; callers test ``is None``
+
+
+# ---------------------------------------------------------------------------
+# S19.admin.1 — recent-deny ring buffer (in-memory, POC)
+# ---------------------------------------------------------------------------
+
+_RECENT_DENIES: collections.deque = collections.deque(maxlen=50)
+
+
+def record_deny(username: str, capability: str, reason: str) -> None:
+    """Append a capability-deny event to the in-memory ring buffer.
+
+    S19.admin.1 — called by require_capability() on every 403 so the
+    /api/auth/diagnostics endpoint can surface recent access denials.
+    Stores ONLY: username, the missing capability name, a short reason string,
+    and an ISO-8601 UTC timestamp.  Passwords and sensitive attributes are
+    never captured here.
+    """
+    _RECENT_DENIES.append({
+        "username": username,
+        "capability": capability,
+        "reason": reason,
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    })
+
+
+def recent_denies() -> list[dict]:
+    """Return a snapshot of the recent-deny ring buffer (newest last).
+
+    S19.admin.1 — consumed by /api/auth/diagnostics.
+    """
+    return list(_RECENT_DENIES)
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +701,11 @@ def require_capability(capability: str) -> Callable[[Any], UserContext]:
         from fastapi import HTTPException as _HTTPException  # lazy
         user = require_user(request)  # raises 401 if unauthenticated
         if not user.has(capability):
+            record_deny(
+                username=user.username,
+                capability=capability,
+                reason=f"user roles {user.roles!r} do not grant '{capability}'",
+            )
             raise _HTTPException(
                 status_code=403,
                 detail=f"Forbidden: capability '{capability}' required",
@@ -675,6 +714,70 @@ def require_capability(capability: str) -> Callable[[Any], UserContext]:
 
     _guard.__name__ = f"require_{capability}"
     return _guard
+
+
+# ---------------------------------------------------------------------------
+# S19.admin.1 — diagnostics helpers
+# ---------------------------------------------------------------------------
+
+
+def cache_status() -> dict:
+    """Return a summary of the users-file cache state for /api/auth/diagnostics.
+
+    S19.admin.1 — exposes file path, load state, user count, TTL, and last-load
+    epoch without leaking any credential data.  Inspects _users_cache attributes
+    directly; absent attributes are omitted gracefully.
+    """
+    result: dict[str, Any] = {
+        "file_path": CONFIG.basic_users_file,
+        "ttl_seconds": CONFIG.cache_ttl_seconds,
+    }
+    # _UsersFileCache stores: _data (list), _loaded_at (float), _mtime (float)
+    data = getattr(_users_cache, "_data", None)
+    loaded_at = getattr(_users_cache, "_loaded_at", None)
+
+    result["loaded"] = bool(data)
+    result["user_count"] = len(data) if isinstance(data, list) else 0
+
+    if loaded_at is not None and loaded_at > 0.0:
+        # Convert monotonic-clock epoch offset to wall-clock best-effort:
+        # loaded_at is time.monotonic() at load time; we expose it as-is
+        # since converting to wall-clock would require storing a reference.
+        # Instead, expose how many seconds ago the last load happened.
+        result["last_load_age_seconds"] = round(time.monotonic() - loaded_at, 1)
+    else:
+        result["last_load_age_seconds"] = None
+
+    return result
+
+
+def ldap_adapter_status() -> dict:
+    """Return a summary of the configured directory adapter for /api/auth/diagnostics.
+
+    S19.admin.1 — calls auth_ldap.get_directory_adapter() and reports the
+    adapter class name plus a bool indicating whether LDAP URL is configured
+    (never the URL value itself).  Exceptions are caught and returned as
+    {"error": "..."} so the endpoint stays healthy if the adapter is broken.
+    """
+    try:
+        import sys as _sys
+        import importlib as _importlib
+
+        _web_dir = str(Path(__file__).parent)
+        if _web_dir not in _sys.path:
+            _sys.path.insert(0, _web_dir)
+
+        _auth_ldap = _importlib.import_module("auth_ldap")
+        adapter = _auth_ldap.get_directory_adapter()
+        cls_name = type(adapter).__name__
+        is_fixture = cls_name == "FixtureDirectoryAdapter"
+        return {
+            "adapter_class": cls_name,
+            "is_fixture": is_fixture,
+            "ldap_url_configured": bool(CONFIG.ldap_url),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
 
 
 # ---------------------------------------------------------------------------
