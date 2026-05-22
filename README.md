@@ -130,6 +130,11 @@ All knobs are env vars (see `.env.example`); set them in `.env.local`:
 | `SEARXNG_URL` | yes | SearXNG used by `web_research` |
 | `AGENT_PORT` | no (default `8000`) | Host port for agent |
 | `MCP_PORT` | no (default `8080`) | Host port for MCP server |
+| `OVERVIEW_DUE_SOON_DAYS` | no (default `14`) | Days window for the "due soon" attention rule |
+| `OVERVIEW_STALE_DAYS` | no (default `7`) | No-update window (days) for the "stalled" attention rule |
+| `OVERVIEW_ATTENTION_LIMIT` | no (default `10`) | Max rows in the attention panel |
+| `OVERVIEW_TABLE_ROWS` | no (default `5`) | Rows per mini-table in the Overview multi-table region |
+| `OVERVIEW_POLL_MS` | no (default `30000`) | Front-end poll cadence (ms) for `/api/overview` |
 
 Both services attach to the external Docker network `proxy` so they can reach the upstream LLM and SearXNG hosts on the LAN; create it once with `docker network create proxy` if it doesn't already exist.
 
@@ -151,6 +156,21 @@ and export it all as a layman-friendly PDF/PPT artifact.
 
 > Full spec, data model, and task breakdown live in `IMPLEMENT.md` (Stage 9).
 > The diagrams below are the target design.
+
+**Compliance command center (Stage 11).** The Overview (`/`) page is the
+compliance command center: a single polled surface backed by `GET /api/overview`
+→ the `overview_summary` MCP tool. It rolls up all Stage-9 compliance collections
+in one round-trip and renders four regions: a **KPI row** (open findings, active
+epics, in-flight work items, open PRs, connector health, needs-attention count); a
+full-width **attention panel** of ranked "points of concern" (overdue → due-soon →
+prioritized → high-severity → blocked PR → stalled), each row with a reason chip
+and days-to-due badge; a **connector-health strip** (status dots, click → Hub
+bubble); and a **multi-table region** (findings / epics / work items / PRs, 5 rows
+each, "View all in Hub" links). The activity trend is retained below. The page
+never blanks on refetch (stale-while-revalidate). Five tunables control the
+attention rules and poll cadence: `OVERVIEW_DUE_SOON_DAYS` (default 14),
+`OVERVIEW_STALE_DAYS` (7), `OVERVIEW_ATTENTION_LIMIT` (10), `OVERVIEW_TABLE_ROWS`
+(5), `OVERVIEW_POLL_MS` (30000).
 
 **Connector data & Architecture view (Stage 12).** Each connector's Hub pane now
 renders domain-shaped mock data keyed by a `schema` hint (AWS multi-service

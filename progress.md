@@ -1,8 +1,17 @@
 # Progress
 
 ## Status
-**Stage 12 COMPLETE & verified live; Stage 13 COMPLETE (one follow-up); Stage 14 DOCUMENTED (not built); Stage 17 COMPLETE.**
-Work branch: `stage12-dynamic-overview-mockdata`.
+**Stage 11 COMPLETE & verified live; Stage 12 COMPLETE & verified live; Stage 13 COMPLETE (one follow-up); Stage 14 DOCUMENTED (not built); Stage 17 COMPLETE.**
+Work branch: `stage-11-overview`.
+
+## Stage 11 — Compliance command center: Overview page (DONE)
+- **`overview_summary` MCP tool** (`mcp/overview.py`): reads `audit_findings`, `epics`, `work_items`, `pr_records` + the connector registry; evaluates six attention rules server-side (overdue, due_soon, prioritized, high_severity, blocked_pr, stalled); returns `{kpis, attention[], connectors[], tables{}, generated_at}` in one round-trip.
+- **`GET /api/overview` proxy** (`web/main.py`): calls `overview_summary` via `_mcp_tool` + `_extract_json_block`.
+- **Seed additions** (`mongo-seed/06-work_items.js`, `07-pr_records.js`, `13-due-dates.js`): due dates + staleness/check fixtures added so all attention rules have real data; applied via `scripts/reseed.sh`.
+- **`useOverview()` query hook** (`web/src/lib/queries.ts`, `types.ts`): polls every 30 s; `placeholderData: (prev) => prev` prevents page blanking on refetch.
+- **Overview SPA route** (`web/src/routes/overview.tsx`): 6 `StatCard` KPI row, full-width `AttentionPanel` (`web/src/components/attention-panel.tsx`), connector-health strip, 2×2 `MiniTable` grid (`web/src/components/mini-table.tsx`), retained activity trend.
+- **Smoke test** (`scripts/smoke_overview.sh`): green — `/api/overview` returns all four sections; KPIs `{open_findings:4, active_epics:4, inflight_work_items:4, open_prs:2, connectors_healthy:1/8, attention:10}`; 10-item ranked attention list (overdue → due_soon → blocked_pr); `tools/list` returns 32 tools including `overview_summary`.
+- **Env vars** (all optional, all defaulted): `OVERVIEW_DUE_SOON_DAYS=14`, `OVERVIEW_STALE_DAYS=7`, `OVERVIEW_ATTENTION_LIMIT=10`, `OVERVIEW_TABLE_ROWS=5`, `OVERVIEW_POLL_MS=30000`.
 
 ## Stage 12 — Domain-rich connector data + cross-system topology (DONE)
 - **Mock data** (`S12.mock.*`, `S12.field.*`): every connector's `summary()` now returns a `schema` hint + domain-shaped `sample_data`:
@@ -57,4 +66,3 @@ Work branch: `stage12-dynamic-overview-mockdata`.
 ## Next agent — start here
 1. `S13.cleanup.1` — finish migrating non-semantic color literals to tokens.
 2. Stage 14 — build the docs wiki (`S14.model.1` →).
-3. Stage 11 (Overview command center) is still documented-only if not yet built — check before starting.

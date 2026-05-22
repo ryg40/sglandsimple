@@ -107,7 +107,10 @@ def _attention_for_row(
     A row may earn multiple reasons; we keep the highest-ranked one per row so
     the panel isn't dominated by a single noisy record.
     """
-    status = row.get("status") or row.get("state")
+    # For PR records the canonical field is "state" (GitHub semantics); other collections
+    # only carry "status".  Use the same state-first priority as the KPI counter so both
+    # agree on what counts as closed/merged.
+    status = row.get("state") or row.get("status")
     if _is_done(status):
         return []
 
