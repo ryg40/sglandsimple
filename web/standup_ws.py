@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 import auth as _auth
@@ -110,20 +110,39 @@ def _fallback_identity(websocket: WebSocket) -> tuple[str, str]:
     return author, email
 
 
-def _resolved_identity(websocket: WebSocket) -> tuple[str, str, bool]:
+def _resolved_identity(websocket: WebSocket) -> tuple[str, str, bool, Any]:
     """Resolve S19 identity for a websocket, falling back to legacy hints.
 
     Starlette WebSocket exposes a request-like ``headers`` mapping, which is
     enough for auth.resolve_user() across basic/header/SSO/trusted modes.
+
+    Returns ``(author, email, authenticated, user_context_or_None)``.
     """
     try:
         user = _auth.resolve_user(websocket)
     except Exception:
         user = None
     if user is not None and _auth.CONFIG.auth_mode != "disabled":
-        return user.display_name or user.username or "anonymous", user.email or "", True
+        return user.display_name or user.username or "anonymous", user.email or "", True, user
     author, email = _fallback_identity(websocket)
-    return author, email, False
+    return author, email, False, None
+
+
+def _can_approve(state: "ClientState") -> bool:
+    """Whether this client may approve/reject standup proposals.
+
+    Approval requires the Stage-19 ``canApproveStandupActions`` capability,
+    which currently maps to the admin role. When auth is disabled the resolver
+    returns a full-capability admin context, so disabled mode also passes.
+    Unauthenticated/legacy-fallback clients never gain approval rights.
+    """
+    user = state.user
+    if user is None:
+        return False
+    try:
+        return user.has(_auth.Capability.CAN_APPROVE_STANDUP)
+    except Exception:
+        return False
 
 
 @dataclass
@@ -134,6 +153,7 @@ class ClientState:
     email: str = ""
     authenticated: bool = False
     typing: bool = False
+    user: Any = None  # resolved auth.UserContext when authenticated, else None
 
 
 class StandupConnectionManager:
@@ -142,13 +162,14 @@ class StandupConnectionManager:
 
     async def connect(self, websocket: WebSocket, session_id: str) -> ClientState:
         await websocket.accept()
-        author, email, authenticated = _resolved_identity(websocket)
+        author, email, authenticated, user = _resolved_identity(websocket)
         state = ClientState(
             client_id=uuid.uuid4().hex,
             session_id=session_id,
             author=author,
             email=email,
             authenticated=authenticated,
+            user=user,
         )
         self._sessions.setdefault(session_id, {})[websocket] = state
         return state
@@ -171,6 +192,7 @@ class StandupConnectionManager:
                 "display_name": state.author,
                 "email": state.email,
                 "typing": state.typing,
+                "can_approve": _can_approve(state),
             }
             for state in clients.values()
         ]
@@ -203,7 +225,10 @@ manager = StandupConnectionManager()
 
 
 @router.get("/api/standup/sessions/{session_id}/snapshot")
-async def standup_snapshot(session_id: str) -> JSONResponse:
+async def standup_snapshot(session_id: str, request: Request) -> JSONResponse:
+    # S20.auth.1 — viewing a session snapshot requires an authenticated identity
+    # (any role). Approval gating happens separately over the websocket.
+    _auth.require_user(request)
     snapshot = await get_store().snapshot(session_id)
     snapshot["presence"] = {"participants": manager.participants(session_id)}
     return JSONResponse(snapshot)
@@ -216,6 +241,22 @@ async def standup_ws(websocket: WebSocket, session_id: str) -> None:
         return
 
     state = await manager.connect(websocket, session_id)
+
+    # S20.auth.1 — gate session join on a resolved Stage-19 identity. When auth
+    # is disabled (local dev) resolve_user() returns a synthetic admin, so this
+    # only rejects genuinely unauthenticated clients in basic/sso/header modes.
+    if _auth.CONFIG.auth_mode != "disabled" and not state.authenticated:
+        await manager.send(
+            websocket,
+            {
+                "type": "error",
+                "session_id": session_id,
+                "error": {"code": "unauthenticated", "message": "Sign in to join the standup session."},
+            },
+        )
+        manager.disconnect(websocket, session_id)
+        await websocket.close(code=1008, reason="authentication required")
+        return
     try:
         snapshot = await get_store().snapshot(session_id)
         snapshot["presence"] = {"participants": manager.participants(session_id)}
@@ -243,10 +284,12 @@ async def standup_ws(websocket: WebSocket, session_id: str) -> None:
                     await _handle_typing(session_id, state, payload)
                 elif event_type == "agent.summarize":
                     await _handle_agent_summarize(session_id, state, payload)
+                elif event_type == "proposal.edit":
+                    await _handle_proposal_edit(websocket, session_id, state, payload)
                 elif event_type == "proposal.approve":
-                    await _handle_proposal_status(session_id, state, payload, "approved")
+                    await _handle_proposal_status(websocket, session_id, state, payload, "approved")
                 elif event_type == "proposal.reject":
-                    await _handle_proposal_status(session_id, state, payload, "rejected")
+                    await _handle_proposal_status(websocket, session_id, state, payload, "rejected")
                 else:
                     await _send_error(websocket, session_id, "unknown_event", f"unsupported event type: {event_type or '<missing>'}")
             except ValueError as exc:
@@ -427,12 +470,101 @@ async def _stage_jira_edit_proposals(proposals: list[dict[str, Any]], state: Cli
     return staging_results
 
 
-async def _handle_proposal_status(session_id: str, state: ClientState, payload: dict[str, Any], status: str) -> None:
+async def _handle_proposal_edit(websocket: WebSocket, session_id: str, state: ClientState, payload: dict[str, Any]) -> None:
+    """Edit a proposal's dry-run payload before approval. Approver-only."""
+    if not _can_approve(state):
+        await _send_error(
+            websocket,
+            session_id,
+            "forbidden",
+            "Editing standup proposals requires the canApproveStandupActions capability.",
+        )
+        return
     proposal_id = str(payload.get("proposal_id") or payload.get("id") or "").strip()
     if not proposal_id:
         raise ValueError("proposal_id is required")
-    proposal = await get_store().update_proposal_status(session_id, proposal_id, status=status, actor=state.author)
+    patch = payload.get("dry_run_payload")
+    if not isinstance(patch, dict):
+        raise ValueError("dry_run_payload object is required for proposal.edit")
+    proposal = await get_store().edit_proposal_payload(session_id, proposal_id, patch=patch, actor=state.author)
     await manager.broadcast(session_id, {"type": "proposal.updated", "session_id": session_id, "proposal": proposal})
+
+
+async def _handle_proposal_status(
+    websocket: WebSocket, session_id: str, state: ClientState, payload: dict[str, Any], status: str
+) -> None:
+    # S20.auth.1 — only scrum-master/product-owner (canApproveStandupActions)
+    # may approve or reject; everyone else is read-only on the tray.
+    if not _can_approve(state):
+        await _send_error(
+            websocket,
+            session_id,
+            "forbidden",
+            f"Approving/rejecting standup proposals requires the canApproveStandupActions capability "
+            f"(you are '{state.author}').",
+        )
+        return
+
+    proposal_id = str(payload.get("proposal_id") or payload.get("id") or "").strip()
+    if not proposal_id:
+        raise ValueError("proposal_id is required")
+
+    apply_result: dict[str, Any] | None = None
+    if status == "approved":
+        # Dry-run apply path: validate any staged Jira edits via Stage-16 tools.
+        # STANDUP_DRY_RUN_ONLY (default true) means we never call jira_apply_staged
+        # here — approval records a validated, dry-run-only outcome.
+        apply_result = await _apply_proposal_dry_run(session_id, proposal_id, state)
+
+    proposal = await get_store().update_proposal_status(
+        session_id, proposal_id, status=status, actor=state.author, apply_result=apply_result
+    )
+    await manager.broadcast(session_id, {"type": "proposal.updated", "session_id": session_id, "proposal": proposal})
+
+
+async def _apply_proposal_dry_run(session_id: str, proposal_id: str, state: ClientState) -> dict[str, Any]:
+    """Run the dry-run apply path for an approved proposal.
+
+    For Jira-edit proposals carrying concrete edits, re-validate the staged
+    changes through Stage-16 ``jira_validate_staged`` so the recorded approval
+    reflects current validation. Never calls live apply while
+    STANDUP_DRY_RUN_ONLY is enabled (the default).
+    """
+    snapshot = await get_store().snapshot(session_id)
+    proposal = next((p for p in snapshot.get("proposals", []) if p.get("id") == proposal_id), None)
+    if proposal is None:
+        raise KeyError(f"proposal not found: {proposal_id}")
+
+    dry_run_only = _env_bool("STANDUP_DRY_RUN_ONLY", True)
+    edits = _jira_edits_from_proposal(proposal)
+    if not edits:
+        return {"applied": False, "dry_run_only": dry_run_only, "detail": "no Jira edits to validate; recorded as dry-run approval"}
+
+    actor = {"display_name": state.author, "email": state.email}
+    issue_keys = [str(edit.get("issue_key")) for edit in edits if edit.get("issue_key")]
+    try:
+        validation_result = _extract_json_block(
+            await _mcp_tool("jira_validate_staged", {"issue_keys": issue_keys, "actor": actor})
+        )
+        validated = validation_result.get("validated", 0) if isinstance(validation_result, dict) else 0
+        return {
+            "applied": False,
+            "dry_run_only": dry_run_only,
+            "validated": validated,
+            "issue_keys": issue_keys,
+            "validation": validation_result,
+            "detail": "validated staged Jira edits; live apply suppressed by STANDUP_DRY_RUN_ONLY"
+            if dry_run_only
+            else "validated staged Jira edits; apply still requires JIRA_WRITES_ENABLED + Stage-16 apply",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "applied": False,
+            "dry_run_only": dry_run_only,
+            "error": f"{type(exc).__name__}: {exc}",
+            "issue_keys": issue_keys,
+            "detail": "validation failed; approval recorded without apply",
+        }
 
 
 async def _send_error(websocket: WebSocket, session_id: str, code: str, message: str) -> None:

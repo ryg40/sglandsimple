@@ -44,6 +44,9 @@ export const Capability = {
 
   /** Read-level access to chat / Ask Data */
   CAN_READ_CHAT: "canReadChat",
+
+  /** Stage 20: scrum-master / product-owner approval of standup proposals */
+  CAN_APPROVE_STANDUP: "canApproveStandupActions",
 } as const;
 
 export type CapabilityValue = (typeof Capability)[keyof typeof Capability];

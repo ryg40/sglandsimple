@@ -276,7 +276,15 @@ class StandupStore:
             self._save(data)
             return deepcopy(proposal)
 
-    async def update_proposal_status(self, session_id: str, proposal_id: str, *, status: str, actor: str) -> dict[str, Any]:
+    async def update_proposal_status(
+        self,
+        session_id: str,
+        proposal_id: str,
+        *,
+        status: str,
+        actor: str,
+        apply_result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if status not in {"approved", "rejected"}:
             raise ValueError("status must be approved or rejected")
         async with self._lock:
@@ -287,13 +295,45 @@ class StandupStore:
                     now = utc_now()
                     proposal["status"] = status
                     proposal["updated_at"] = now
-                    proposal["approval"] = {
+                    approval = {
                         "actor": actor or "anonymous",
                         "decision": status,
                         "decided_at": now,
-                        "dry_run_only": True,
-                        "applied": False,
+                        "dry_run_only": bool((apply_result or {}).get("dry_run_only", True)),
+                        "applied": bool((apply_result or {}).get("applied", False)),
                     }
+                    if apply_result is not None:
+                        approval["apply_result"] = deepcopy(apply_result)
+                    proposal["approval"] = approval
+                    session["session"]["updated_at"] = now
+                    self._save(data)
+                    return deepcopy(proposal)
+            raise KeyError(f"proposal not found: {proposal_id}")
+
+    async def edit_proposal_payload(
+        self, session_id: str, proposal_id: str, *, patch: dict[str, Any], actor: str
+    ) -> dict[str, Any]:
+        """Shallow-merge a patch into a still-proposed proposal's dry_run_payload.
+
+        Only proposals in the ``proposed`` state may be edited; approved/rejected
+        proposals are immutable. The ``dry_run`` marker is always preserved.
+        """
+        async with self._lock:
+            data = self._load()
+            session = self._ensure_session(data, session_id)
+            for proposal in session["proposals"]:
+                if proposal.get("id") == proposal_id:
+                    if proposal.get("status") != "proposed":
+                        raise ValueError("only proposed (not yet approved/rejected) proposals can be edited")
+                    now = utc_now()
+                    payload = proposal.get("dry_run_payload")
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    payload.update(patch)
+                    payload["dry_run"] = True
+                    proposal["dry_run_payload"] = payload
+                    proposal["updated_at"] = now
+                    proposal["edited_by"] = actor or "anonymous"
                     session["session"]["updated_at"] = now
                     self._save(data)
                     return deepcopy(proposal)

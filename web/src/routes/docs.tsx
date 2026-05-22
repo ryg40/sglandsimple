@@ -535,7 +535,12 @@ function AgentPanel() {
 // ---------------------------------------------------------------------------
 
 export default function DocsWiki() {
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  // Deep-link support: `/docs?doc=<slug>` (e.g. runbook links from /architecture).
+  const initialSlug =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("doc")
+      : null;
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(initialSlug);
   const [searchQuery, setSearchQuery] = useState("");
   const [editing, setEditing] = useState(false);
   const [showAgent, setShowAgent] = useState(false);

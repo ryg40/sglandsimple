@@ -16,7 +16,9 @@ import {
 import {
   compileStage,
   decompile,
+  inferStageOutputFields,
   newStage,
+  selectedInputFields,
   STAGE_META,
   type EditableStage,
   type StageKind,
@@ -73,6 +75,28 @@ async function copyText(label: string, text: string) {
   }
 }
 
+function uniqFields(fields: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of fields) {
+    const field = raw.trim();
+    if (!field || seen.has(field)) continue;
+    seen.add(field);
+    out.push(field);
+  }
+  return out;
+}
+
+function fieldNamesFromRows(rows: Row[]): string[] {
+  const fields: string[] = [];
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      if (!fields.includes(key)) fields.push(key);
+    }
+  }
+  return fields;
+}
+
 export default function WranglerPanel() {
   const cols = useCollections();
   const [active, setActive] = useState<string | null>(null);
@@ -81,6 +105,7 @@ export default function WranglerPanel() {
   const [showSuggest, setShowSuggest] = useState(false);
   const [showLoad, setShowLoad] = useState(false);
   const [lastSuccessfulPipeline, setLastSuccessfulPipeline] = useState<SuccessfulPipelineState | null>(null);
+  const stagesRef = useRef<EditableStage[]>([]);
 
   const sample = useWranglerSample(active);
   const runPrefix = useRunPrefix();
@@ -92,9 +117,24 @@ export default function WranglerPanel() {
     if (!active && cols.data?.collections.length) setActive(cols.data.collections[0].name);
   }, [cols.data, active]);
 
+  useEffect(() => {
+    stagesRef.current = stages;
+  }, [stages]);
+
   const fieldNames = useMemo(() => (sample.data?.field_summary ?? []).map((f) => f.field), [sample.data]);
 
+  function clearPreviewsForIds(stageIds: number[]) {
+    if (!stageIds.length) return;
+    setPreviews((prev) => {
+      const next = { ...prev };
+      for (const id of stageIds) delete next[id];
+      return next;
+    });
+  }
+
   function setStage(id: number, patch: Partial<EditableStage>) {
+    const idx = stages.findIndex((st) => st.id === id);
+    if (idx >= 0) clearPreviewsForIds(stages.slice(idx).map((st) => st.id));
     setStages((s) => s.map((st) => (st.id === id ? { ...st, ...patch } : st)));
   }
 
@@ -103,9 +143,25 @@ export default function WranglerPanel() {
     setStages((s) => [...s, st]);
   }
 
-  function buildPipeline(uptoIdx: number) {
-    return stages.slice(0, uptoIdx + 1).map(compileStage);
+  function buildPipeline(uptoIdx: number, source = stagesRef.current) {
+    return source.slice(0, uptoIdx + 1).map(compileStage);
   }
+
+  const availableFieldsByStage = useMemo(() => {
+    const byStage: string[][] = [];
+    let available = uniqFields(fieldNames);
+    for (const st of stages) {
+      byStage.push(available);
+      const preview = previews[st.id];
+      if (preview && !preview.loading && !preview.error) {
+        const previewFields = fieldNamesFromRows(preview.rows);
+        available = previewFields.length ? uniqFields(previewFields) : inferStageOutputFields(available, st);
+      } else {
+        available = inferStageOutputFields(available, st);
+      }
+    }
+    return byStage;
+  }, [fieldNames, previews, stages]);
 
   const currentPipeline = useMemo(() => stages.map(compileStage), [stages]);
   const lastSuccessfulCode = useMemo(
@@ -117,11 +173,12 @@ export default function WranglerPanel() {
   const pipelineIsCurrent = !!lastSuccessfulPipeline && lastSuccessfulPipeline.collection === active && successFingerprint === currentFingerprint;
 
   async function runUpTo(idx: number) {
-    const st = stages[idx];
+    const currentStages = stagesRef.current;
+    const st = currentStages[idx];
     if (!st || !active) return;
     setPreviews((p) => ({ ...p, [st.id]: { ...(p[st.id] ?? { input: 0, output: 0, rows: [] }), loading: true } }));
     try {
-      const pipeline = buildPipeline(idx);
+      const pipeline = buildPipeline(idx, currentStages);
       const data = await runPrefix.mutateAsync({ collection: active, pipeline, upto: idx });
       setPreviews((p) => ({ ...p, [st.id]: { loading: false, input: data.input_count, output: data.output_count, rows: data.rows } }));
       setLastSuccessfulPipeline({ collection: active, pipeline, upto: idx, source: "preview" });
@@ -134,11 +191,12 @@ export default function WranglerPanel() {
   // live re-run: debounce edits per stage
   const timers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   function liveRerun(idx: number) {
-    const st = stages[idx];
+    const st = stagesRef.current[idx];
     if (!st?.live) return;
     clearTimeout(timers.current[st.id]);
     timers.current[st.id] = setTimeout(() => {
-      for (let i = idx; i < stages.length; i++) if (stages[i].live) runUpTo(i);
+      const currentStages = stagesRef.current;
+      for (let i = idx; i < currentStages.length; i++) if (currentStages[i].live) runUpTo(i);
     }, 300);
   }
 
@@ -234,12 +292,22 @@ export default function WranglerPanel() {
             <StageCard
               key={st.id}
               st={st}
-              fieldNames={fieldNames}
+              fieldNames={availableFieldsByStage[idx] ?? fieldNames}
               preview={previews[st.id]}
               onChange={(patch) => { setStage(st.id, patch); liveRerun(idx); }}
               onRun={() => runUpTo(idx)}
-              onRemove={() => setStages((s) => s.filter((x) => x.id !== st.id))}
-              onDuplicate={() => setStages((s) => { const copy = { ...st, id: newStage(st.kind).id }; const i = s.findIndex((x) => x.id === st.id); return [...s.slice(0, i + 1), copy, ...s.slice(i + 1)]; })}
+              onRemove={() => {
+                clearPreviewsForIds(stages.slice(idx).map((x) => x.id));
+                setStages((s) => s.filter((x) => x.id !== st.id));
+              }}
+              onDuplicate={() => {
+                clearPreviewsForIds(stages.slice(idx + 1).map((x) => x.id));
+                setStages((s) => {
+                  const copy = { ...st, id: newStage(st.kind).id };
+                  const i = s.findIndex((x) => x.id === st.id);
+                  return [...s.slice(0, i + 1), copy, ...s.slice(i + 1)];
+                });
+              }}
             />
           ))}
 
@@ -405,14 +473,20 @@ function SidePanel({ title, onClose, children }: { title: string; onClose: () =>
 }
 
 function FieldSelect({ value, fields, onChange }: { value: string; fields: string[]; onChange: (v: string) => void }) {
+  const stale = !!value && !fields.includes(value);
+  const options = stale ? [value, ...fields.filter((field) => field !== value)] : fields;
+
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="rounded-md border border-input bg-card px-2 py-1 text-xs"
+      className={cn(
+        "rounded-md border border-input bg-card px-2 py-1 text-xs",
+        stale && "border-destructive text-destructive"
+      )}
     >
       <option value="">—</option>
-      {fields.map((f) => <option key={f} value={f}>{f}</option>)}
+      {options.map((f) => <option key={f} value={f}>{stale && f === value ? `${f} (stale)` : f}</option>)}
     </select>
   );
 }
@@ -452,6 +526,10 @@ function StageCard({
   onDuplicate: () => void;
 }) {
   const meta = STAGE_META[st.kind];
+  const staleFields = useMemo(
+    () => selectedInputFields(st).filter((field, idx, all) => !!field && !fieldNames.includes(field) && all.indexOf(field) === idx),
+    [fieldNames, st]
+  );
   const cols = useMemo(() => {
     const seen: string[] = [];
     for (const r of preview?.rows ?? []) for (const k of Object.keys(r)) if (!seen.includes(k)) seen.push(k);
@@ -475,6 +553,11 @@ function StageCard({
       </div>
 
       <div className="space-y-2 p-3">
+        {staleFields.length > 0 && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            Upstream fields changed. Review stale selections: {staleFields.join(", ")}.
+          </div>
+        )}
         {st.kind === "match" && (st.clauses ?? []).map((c, ci) => (
           <div key={ci} className="flex flex-wrap items-center gap-2">
             <FieldSelect value={c.field} fields={fieldNames} onChange={(v) => onChange({ clauses: st.clauses!.map((x, i) => i === ci ? { ...x, field: v } : x) })} />
@@ -532,11 +615,18 @@ function StageCard({
               {fieldNames.length === 0 && <span className="text-[11px] text-muted-foreground">Sample fields are still loading or unavailable.</span>}
             </div>
             {(st.projects ?? []).map((c, ci) => (
-              <div key={ci} className="flex items-center gap-2">
+              <div key={ci} className="flex flex-wrap items-center gap-2">
                 <FieldSelect value={c.field} fields={fieldNames} onChange={(v) => onChange({ projects: st.projects!.map((x, i) => i === ci ? { ...x, field: v } : x) })} />
                 <select value={c.include ? "1" : "0"} onChange={(e) => onChange({ projects: st.projects!.map((x, i) => i === ci ? { ...x, include: e.target.value === "1" } : x) })} className="rounded-md border border-input bg-card px-2 py-1 text-xs">
                   <option value="1">include</option><option value="0">exclude</option>
                 </select>
+                <input
+                  value={c.alias ?? ""}
+                  placeholder="alias (optional)"
+                  onChange={(e) => onChange({ projects: st.projects!.map((x, i) => i === ci ? { ...x, alias: e.target.value } : x) })}
+                  disabled={!c.include}
+                  className="w-32 rounded-md border border-input bg-card px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                />
                 <button className="text-destructive" onClick={() => onChange({ projects: st.projects!.filter((_, i) => i !== ci) })}>−</button>
               </div>
             ))}

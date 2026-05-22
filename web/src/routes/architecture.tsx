@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from "react";
+import { useMemo, useCallback, useState, useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -10,16 +10,33 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  AlertTriangle, RefreshCw, Network, ServerCrash,
+  AlertTriangle, RefreshCw, Network, ServerCrash, Download, Copy, Check, ChevronDown,
 } from "lucide-react";
 import { useArchitecture } from "@/lib/queries";
 import type { ArchitectureGraph, ArchNode, ArchEdge, ArchLayer, ArchConcern } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { ArchSystemNode, type ArchNodeData } from "@/components/architecture/arch-node";
 import { ArchDrawer } from "@/components/architecture/arch-drawer";
 import { ArchLegend } from "@/components/architecture/arch-legend";
 import { ArchFiltersBar, KnownUnknownsPanel, EMPTY_FILTERS, type ArchFilters } from "@/components/architecture/arch-filters";
+import {
+  toMermaid,
+  toStandaloneSvg,
+  copyToClipboard,
+  downloadString,
+  downloadSvgAsPng,
+  type ArchExportMode,
+  type ArchExportPersona,
+} from "@/lib/arch-export";
 
 // ---- lane config ------------------------------------------------------------
 
@@ -220,6 +237,15 @@ export default function Architecture() {
   const [filters, setFilters] = useState<ArchFilters>(EMPTY_FILTERS);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("concerns");
 
+  // Export state
+  const [exportStatus, setExportStatus] = useState<"idle" | "copied" | "failed" | "png-failed">("idle");
+  useEffect(() => {
+    if (exportStatus !== "idle") {
+      const t = setTimeout(() => setExportStatus("idle"), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [exportStatus]);
+
   const nodeTypes = useMemo(() => ({ archSystem: ArchSystemNode }), []);
 
   const isEngineer = personaMode === "engineer";
@@ -231,6 +257,37 @@ export default function Architecture() {
         : { nodes: [], edges: [] },
     [data, viewMode, isEngineer, filters, selectedNodeId],
   );
+
+  // Active flow for export (mirrors buildFlow's logic)
+  const activeFlow = useMemo(
+    () => data?.flows.find((f) => f.id === "risk_to_artifact") ?? data?.flows[0] ?? null,
+    [data],
+  );
+
+  // Export helpers
+  const exportDateSlug = new Date().toISOString().slice(0, 10);
+  const exportMode = viewMode as ArchExportMode;
+  const exportPersona = personaMode as ArchExportPersona;
+
+  const handleCopyMermaid = useCallback(async () => {
+    if (!data) return;
+    const mmd = toMermaid(data, { mode: exportMode, persona: exportPersona, activeFlow });
+    const ok = await copyToClipboard(mmd);
+    setExportStatus(ok ? "copied" : "failed");
+  }, [data, exportMode, exportPersona, activeFlow]);
+
+  const handleDownloadSvg = useCallback(() => {
+    if (!data) return;
+    const svg = toStandaloneSvg(data, { mode: exportMode, persona: exportPersona, activeFlow });
+    downloadString(svg, `architecture-${exportMode}-${exportDateSlug}.svg`, "image/svg+xml");
+  }, [data, exportMode, exportPersona, activeFlow, exportDateSlug]);
+
+  const handleDownloadPng = useCallback(async () => {
+    if (!data) return;
+    const svg = toStandaloneSvg(data, { mode: exportMode, persona: exportPersona, activeFlow });
+    const ok = await downloadSvgAsPng(svg, `architecture-${exportMode}-${exportDateSlug}.png`);
+    if (!ok) setExportStatus("png-failed");
+  }, [data, exportMode, exportPersona, activeFlow, exportDateSlug]);
 
   // Selected node + its layer
   const selectedNode = useMemo<ArchNode | null>(
@@ -315,6 +372,45 @@ export default function Architecture() {
             <RefreshCw className={`mr-2 h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
             Refresh
           </Button>
+
+          {/* Export dropdown */}
+          {data && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Download className="h-4 w-4" />
+                  Export
+                  <ChevronDown className="h-3 w-3 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Export diagram</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleCopyMermaid}>
+                  {exportStatus === "copied" ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                  {exportStatus === "copied"
+                    ? "Copied!"
+                    : exportStatus === "failed"
+                    ? "Copy failed"
+                    : "Copy Mermaid"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleDownloadSvg}>
+                  <Download className="h-4 w-4" />
+                  Download SVG
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleDownloadPng}>
+                  <Download className="h-4 w-4" />
+                  {exportStatus === "png-failed"
+                    ? "PNG failed — try SVG"
+                    : "Download PNG"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 

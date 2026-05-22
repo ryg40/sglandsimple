@@ -1,8 +1,35 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–12, 13, 15–17 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 mostly done (export/docs/verify remaining). Stage 19 auth/RBAC code complete with Basic-mode integrated verification green. Stage 20 standup substantial slice done (identity/proposals/agent context/trace done; approval/RBAC/full rebuilt-stack verify remaining). Stages 21–22 all TBD. Stage 5 SHELVED.**
-Work branch: `main`; latest observed HEAD before current work: `39816e0` (`docs: add S19.logout.1 task + update progress/coordination for logout feature`).
+**Stages 0–2, 4, 6–20, and 22 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
+Work branch: `main`; latest observed HEAD before current work: `1ab00d7` (`docs: reconcile S19 and S20 status`).
+
+## Session 2026-05-22 (pi orchestrator) — Stage 22 completion + Stage 18 closeout
+
+Closed all Stage-22 tasks and the remaining Stage-18 architecture tasks while also carrying forward the already-dirty Stage-20 completion work.
+
+**S22.chat.1 / S22.chat.2.** Added `web/src/components/chat-assistant.tsx` as the shared assistant surface. `/chat` now renders a polished dashboard-style focused workspace with navy/amber/teal hero, prompt chips, insight cards, context rail, upgraded transcript cards, and a composer that preserves normal chat + Ask Data. `web/src/App.tsx` renders a compact bottom assistant launcher on every non-`/chat` route; it expands into a styled dialog with quick prompts, transcript, Ask Data, and a link to the focused chat page.
+
+**S22.wrangler.1.** `web/src/routes/wrangler.tsx` and `web/src/lib/pipeline.ts` now track field availability across successive stages. Later stages use prior successful preview fields when available, fall back to static output inference, include `$group` accumulator outputs and `$project` aliases, clear downstream previews after upstream edits, and display stale field selections with destructive styling/warnings.
+
+**S22.brand.1.** Sidebar top-left mark now uses a Vite-managed banner asset at `web/src/assets/d6057657-40c7-4112-85fa-06322881a692.png`, with modern cropped expanded/collapsed sizing and `alt="LanGarland Fleet Dispatch"`. Added `web/src/vite-env.d.ts` for Vite asset typing.
+
+**S18.export/docs/verify.** `/architecture` now has an Export menu for Mermaid copy plus standalone SVG/PNG downloads (`web/src/lib/arch-export.ts`) with title/timestamp/mode/legend. Architecture runbook links deep-link to `/docs?doc=...`; the known-unknowns panel links to the architecture inventory template; `/docs` initializes from that query parameter.
+
+**Verification.** `python3 -m py_compile mcp/*.py web/*.py scripts/*.py` passed. `cd web && npm run build` passed (chunk-size warning only). `scripts/smoke_wrangler.sh`, `scripts/smoke_ask_data.sh`, `scripts/smoke_auth.sh`, and `scripts/smoke_standup_ws.py` passed.
+
+
+## Session 2026-05-22 (pi agent) — Stage 20 completion (RBAC + HITL approval tray)
+
+Closed out the four remaining Stage-20 tasks (S20.auth.1, S20.approval.1, S20.verify.1, S20.verify.2).
+
+**S20.auth.1 — RBAC.** Added `Capability.CAN_APPROVE_STANDUP` (`canApproveStandupActions`, granted to `admin`) in `web/auth.py` + mirrored in `web/src/components/auth-provider.tsx`. Standup websocket now requires a resolved Stage-19 identity to join (closes unauthenticated clients with `1008` unless `AUTH_MODE=disabled`); snapshot proxy guarded by `require_user`; approve/reject/edit gated on the approver capability server-side (`forbidden` error otherwise). Presence carries a `can_approve` flag.
+
+**S20.approval.1 — HITL approval tray.** `web/standup_ws.py`: capability-gated `proposal.approve`/`reject` + new `proposal.edit`; on approve, `_apply_proposal_dry_run` re-validates staged Jira edits via Stage-16 `jira_validate_staged` but never calls live apply (suppressed by `STANDUP_DRY_RUN_ONLY`). `web/standup_store.py`: `update_proposal_status` records actor/decided_at/dry_run_only/applied + validation `apply_result`; new `edit_proposal_payload` shallow-merges a dry-run payload patch on still-proposed proposals. Frontend: `StandupChat` surfaces live proposals + summarize/approve/reject controls to the parent via `onControlsChange`; `/standup` renders a live approval tray (status/validation badges, Approve/Reject via `DisabledWithTooltip`, Summarize button), replacing the old static preview tray. Header shows `approver`/`read-only` badge.
+
+**Verification.** `cd web && npm run build` clean (only pre-existing chunk warning). `python3 -m py_compile web/*.py scripts/smoke_standup_ws.py` OK. Rebuilt web container. `scripts/smoke_standup_ws.py` rewritten to authenticate two clients via Basic Auth seeded POC users and assert the full gated path — green: two-client join/chat + extraction, dry-run summarize persistence, **viewer approve → forbidden**, **admin approve → approved (actor recorded, applied=false)**, snapshot persistence. Also confirmed: snapshot 401-without-auth / 200-with-auth, unauthenticated ws connect rejected with 1008. `scripts/smoke_auth.sh` no regression (83/0/3). No new env vars (reused `STANDUP_DRY_RUN_ONLY`). Note: verification used POC password `changeme-poc` against `perm/auth/users.json` (gitignored).
+
+**Files:** `web/auth.py`, `web/standup_ws.py`, `web/standup_store.py`, `web/src/components/auth-provider.tsx`, `web/src/components/standup-chat.tsx`, `web/src/routes/standup.tsx`, `scripts/smoke_standup_ws.py`, `docs/standup.md`, `IMPLEMENT.md`, `progress.md`.
 
 ## Session 2026-05-22 (pi agent) — S19 auth login hotfix
 

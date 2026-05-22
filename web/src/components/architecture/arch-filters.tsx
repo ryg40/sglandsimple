@@ -189,9 +189,15 @@ export function KnownUnknownsPanel({ graph, focusNode }: KnownUnknownsProps) {
         Known unknowns
         <Badge variant="outline" className="ml-auto font-mono">{totalTbd}</Badge>
       </h3>
-      <p className="mb-3 text-[11px] text-muted-foreground">
+      <p className="mb-2 text-[11px] text-muted-foreground">
         Meta fields still marked TBD — these need to be populated.
       </p>
+      <a
+        href="/docs?doc=docs/architecture-inventory-template"
+        className="mb-3 inline-flex items-center gap-1 text-[11px] font-medium text-[var(--chart-2)] hover:underline"
+      >
+        Architecture inventory capture form →
+      </a>
 
       {entries.length === 0 ? (
         <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">

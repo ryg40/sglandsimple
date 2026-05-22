@@ -12,9 +12,10 @@ Update this table when you start/finish. One owner per stage.
 | 13 (token cleanup) | pi agent | main tree | **COMPLETE** — committed `fdd3c02` |
 | 15 (wrangler bulk projection + code view, ask_data deadline) | pi agent | main tree | **COMPLETE** — committed `064af8d` |
 | 3 (SSE transport) | docs-wiki agent | main tree | landed; manual external-client smoke pending |
-| 18 (architecture diagram v2: discovery through filter) | architecture-v2 orchestrator | main tree | **DONE** — Still open: S18.export.1, S18.docs.1, S18.verify.1 |
-| 19 (web auth/RBAC) | pi agent | main tree | **code COMPLETE / verify partial** — admin diagnostics page implemented; S19.verify.1 still needs full smoke/manual UI gating. |
-| 20 (standup Jira cockpit) | pi agent | main tree | **substantial slice DONE** — identity, agent template context, proposal persistence/staging, and trace bubble implemented. Still open: S20.approval.1, auth.1, verify.1/2. |
+| 18 (architecture diagram v2) | pi orchestrator | main tree | **COMPLETE** — export/docs/verify closed |
+| 19 (web auth/RBAC) | pi agent | main tree | **COMPLETE** — auth/RBAC + admin diagnostics verified |
+| 20 (standup Jira cockpit) | pi agent | main tree | **COMPLETE** — RBAC + HITL approval tray + websocket smoke verified |
+| 22 (UX/chat polish + Wrangler derived fields) | pi orchestrator | main tree | **COMPLETE** — chat, global assistant, Wrangler derived fields, banner |
 | 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user |
 
 > **Single agent working the main tree.** The parallel agent sessions have completed. All work is committed on `stage-14-docs-wiki`. Follow the IMPLEMENT.md commit protocol below for any new edits.

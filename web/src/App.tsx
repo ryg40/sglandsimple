@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Topbar } from "@/components/topbar";
 import { AuthProvider } from "@/components/auth-provider";
 import { RequireCapability, Capability } from "@/components/auth-provider";
 import { Forbidden } from "@/components/forbidden";
+import { GlobalAssistant } from "@/components/chat-assistant";
 import Overview from "@/routes/overview";
 import Chat from "@/routes/chat";
 import Sheet from "@/routes/sheet";
@@ -19,6 +20,9 @@ import AuthAdmin from "@/routes/auth-admin";
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
+  const { pathname } = useLocation();
+  const showGlobalAssistant = pathname !== "/chat";
+
   return (
     // AuthProvider is outside TooltipProvider so Topbar/Sidebar can call useAuth().
     // It wraps the full app tree — including AppSidebar and Topbar — so that
@@ -29,7 +33,7 @@ export default function App() {
           <AppSidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
           <div className="flex min-w-0 flex-1 flex-col">
             <Topbar />
-            <main className="flex-1 overflow-auto">
+            <main className={showGlobalAssistant ? "flex-1 overflow-auto pb-24" : "flex-1 overflow-auto"}>
               <Routes>
                 {/* Open to all authenticated (and unauthenticated in disabled/trusted_network mode) */}
                 <Route path="/" element={<Overview />} />
@@ -80,6 +84,7 @@ export default function App() {
                 <Route path="/forbidden" element={<Forbidden />} />
               </Routes>
             </main>
+            {showGlobalAssistant && <GlobalAssistant />}
           </div>
         </div>
       </TooltipProvider>

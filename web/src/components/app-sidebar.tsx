@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { useCollections } from "@/lib/queries";
 import { useAuth, Capability } from "@/components/auth-provider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import bannerMark from "@/assets/d6057657-40c7-4112-85fa-06322881a692.png";
 
 interface NavItem {
   to: string;
@@ -83,11 +84,14 @@ export function AppSidebar({
         collapsed ? "w-16" : "w-60"
       )}
     >
-      <div className="flex h-14 items-center gap-2 px-3">
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold">
-          LG
+      <div className="flex h-16 items-center gap-2 px-3">
+        <div className={cn("shrink-0 overflow-hidden rounded-xl border border-sidebar-border bg-sidebar-accent shadow-sm", collapsed ? "size-10" : "h-11 w-36")}>
+          <img
+            src={bannerMark}
+            alt="LanGarland Fleet Dispatch"
+            className="h-full w-full object-cover"
+          />
         </div>
-        {!collapsed && <span className="font-semibold tracking-tight">LanGarland</span>}
         <button
           onClick={onToggle}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}

@@ -85,7 +85,7 @@ export function ArchDrawer({ node, layer, concerns, isEngineer, onClose }: ArchD
         {/* Runbook link */}
         {hasRunbook && (
           <a
-            href={`/docs/${runbookSlug}`}
+            href={`/docs?doc=${encodeURIComponent(String(runbookSlug))}`}
             className="flex items-center gap-1.5 text-xs font-medium text-[var(--chart-2)] hover:underline"
           >
             <ExternalLink className="h-3.5 w-3.5" />

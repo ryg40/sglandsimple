@@ -1,32 +1,37 @@
 import { useMemo, useState } from "react";
-import { Activity, Bot, ChevronDown, ChevronUp, Link2, Radio, ShieldCheck, UsersRound } from "lucide-react";
+import { Activity, Bot, Check, ChevronDown, ChevronUp, Link2, Radio, ShieldCheck, Sparkles, UsersRound, X } from "lucide-react";
 import { JiraEditableGrid } from "@/components/jira-editable-grid";
-import { StandupChat, type StandupAssociation, type StandupTraceState } from "@/components/standup-chat";
+import {
+  StandupChat,
+  type StandupAssociation,
+  type StandupControls,
+  type StandupProposal,
+  type StandupTraceState,
+} from "@/components/standup-chat";
+import { Capability, DisabledWithTooltip, useAuth } from "@/components/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConnectors } from "@/lib/queries";
 
-const PROPOSAL_PREVIEWS = [
-  {
-    title: "Capture blocker follow-up",
-    target: "Jira proposal",
-    status: "dry-run preview",
-    detail: "Turn selected standup notes into a task or bug through the dry-run Standup proposal flow."
-  },
-  {
-    title: "Associate service context",
-    target: "Link proposal",
-    status: "pending agent",
-    detail: "Parse Jira, Confluence, GitHub, ServiceNow, Archer, and Snowflake links from chat messages.",
-  },
-];
-
 const GATES = [
-  { label: "Standup page apply", value: "disabled", variant: "outline" as const, detail: "Embedded Explorer can stage/validate, but Apply stays off here until approval/RBAC is wired." },
-  { label: "Standup dry-run", value: "enforced", variant: "success" as const, detail: "Agent suggestions and proposal previews are dry-run only from this UI slice." },
+  { label: "Proposal approval", value: "RBAC gated", variant: "success" as const, detail: "Approve/Reject in the tray require the canApproveStandupActions capability (admin); others are read-only." },
+  { label: "Standup dry-run", value: "enforced", variant: "success" as const, detail: "Approving a proposal validates staged Jira edits only; STANDUP_DRY_RUN_ONLY suppresses live apply." },
   { label: "Jira live writes", value: "external gate", variant: "warning" as const, detail: "Production writes still require Stage 16 validation/apply plus JIRA_WRITES_ENABLED outside Standup." },
 ];
+
+function proposalStatusVariant(status: string) {
+  if (status === "approved") return "success" as const;
+  if (status === "rejected") return "destructive" as const;
+  return "warning" as const;
+}
+
+function validationLabel(proposal: StandupProposal): string | null {
+  const vs = proposal.validation_state;
+  if (!vs || typeof vs !== "object") return null;
+  const state = (vs as Record<string, unknown>).state;
+  return typeof state === "string" ? state : null;
+}
 
 function connectorStatus(connector: any) {
   return String(connector?.health?.status ?? connector?.summary?.status ?? connector?.status ?? "unknown");
@@ -58,6 +63,10 @@ export default function Standup() {
   const [linkCount, setLinkCount] = useState(0);
   const [associations, setAssociations] = useState<StandupAssociation[]>([]);
   const [trace, setTrace] = useState<StandupTraceState | null>(null);
+  const [controls, setControls] = useState<StandupControls | null>(null);
+  const { hasCapability } = useAuth();
+  const canApprove = hasCapability(Capability.CAN_APPROVE_STANDUP);
+  const proposals = controls?.proposals ?? [];
   const connectors = useConnectors();
   const connectorRows = connectors.data?.connectors ?? [];
   const healthyConnectors = useMemo(
@@ -82,7 +91,9 @@ export default function Standup() {
         <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs text-muted-foreground">
           <UsersRound className="size-4 text-primary" />
           <span>Session: daily-standup</span>
-          <Badge variant="success" className="text-[10px]">admin preview</Badge>
+          <Badge variant={canApprove ? "success" : "outline"} className="text-[10px]">
+            {canApprove ? "approver" : "read-only"}
+          </Badge>
         </div>
       </div>
 
@@ -244,30 +255,92 @@ export default function Standup() {
             onAssociationCountChange={setLinkCount}
             onAssociationsChange={setAssociations}
             onTraceChange={setTrace}
+            onControlsChange={setControls}
           />
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Bot className="size-4 text-primary" />
-                Agent suggestions
-              </CardTitle>
-              <CardDescription>Read-only preview tray for dry-run follow-up proposals.</CardDescription>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Bot className="size-4 text-primary" />
+                    Approval tray
+                  </CardTitle>
+                  <CardDescription>
+                    {canApprove
+                      ? "Approve or reject dry-run proposals; approval validates staged Jira edits only."
+                      : "Read-only: approving requires the canApproveStandupActions capability."}
+                  </CardDescription>
+                </div>
+                <DisabledWithTooltip
+                  enabled={Boolean(controls?.canSend) && !controls?.summarizing}
+                  message={controls?.canSend ? "Summarizing…" : "Live websocket not connected"}
+                >
+                  <Button size="sm" variant="outline" onClick={() => controls?.summarize()}>
+                    <Sparkles className="size-4" />
+                    {controls?.summarizing ? "Summarizing…" : "Summarize"}
+                  </Button>
+                </DisabledWithTooltip>
+              </div>
             </CardHeader>
             <CardContent className="space-y-3 pt-0">
-              {PROPOSAL_PREVIEWS.map((proposal) => (
-                <div key={proposal.title} className="rounded-lg border bg-muted/20 p-3 text-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="font-medium">{proposal.title}</div>
-                    <Badge variant="warning" className="text-[10px]">{proposal.status}</Badge>
-                  </div>
-                  <div className="mt-1 text-xs font-medium text-primary">{proposal.target}</div>
-                  <p className="mt-1 text-xs text-muted-foreground">{proposal.detail}</p>
+              {proposals.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-center text-xs text-muted-foreground">
+                  No proposals yet. Capture standup notes, then run <span className="font-medium">Summarize</span> to
+                  generate dry-run follow-up proposals.
                 </div>
-              ))}
+              ) : (
+                proposals.map((proposal) => {
+                  const status = String(proposal.status);
+                  const decided = status !== "proposed";
+                  const validation = validationLabel(proposal);
+                  return (
+                    <div key={proposal.id} className="rounded-lg border bg-muted/20 p-3 text-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 font-medium">{proposal.title ?? proposal.type ?? "Proposal"}</div>
+                        <Badge variant={proposalStatusVariant(status)} className="text-[10px] capitalize">{status}</Badge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+                        {proposal.target_service && <Badge variant="outline" className="capitalize">{proposal.target_service}</Badge>}
+                        {proposal.dry_run && <Badge variant="outline">dry-run</Badge>}
+                        {validation && <Badge variant="outline">{validation}</Badge>}
+                      </div>
+                      {proposal.rationale && (
+                        <p className="mt-2 text-xs text-muted-foreground">{proposal.rationale}</p>
+                      )}
+                      {proposal.approval?.actor && (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {status} by {proposal.approval.actor}
+                          {proposal.approval.applied === false ? " · dry-run only (not applied)" : ""}
+                        </p>
+                      )}
+                      <div className="mt-2 flex gap-2">
+                        <DisabledWithTooltip
+                          enabled={canApprove && !decided && Boolean(controls?.canSend)}
+                          message={!canApprove ? "Requires canApproveStandupActions" : !controls?.canSend ? "Live websocket not connected" : "Already decided"}
+                        >
+                          <Button size="sm" variant="outline" onClick={() => controls?.approve(proposal.id)}>
+                            <Check className="size-3.5" />
+                            Approve
+                          </Button>
+                        </DisabledWithTooltip>
+                        <DisabledWithTooltip
+                          enabled={canApprove && !decided && Boolean(controls?.canSend)}
+                          message={!canApprove ? "Requires canApproveStandupActions" : !controls?.canSend ? "Live websocket not connected" : "Already decided"}
+                        >
+                          <Button size="sm" variant="ghost" onClick={() => controls?.reject(proposal.id)}>
+                            <X className="size-3.5" />
+                            Reject
+                          </Button>
+                        </DisabledWithTooltip>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
               <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 p-3 text-xs text-success">
                 <ShieldCheck className="size-4" />
-                External writes require existing Jira gates and future approval policy.
+                Approvals are dry-run only; live external writes still require Stage 16 apply + JIRA_WRITES_ENABLED.
               </div>
             </CardContent>
           </Card>

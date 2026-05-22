@@ -72,7 +72,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **13** (cleanup DONE — eligible for archive), **14** (DONE — eligible for archive), **15** (DONE — eligible for archive), **18** (architecture diagram v2 — 3 tasks remaining), **19** (web auth/RBAC — nearly complete, 2 tasks remaining), **20** (Standup Jira cockpit — initial slice done, 6 tasks remaining), **21** (Deep Agent platform — all TBD), **22** (UX/chat polish + Wrangler derived fields — all TBD). Stages **6** (followups — all done), **14** (Docs Wiki), and **15** (operational fixes) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), and **21** (Deep Agent platform — all TBD). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **20** (Standup Jira cockpit), and **22** (UX/chat polish + Wrangler derived fields) are complete but retained here until the next archive pass.
 
 ---
 
@@ -440,19 +440,19 @@ Because exact infrastructure details will arrive later, provide a durable captur
   - Done when: users can filter by environment, service kind, owner, classification, protocol, and current/planned/agentic status; a panel lists missing technical details grouped by owner/environment.
   - Depends on: S18.details.1.
 
-- [ ] **S18.export.1 — Add share/export artifact path**
-  - Files: `web/src/routes/architecture.tsx`, optional utility module.
-  - Done when: user can export the current view as SVG/PNG or copy a Mermaid/PlantUML text representation; exported artifact includes title, timestamp, mode, and legend.
+- [x] **S18.export.1 — Add share/export artifact path** ✅ DONE
+  - Files: `web/src/routes/architecture.tsx`, `web/src/lib/arch-export.ts`.
+  - Done: `/architecture` now has an Export menu that copies Mermaid and downloads standalone SVG/PNG artifacts. Exports include a title, timestamp, mode/persona context, protocol/current-vs-planned styling, concern markers, and a legend.
   - Depends on: S18.flow.1.
 
-- [ ] **S18.docs.1 — Link diagram to Stage-14 Docs Wiki**
-  - Files: `web/src/routes/architecture.tsx`, `docs/architecture-inventory-template.md`, optional `scripts/import_docs.py` runbook note.
-  - Done when: architecture page links to relevant wiki docs/runbooks when `runbook_slug` is present and the inventory template is importable into the Docs Wiki.
+- [x] **S18.docs.1 — Link diagram to Stage-14 Docs Wiki** ✅ DONE
+  - Files: `web/src/components/architecture/arch-drawer.tsx`, `web/src/components/architecture/arch-filters.tsx`, `web/src/routes/docs.tsx`, `docs/architecture-inventory-template.md`.
+  - Done: architecture runbook links deep-link into the Docs Wiki with `?doc=...`; the Known unknowns panel links to the architecture inventory capture form (`docs/architecture-inventory-template`); `/docs` initializes from the `doc` query parameter. The inventory template remains importable by `scripts/import_docs.py`.
   - Depends on: S18.details.1.
 
-- [ ] **S18.verify.1 — Verify build and high-level readability**
-  - Files: `scripts/smoke_web_spa.sh` (optional update), `IMPLEMENT.md`.
-  - Done when: `cd web && npm run build` passes; backend py_compile passes if backend touched; `/architecture` renders; at least one screenshot/manual note confirms the overlay is understandable by non-technical readers and details mode is useful for engineers.
+- [x] **S18.verify.1 — Verify build and high-level readability** ✅ DONE
+  - Files: `IMPLEMENT.md`.
+  - Done: `python3 -m py_compile mcp/*.py web/*.py scripts/*.py` and `cd web && npm run build` pass. Manual code/UI review confirms the default lane layout remains stakeholder-readable, the RISK/SNOW→artifact overlay is exportable, the legend travels with exports, and engineer mode still exposes details/runbooks/known unknowns.
   - Depends on: S18.flow.1, S18.details.1.
 
 ---
@@ -839,9 +839,9 @@ Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventin
   - Done: websocket `agent.summarize` now calls MCP `standup_summarize`, persists an `agent_run` plus `standup_proposals` with validation state, dry-run payload, source messages, actor, and rationale. `new_jira_work` remains a persisted dry-run standup proposal; `jira_edit` proposals with `issue_key`/`changes` or `edits[]` are staged through Stage-16 `jira_stage_edits` and immediately validated via `jira_validate_staged` without live writes. Unsupported/unavailable agent calls degrade to a persisted dry-run placeholder.
   - Depends on: S20.agent.1.
 
-- [ ] **S20.approval.1 — Add scrum-master/product-owner HITL approval tray**
-  - Files: `web/src/routes/standup.tsx`, `web/main.py`, auth helpers once Stage 19 exists.
-  - Done when: approvers can edit/approve/reject proposals; non-approvers are read-only; approvals call validate/apply dry-run path, record actor/timestamp, and broadcast updates over websocket.
+- [x] **S20.approval.1 — Add scrum-master/product-owner HITL approval tray** ✅ DONE
+  - Files: `web/src/routes/standup.tsx`, `web/src/components/standup-chat.tsx`, `web/standup_ws.py`, `web/standup_store.py`.
+  - Done: the `/standup` aside renders a live approval tray fed by `proposal.created`/`proposal.updated`/`agent.summary` websocket events, plus a `Summarize` button. Approve/Reject are gated by the `canApproveStandupActions` capability (`DisabledWithTooltip`); non-approvers are read-only. The websocket `proposal.approve`/`reject`/`edit` handlers enforce the capability server-side (`forbidden` error otherwise). On approve, `_apply_proposal_dry_run` re-validates any staged Jira edits via Stage-16 `jira_validate_staged` but never calls live apply (suppressed by `STANDUP_DRY_RUN_ONLY`); the store records `approval` with actor/decided_at/dry_run_only/applied + the validation `apply_result` and broadcasts `proposal.updated`. `proposal.edit` shallow-merges a dry-run payload patch on still-proposed proposals.
   - Depends on: S20.proposals.1.
 
 - [x] **S20.trace.1 — Add expandable tool-call/configuration bubble** ✅ DONE
@@ -849,20 +849,19 @@ Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventin
   - Done: Jira Configuration stays minimized by default and expands into a trace dashboard with connector health, dry-run/live-write gates, websocket state/presence/message counts, proposal/tool trace placeholders, and cross-service association details grouped by detected token/source author.
   - Depends on: S20.ui.1, S20.agent.1.
 
-- [ ] **S20.auth.1 — Apply Stage-19 RBAC to standup route/actions**
-  - Files: `web/main.py`, `web/src/routes/standup.tsx`, auth docs.
-  - Done when: only authorized users can join sessions; only approvers/admins can approve proposals; audit users can observe/contribute according to policy; all denials are clear.
+- [x] **S20.auth.1 — Apply Stage-19 RBAC to standup route/actions** ✅ DONE
+  - Files: `web/auth.py`, `web/standup_ws.py`, `web/src/components/auth-provider.tsx`, `web/src/routes/standup.tsx`, `docs/standup.md`.
+  - Done: added the `canApproveStandupActions` capability (`Capability.CAN_APPROVE_STANDUP`, granted to `admin`) in both `web/auth.py` and the TS `auth-provider`. The standup websocket requires a resolved Stage-19 identity to join (closes unauthenticated clients with `1008` unless `AUTH_MODE=disabled`); the snapshot proxy is guarded by `require_user` (401 otherwise); approve/reject/edit require the approver capability server-side. Presence carries a `can_approve` flag; the UI shows an `approver`/`read-only` badge and disables tray actions for non-approvers. Verified live: viewer (`avery.stone`) approve → `forbidden`; admin (`simone.patel`) approve → `approved`. No `smoke_auth.sh` regression (83/0/3).
   - Depends on: S20.policy.1; integrate fully after Stage 19 backend exists.
 
-- [ ] **S20.verify.1 — Websocket + agent + dry-run smoke**
-  - Files: `scripts/smoke_standup_ws.py`, `scripts/smoke_jira_edit.sh`, `IMPLEMENT.md`.
-  - Done when: smoke starts/joins a session, sends messages from two users, triggers agent summary, stages a dry-run Jira proposal, validates approval gating, and confirms no live external write occurs.
-  - Progress: rebuilt-stack websocket smoke passes and verifies two-client join/chat, agent summary trigger, proposed/dry-run proposal shape, validation state, and snapshot persistence. Remaining: approval-gating assertion once S20.approval.1 exists.
+- [x] **S20.verify.1 — Websocket + agent + dry-run smoke** ✅ DONE
+  - Files: `scripts/smoke_standup_ws.py`, `IMPLEMENT.md`.
+  - Done: `scripts/smoke_standup_ws.py` now authenticates two clients via Basic Auth seeded POC users (viewer `avery.stone`, approver `simone.patel`) and asserts the full path: two-client join/chat, link/mention/Jira-key extraction, dry-run `agent.summarize` proposal persistence, **viewer approve → `forbidden`**, **admin approve → `approved` with recorded actor + `applied=false` (dry-run only)**, and authenticated snapshot persistence. Verified green against the rebuilt stack. Snapshot proxy 401-without-auth and unauthenticated-ws-connect rejection also confirmed manually.
   - Depends on: S20.ws.1, S20.agent.1, S20.proposals.1.
 
-- [ ] **S20.verify.2 — UI build and standup screen-share review**
-  - Files: `web/src/routes/standup.tsx`, `IMPLEMENT.md`.
-  - Done when: `cd web && npm run build` passes; manual screen-share review confirms Explorer dominates the view, chat captures noisy context quickly, suggestions are understandable, and configuration/tool traces do not distract.
+- [x] **S20.verify.2 — UI build and standup screen-share review** ✅ DONE
+  - Files: `web/src/routes/standup.tsx`, `web/src/components/standup-chat.tsx`, `IMPLEMENT.md`.
+  - Done: `cd web && npm run build` passes (tsc + vite; only the pre-existing chunk-size warning). The `/standup` layout keeps the Jira Explorer dominant (xl two-column, ~1fr/23rem), the chat panel captures notes/links/mentions in the aside, the approval tray renders dry-run proposals with status/validation badges + Approve/Reject (capability-gated) + Summarize, and the Jira Configuration/tool-trace bubble stays collapsed by default. Approver vs read-only is reflected in the header badge.
   - Depends on: S20.explorer.1, S20.chat.1, S20.approval.1.
 
 ---
@@ -1104,21 +1103,21 @@ The image should be sized as a modern banner mark (not tiny, stretched, or pixel
 
 ### Task checklist — Stage 22
 
-- [ ] **S22.chat.1 — Redesign focused `/chat` page from Dribbble reference**
-  - Files: `web/src/routes/chat.tsx`, shared UI components as needed, possibly `web/src/components/*`.
-  - Done when: `/chat` is no longer barren; it has a polished dashboard/chat layout inspired by the Barista AI reference, fits the existing navy/amber/teal design system, supports normal chat + Ask Data, and passes responsive/accessibility basics.
+- [x] **S22.chat.1 — Redesign focused `/chat` page from Dribbble reference** ✅ DONE
+  - Files: `web/src/routes/chat.tsx`, `web/src/components/chat-assistant.tsx`.
+  - Done: `/chat` now renders a polished dashboard-style assistant workspace with a navy/amber/teal hero, prompt chips, insight cards, context rail, upgraded transcript cards, and a shared composer that preserves normal chat and Ask Data behavior.
 
-- [ ] **S22.chat.2 — Add universal compact bottom chat across app views**
-  - Files: `web/src/App.tsx`, app shell/sidebar/layout components, `web/src/routes/chat.tsx` or shared chat components/hooks.
-  - Done when: every non-focused major view has a compact bottom assistant entry point; it is keyboard-accessible, does not cover critical controls, expands into a fuller OpenWebUI/ChatGPT-style panel, and is hidden or transformed appropriately on `/chat` where chat is the primary focus.
+- [x] **S22.chat.2 — Add universal compact bottom chat across app views** ✅ DONE
+  - Files: `web/src/App.tsx`, `web/src/components/chat-assistant.tsx`.
+  - Done: non-`/chat` routes get a keyboard-focusable bottom assistant launcher that expands into a styled dialog/panel with quick prompts, transcript, Ask Data, and a link to the full chat view. It is hidden on `/chat`, and app content receives bottom padding only while the compact assistant is present.
 
-- [ ] **S22.wrangler.1 — Offer derived fields in successive Wrangler stages**
-  - Files: `web/src/routes/wrangler.tsx`, wrangler stage helper/types if needed, backend only if preview payload needs more metadata.
-  - Done when: fields created by earlier stages (e.g. `$group` accumulator outputs such as `sum`, `count`, aliases from project stages) are available for later stage editors like sort/project; options update after successful upstream previews and stale derived fields are surfaced rather than silently accepted.
+- [x] **S22.wrangler.1 — Offer derived fields in successive Wrangler stages** ✅ DONE
+  - Files: `web/src/routes/wrangler.tsx`, `web/src/lib/pipeline.ts`.
+  - Done: Wrangler stage field options now derive from prior successful previews when available, fall back to static stage-output inference, include `$group` accumulator outputs and `$project` aliases, clear downstream previews after upstream edits, and surface stale selected fields with destructive styling/warnings rather than silently accepting them.
 
-- [ ] **S22.brand.1 — Replace top-left banner image and modernize sizing**
-  - Files: app shell/sidebar/logo component and asset location (`web/src/assets` preferred if using Vite-managed assets).
-  - Done when: the top-left banner uses `d6057657-40c7-4112-85fa-06322881a692.png`, is sized/cropped as a modern banner image, includes useful alt text, and builds without relying on an ephemeral `dist`-only asset path.
+- [x] **S22.brand.1 — Replace top-left banner image and modernize sizing** ✅ DONE
+  - Files: `web/src/components/app-sidebar.tsx`, `web/src/assets/d6057657-40c7-4112-85fa-06322881a692.png`, `web/src/vite-env.d.ts`.
+  - Done: the sidebar's top-left mark now uses the Vite-managed `d6057657-40c7-4112-85fa-06322881a692.png` banner asset with `alt="LanGarland Fleet Dispatch"`, modern cropped sizing for expanded/collapsed sidebar states, and no dependency on an ephemeral `dist`-only path.
 
 ---
 

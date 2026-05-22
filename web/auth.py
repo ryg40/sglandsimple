@@ -87,6 +87,9 @@ class Capability:
     # Read-level access to chat / Ask Data
     CAN_READ_CHAT: Final = "canReadChat"
 
+    # Stage 20: scrum-master / product-owner approval of standup proposals
+    CAN_APPROVE_STANDUP: Final = "canApproveStandupActions"
+
     # All capability values as a frozenset, useful for validation
     ALL: Final = frozenset({
         CAN_RUN_WORKFLOW,
@@ -99,6 +102,7 @@ class Capability:
         CAN_EDIT_DATA,
         CAN_VALIDATE_JIRA,
         CAN_READ_CHAT,
+        CAN_APPROVE_STANDUP,
     })
 
 
@@ -215,6 +219,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         Capability.CAN_ADMIN_AUTH,
         Capability.CAN_EDIT_DATA,
         Capability.CAN_VALIDATE_JIRA,
+        Capability.CAN_APPROVE_STANDUP,
     },
 }
 

@@ -7,7 +7,7 @@ export type StageKind = "match" | "group" | "project" | "sort" | "limit";
 
 export interface MatchClause { field: string; op: string; value: string }
 export interface Accumulator { name: string; fn: string; field: string }
-export interface ProjectClause { field: string; include: boolean }
+export interface ProjectClause { field: string; include: boolean; alias?: string }
 export interface SortClause { field: string; dir: number }
 
 export interface EditableStage {
@@ -85,8 +85,13 @@ export function compileStage(st: EditableStage): Stage {
     return { $group: g };
   }
   if (st.kind === "project") {
-    const p: Record<string, number> = {};
-    for (const c of st.projects ?? []) if (c.field) p[c.field] = c.include ? 1 : 0;
+    const p: Record<string, number | string> = {};
+    for (const c of st.projects ?? []) {
+      if (!c.field) continue;
+      const alias = c.alias?.trim();
+      if (c.include && alias) p[alias] = `$${c.field}`;
+      else p[c.field] = c.include ? 1 : 0;
+    }
     return { $project: p };
   }
   if (st.kind === "sort") {
@@ -139,7 +144,12 @@ export function decompile(stages: Stage[]): EditableStage[] {
       out.push(st);
     } else if (key === "$project") {
       const st = newStage("project");
-      st.projects = Object.entries(body).map(([field, v]) => ({ field, include: !!v }));
+      st.projects = Object.entries(body).map(([field, v]) => {
+        if (typeof v === "string" && v.startsWith("$")) {
+          return { field: v.replace(/^\$/, ""), include: true, alias: field };
+        }
+        return { field, include: !!v };
+      });
       out.push(st);
     } else if (key === "$sort") {
       const st = newStage("sort");
@@ -152,4 +162,53 @@ export function decompile(stages: Stage[]): EditableStage[] {
     }
   }
   return out;
+}
+
+function uniq(fields: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of fields) {
+    const field = raw.trim();
+    if (!field || seen.has(field)) continue;
+    seen.add(field);
+    out.push(field);
+  }
+  return out;
+}
+
+export function selectedInputFields(st: EditableStage): string[] {
+  if (st.kind === "match") return uniq((st.clauses ?? []).map((c) => c.field));
+  if (st.kind === "group") {
+    return uniq([
+      ...(st.groupKeys ?? []),
+      ...(st.accs ?? []).filter((a) => a.fn !== "count").map((a) => a.field),
+    ]);
+  }
+  if (st.kind === "project") return uniq((st.projects ?? []).map((c) => c.field));
+  if (st.kind === "sort") return uniq((st.sorts ?? []).map((c) => c.field));
+  return [];
+}
+
+export function inferStageOutputFields(inputFields: string[], st: EditableStage): string[] {
+  const input = uniq(inputFields);
+  if (st.kind === "group") {
+    const inputSet = new Set(input);
+    return uniq([
+      ...(st.groupKeys ?? []).filter((field) => inputSet.has(field)),
+      ...(st.accs ?? [])
+        .filter((a) => a.fn === "count" || inputSet.has(a.field))
+        .map((a) => a.name || a.fn),
+    ]);
+  }
+  if (st.kind === "project") {
+    const inputSet = new Set(input);
+    const clauses = st.projects ?? [];
+    const includeOutputs = clauses
+      .filter((c) => c.include && inputSet.has(c.field))
+      .map((c) => c.alias?.trim() || c.field);
+    if (includeOutputs.length) return uniq(includeOutputs);
+    const excluded = new Set(clauses.filter((c) => !c.include).map((c) => c.field));
+    return input.filter((field) => !excluded.has(field));
+  }
+  return input;
 }

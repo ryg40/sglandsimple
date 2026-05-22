@@ -48,12 +48,66 @@ export type StandupTraceState = {
   associationCount: number;
 };
 
+export type StandupProposalApproval = {
+  actor?: string;
+  decision?: string;
+  decided_at?: string;
+  dry_run_only?: boolean;
+  applied?: boolean;
+  apply_result?: Record<string, unknown>;
+} | null;
+
+export type StandupProposal = {
+  id: string;
+  type?: string;
+  target_service?: string;
+  title?: string;
+  rationale?: string;
+  status: "proposed" | "approved" | "rejected" | string;
+  dry_run?: boolean;
+  dry_run_payload?: Record<string, unknown>;
+  validation_state?: Record<string, unknown>;
+  source_message_ids?: string[];
+  confidence?: number | null;
+  approval?: StandupProposalApproval;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+/** Imperative controls the parent route uses to drive the approval tray. */
+export type StandupControls = {
+  proposals: StandupProposal[];
+  /** True when a live websocket is connected and can carry actions. */
+  canSend: boolean;
+  summarize: () => void;
+  approve: (proposalId: string) => void;
+  reject: (proposalId: string) => void;
+  summarizing: boolean;
+};
+
 type StandupChatProps = {
   sessionId?: string;
   onAssociationCountChange?: (count: number) => void;
   onAssociationsChange?: (associations: StandupAssociation[]) => void;
   onTraceChange?: (trace: StandupTraceState) => void;
+  onControlsChange?: (controls: StandupControls) => void;
 };
+
+function normalizeProposal(raw: unknown): StandupProposal | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const id = record.id;
+  if (typeof id !== "string" || !id) return null;
+  return { ...(record as StandupProposal), id, status: String(record.status ?? "proposed") };
+}
+
+function mergeProposals(current: StandupProposal[], incoming: StandupProposal[]): StandupProposal[] {
+  const byId = new Map<string, StandupProposal>();
+  for (const proposal of current) byId.set(proposal.id, proposal);
+  for (const proposal of incoming) byId.set(proposal.id, { ...byId.get(proposal.id), ...proposal });
+  return Array.from(byId.values());
+}
 
 const MAX_RECONNECT_ATTEMPTS = 2;
 
@@ -249,9 +303,12 @@ export function StandupChat({
   onAssociationCountChange,
   onAssociationsChange,
   onTraceChange,
+  onControlsChange,
 }: StandupChatProps) {
   const { me } = useAuth();
   const [messages, setMessages] = useState<StandupChatMessage[]>(INITIAL_MESSAGES);
+  const [proposals, setProposals] = useState<StandupProposal[]>([]);
+  const [summarizing, setSummarizing] = useState(false);
   const [draft, setDraft] = useState("");
   const [connection, setConnection] = useState<ConnectionState>({
     status: "connecting",
@@ -319,6 +376,32 @@ export function StandupChat({
       const presenceRaw = snapshot.presence && typeof snapshot.presence === "object" ? (snapshot.presence as Record<string, unknown>) : snapshot;
       const nextPresence = normalizePresence(presenceRaw);
       if (nextPresence) setPresence(nextPresence);
+      const proposalsRaw = snapshot.proposals;
+      if (Array.isArray(proposalsRaw)) {
+        const incoming = proposalsRaw.map(normalizeProposal).filter((p): p is StandupProposal => Boolean(p));
+        setProposals((current) => mergeProposals(current, incoming));
+      }
+      return;
+    }
+
+    if (type === "agent.running") {
+      setSummarizing(true);
+      return;
+    }
+
+    if (type === "agent.summary") {
+      setSummarizing(false);
+      const proposalsRaw = payload.proposals;
+      if (Array.isArray(proposalsRaw)) {
+        const incoming = proposalsRaw.map(normalizeProposal).filter((p): p is StandupProposal => Boolean(p));
+        setProposals((current) => mergeProposals(current, incoming));
+      }
+      return;
+    }
+
+    if (type === "proposal.created" || type === "proposal.updated") {
+      const proposal = normalizeProposal(payload.proposal ?? payload);
+      if (proposal) setProposals((current) => mergeProposals(current, [proposal]));
       return;
     }
 
@@ -337,7 +420,9 @@ export function StandupChat({
     }
 
     if (type === "error") {
-      const detail = payload.message ?? payload.detail ?? "Standup websocket reported an error.";
+      setSummarizing(false);
+      const errorObj = payload.error && typeof payload.error === "object" ? (payload.error as Record<string, unknown>) : payload;
+      const detail = errorObj.message ?? errorObj.detail ?? payload.message ?? payload.detail ?? "Standup websocket reported an error.";
       setConnection({ status: "error", detail: String(detail) });
     }
   }, []);
@@ -436,6 +521,35 @@ export function StandupChat({
     reconnectAttemptRef.current = 0;
     setRetryToken((token) => token + 1);
   }
+
+  const sendEvent = useCallback((type: string, payload: Record<string, unknown>) => {
+    const socket = socketRef.current;
+    if (connection.status !== "connected" || socket?.readyState !== WebSocket.OPEN) return false;
+    try {
+      socket.send(JSON.stringify({ type, session_id: sessionId, ...payload }));
+      return true;
+    } catch {
+      return false;
+    }
+  }, [connection.status, sessionId]);
+
+  const canSend = connection.status === "connected";
+
+  const summarize = useCallback(() => {
+    if (sendEvent("agent.summarize", { trigger: "manual" })) setSummarizing(true);
+  }, [sendEvent]);
+
+  const approve = useCallback((proposalId: string) => {
+    sendEvent("proposal.approve", { proposal_id: proposalId });
+  }, [sendEvent]);
+
+  const reject = useCallback((proposalId: string) => {
+    sendEvent("proposal.reject", { proposal_id: proposalId });
+  }, [sendEvent]);
+
+  useEffect(() => {
+    onControlsChange?.({ proposals, canSend, summarize, approve, reject, summarizing });
+  }, [approve, canSend, onControlsChange, proposals, reject, summarize, summarizing]);
 
   function addMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
