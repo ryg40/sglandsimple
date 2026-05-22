@@ -1,8 +1,27 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–12, 13, 15–17 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 mostly done (export/docs/verify remaining). Stage 19 auth/RBAC ~95% done (admin.1 page remaining). Stage 20 standup initial slice done (6 tasks remaining). Stages 21–22 all TBD. Stage 5 SHELVED.**
+**Stages 0–2, 4, 6–12, 13, 15–17 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 mostly done (export/docs/verify remaining). Stage 19 auth/RBAC ~96% done (admin.1 page remaining, seed hotfix applied). Stage 20 standup initial slice done (6 tasks remaining). Stages 21–22 all TBD. Stage 5 SHELVED.**
 Work branch: `stage-14-docs-wiki`; latest push to `origin/main`: `8ef52e8` (`docs: update COORDINATION.md`).
+
+## Session 2026-05-22 (pi agent) — S19 auth login hotfix
+
+User reported web GUI login not working. Root cause had two parts:
+
+1. **`perm/auth/users.json` missing** — the auth seed script (`web/auth_seed.py`) had never been run, so `/data/auth/users.json` didn't exist inside the container. Web logs showed `auth: users file not found: /data/auth/users.json` on every request.
+2. **`auth_seed.py` not in Docker image** — `web/Dockerfile` only copied `main.py` and `auth.py`, but `auth.py` does `from auth_seed import verify_password` at runtime, causing `ModuleNotFoundError: No module named 'auth_seed'` on every login attempt (HTTP 500).
+
+**Fix:**
+- Ran `AUTH_BASIC_SEED_PASSWORD=changeme-poc AUTH_BASIC_USERS_FILE=./perm/auth/users.json python3 web/auth_seed.py` to generate the missing user credentials file (6 seeded users).
+- Added `auth_seed.py` to the Dockerfile COPY line: `COPY main.py auth.py auth_seed.py ./`
+- Rebuilt & restarted web container: `docker compose up --build -d web`
+- Verified login works: `curl -u 'simone.patel@lanGarland.com:changeme-poc' http://localhost:5452/api/architecture` → 200
+
+**Files changed:**
+- `web/Dockerfile` — added `auth_seed.py` to COPY
+- `perm/auth/users.json` — generated (gitignored, persisted via bind mount)
+
+**Follow-up:** `AUTH_BASIC_SEED_PASSWORD` is currently unset in `.env`, so the seed script defaults to `changeme-poc` with a warning. Production deployments should set this to a real secret.
 
 ## Session 2026-05-22 (pi agent) — landing S13/S15/S19/S20 + worktree cleanup
 

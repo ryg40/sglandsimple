@@ -599,6 +599,7 @@ The real internal lookup code should be isolated behind a narrow interface so it
 - [x] **S19.seed.1 — Seed deterministic Faker-style users per LDAP group/role** ✅ DONE
   - Files: `web/auth_seed.py` (new), `.env.example`, `compose.yaml`.
   - Done: 6 seeded `firstname.lastname@lanGarland.com` users covering all 4 groups (`sg_all_users`, `sg_sec_admin`, `sg_app_user`, `sg_audit_users`) plus multi-role users; passwords are POC-only via `AUTH_BASIC_SEED_PASSWORD`; compose volume mount `./perm/auth:/data/auth`. Committed `98850b3`.
+  - **Hotfix 2026-05-22:** `auth_seed.py` was missing from `web/Dockerfile` COPY line, causing `ModuleNotFoundError` at login time. Added `auth_seed.py` to the COPY. Also ran the seed script to generate the missing `perm/auth/users.json` file. Without this, all logins returned HTTP 500.
   - Depends on: S19.model.1.
 
 - [x] **S19.backend.1 — Add request identity resolution modes** ✅ DONE
