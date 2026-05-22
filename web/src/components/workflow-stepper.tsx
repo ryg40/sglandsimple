@@ -43,23 +43,23 @@ export function WorkflowStepper({ currentStep, status, artifacts = {} }: Stepper
       <div className="flex flex-col space-y-4">
         <div className="relative flex justify-between w-full">
           {/* Connector bar background */}
-          <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-slate-200 -translate-y-1/2 z-0" />
+          <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-border -translate-y-1/2 z-0" />
 
           {steps.map((s, index) => {
             const stepState = getStepStatus(index);
             const Icon = s.icon;
 
-            let bubbleColor = "bg-slate-100 text-slate-400 border-slate-200";
-            if (stepState === "completed") bubbleColor = "bg-emerald-100 text-emerald-600 border-emerald-300";
+            let bubbleColor = "bg-muted text-muted-foreground border-border";
+            if (stepState === "completed") bubbleColor = "bg-success/15 text-success border-success/40";
             else if (stepState === "running") bubbleColor = "bg-primary/10 text-primary border-primary animate-pulse";
-            else if (stepState === "interrupted") bubbleColor = "bg-amber-100 text-amber-600 border-amber-300";
-            else if (stepState === "failed") bubbleColor = "bg-rose-100 text-rose-600 border-rose-300";
+            else if (stepState === "interrupted") bubbleColor = "bg-warning/15 text-foreground border-warning/40";
+            else if (stepState === "failed") bubbleColor = "bg-destructive/10 text-destructive border-destructive/35";
 
             return (
               <div key={index} className="flex flex-col items-center select-none z-10">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <div className={`h-11 w-11 rounded-full flex items-center justify-center border-2 ${bubbleColor} bg-white shadow-sm font-semibold text-sm cursor-help`}>
+                    <div className={`h-11 w-11 rounded-full flex items-center justify-center border-2 ${bubbleColor} shadow-sm font-semibold text-sm cursor-help`}>
                       <Icon className="h-5 w-5" />
                     </div>
                   </TooltipTrigger>
@@ -71,7 +71,7 @@ export function WorkflowStepper({ currentStep, status, artifacts = {} }: Stepper
                   </TooltipContent>
                 </Tooltip>
                 <div className="text-center mt-2 max-w-[80px]">
-                  <p className="text-[10px] font-semibold text-slate-800 leading-tight truncate">{s.title}</p>
+                  <p className="text-[10px] font-semibold text-foreground leading-tight truncate">{s.title}</p>
                 </div>
               </div>
             );
@@ -86,32 +86,32 @@ export function WorkflowStepper({ currentStep, status, artifacts = {} }: Stepper
           <CardContent className="text-xs space-y-2.5 font-mono py-2.5">
             {currentStep >= 1 && artifacts.finding && (
               <div>
-                <span className="text-emerald-600 font-bold">[FINDING]</span> Severity: {artifacts.finding.severity?.toUpperCase()} | {artifacts.finding.requirement}
+                <span className="text-success font-bold">[FINDING]</span> Severity: {artifacts.finding.severity?.toUpperCase()} | {artifacts.finding.requirement}
               </div>
             )}
             {currentStep >= 2 && artifacts.epic && (
               <div>
-                <span className="text-emerald-600 font-bold">[EPIC]</span> Title: {artifacts.epic.title} ({artifacts.epic.jira_key})
+                <span className="text-success font-bold">[EPIC]</span> Title: {artifacts.epic.title} ({artifacts.epic.jira_key})
               </div>
             )}
             {currentStep >= 3 && artifacts.ticket_key && (
               <div>
-                <span className="text-emerald-600 font-bold">[TICKET]</span> Jira Ticket Key Linked: <a href="https://jira.internal" target="_blank" rel="noreferrer" className="underline text-blue-500">{artifacts.ticket_key}</a>
+                <span className="text-success font-bold">[TICKET]</span> Jira Ticket Key Linked: <a href="https://jira.internal" target="_blank" rel="noreferrer" className="underline text-secondary">{artifacts.ticket_key}</a>
               </div>
             )}
             {currentStep >= 4 && artifacts.branch_name && (
               <div>
-                <span className="text-emerald-600 font-bold">[BRANCH]</span> Code base Branch format: <code>{artifacts.branch_name}</code>
+                <span className="text-success font-bold">[BRANCH]</span> Code base Branch format: <code>{artifacts.branch_name}</code>
               </div>
             )}
             {currentStep >= 5 && artifacts.pr_url && (
               <div>
-                <span className="text-emerald-600 font-bold">[PULL_REQUEST]</span> GitHub PR: <a href={artifacts.pr_url} target="_blank" rel="noreferrer" className="underline text-blue-500">#{artifacts.pr_number}</a>
+                <span className="text-success font-bold">[PULL_REQUEST]</span> GitHub PR: <a href={artifacts.pr_url} target="_blank" rel="noreferrer" className="underline text-secondary">#{artifacts.pr_number}</a>
               </div>
             )}
             {currentStep >= 6 && artifacts.confluence_url && (
               <div>
-                <span className="text-emerald-600 font-bold">[CONFLUENCE]</span> Published compliance logs on Wiki: <a href={artifacts.confluence_url} target="_blank" rel="noreferrer" className="underline text-blue-500">{artifacts.confluence_url}</a>
+                <span className="text-success font-bold">[CONFLUENCE]</span> Published compliance logs on Wiki: <a href={artifacts.confluence_url} target="_blank" rel="noreferrer" className="underline text-secondary">{artifacts.confluence_url}</a>
               </div>
             )}
           </CardContent>

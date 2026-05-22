@@ -81,7 +81,7 @@ export default function Hub() {
           <p className="text-muted-foreground text-sm mt-1">
             Ensure the FastAPI web service has robust JSON-RPC connections loaded with the mcp backend.
           </p>
-          <pre className="mt-4 p-2 bg-slate-900 rounded font-mono text-[11px] text-slate-300 max-w-full overflow-x-auto">
+          <pre className="mt-4 p-2 bg-sidebar rounded font-mono text-[11px] text-sidebar-foreground max-w-full overflow-x-auto">
             {error instanceof Error ? error.message : String(error)}
           </pre>
           <Button variant="outline" size="sm" className="mt-4" onClick={() => refetch()}>
@@ -108,7 +108,7 @@ export default function Hub() {
           {selectedConnector && (
             <div className="grid gap-6 md:grid-cols-3">
               {/* Left Pane: Config & Tools */}
-              <Card className="md:col-span-1 border-muted-foreground/10 bg-slate-50/50 dark:bg-slate-900/10">
+              <Card className="md:col-span-1 border-muted-foreground/10 bg-muted/35">
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg font-bold capitalize flex items-center gap-2">
@@ -148,9 +148,9 @@ export default function Hub() {
                     </h4>
                     <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                       {getConnectorTools(selectedConnectorName).map((tool) => (
-                        <div key={tool.name} className="p-2.5 rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-1">
+                        <div key={tool.name} className="p-2.5 rounded border bg-card shadow-sm space-y-1">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs font-mono font-bold text-slate-800 dark:text-slate-200">{tool.name}</span>
+                            <span className="text-xs font-mono font-bold text-foreground">{tool.name}</span>
                             <span className="text-[10.5px] font-mono text-muted-foreground">MCP</span>
                           </div>
                           <p className="text-[11px] text-muted-foreground leading-tight">
@@ -192,7 +192,7 @@ export default function Hub() {
                     if (rows.length === 0) {
                       return (
                         <div className="p-8 border border-dashed rounded-lg text-center text-muted-foreground flex flex-col items-center justify-center">
-                          <Server className="h-8 w-8 mb-2 text-slate-400" />
+                          <Server className="h-8 w-8 mb-2 text-muted-foreground" />
                           <p className="text-xs font-semibold">No simulation records loaded</p>
                           <p className="text-[11px] mt-1">This connector has not published sample records for the current state.</p>
                         </div>
@@ -202,8 +202,8 @@ export default function Hub() {
                       <>
                         {/* Jira active-sprint header */}
                         {schema === "jira_sprint" && sprint && (
-                          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-blue-200/60 bg-blue-50/50 dark:border-blue-900/40 dark:bg-blue-950/20 px-3 py-2 text-xs">
-                            <span className="font-semibold text-blue-700 dark:text-blue-300">{sprint.name}</span>
+                          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-secondary/25 bg-secondary/10 px-3 py-2 text-xs">
+                            <span className="font-semibold text-secondary">{sprint.name}</span>
                             <Badge variant="outline" className="text-[9px] uppercase">{sprint.state}</Badge>
                             <span className="text-muted-foreground">{sprint.startDate} → {sprint.endDate}</span>
                             <span className="ml-auto font-mono text-muted-foreground">{sprint.completed}/{sprint.committed} pts done</span>
@@ -214,18 +214,18 @@ export default function Hub() {
                           // Stage 16 — editable, HIL-gated bulk Jira editor.
                           <JiraEditableGrid />
                         ) : (
-                          <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800">
+                          <div className="overflow-x-auto rounded border">
                             <table className="w-full text-left border-collapse text-xs">
                               <thead>
-                                <tr className="bg-slate-100 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold">
+                                <tr className="bg-muted border-b text-muted-foreground font-semibold">
                                   {columns.map((c) => (
                                     <th key={c.header} className={`p-3 ${c.align === "right" ? "text-right" : ""}`}>{c.header}</th>
                                   ))}
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                              <tbody className="divide-y divide-border">
                                 {rows.map((row: any, idx: number) => (
-                                  <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50 transition-colors">
+                                  <tr key={idx} className="hover:bg-muted/50 transition-colors">
                                     {columns.map((c) => (
                                       <td key={c.header} className={`p-3 ${c.align === "right" ? "text-right" : ""}`}>{c.cell(row)}</td>
                                     ))}

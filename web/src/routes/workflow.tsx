@@ -5,19 +5,23 @@ import { Button } from "../components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { useWorkflowRun } from "../lib/queries";
 import { api } from "../lib/api";
-import { 
-  Play, 
-  CheckCircle, 
-  XSquare, 
-  FileDown, 
-  Clock, 
+import {
+  Play,
+  CheckCircle,
+  XSquare,
+  FileDown,
+  Clock,
   ShieldAlert,
   Loader2,
   AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth, Capability, DisabledWithTooltip } from "../components/auth-provider";
 
 export default function Workflow() {
+  const { hasCapability } = useAuth();
+  const canRun = hasCapability(Capability.CAN_RUN_WORKFLOW);
+
   const [findingId, setFindingId] = useState("");
   const [findingsList, setByFindingsList] = useState<any[]>([]);
   const [isLoadingList, setIsLoadingList] = useState(false);
@@ -117,14 +121,14 @@ export default function Workflow() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs text-slate-500 font-mono">Checklist Finding</label>
+              <label className="text-xs text-muted-foreground font-mono">Checklist Finding</label>
               {isLoadingList ? (
                 <div className="h-9 flex items-center text-xs text-muted-foreground gap-2">
                   <Loader2 className="h-3 w-3 animate-spin" /> Load GRC register...
                 </div>
               ) : (
                 <select
-                  className="w-full h-9 rounded border border-input px-3 bg-white text-xs"
+                  className="w-full h-9 rounded border border-input px-3 bg-background text-xs"
                   value={findingId}
                   onChange={(e) => {
                     setFindingId(e.target.value);
@@ -140,19 +144,24 @@ export default function Workflow() {
               )}
             </div>
 
-            <Button
-              className="w-full text-xs shrink-0 flex items-center"
-              size="sm"
-              disabled={isExecuting || !findingId}
-              onClick={handleRunWorkflow}
+            <DisabledWithTooltip
+              enabled={canRun}
+              message="Requires canRunWorkflow (app_user, audit_user, or admin)"
             >
-              {isExecuting ? (
-                <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-              ) : (
-                <Play className="h-3.5 w-3.5 mr-2" />
-              )}
-              Spawn Compliance Flow
-            </Button>
+              <Button
+                className="w-full text-xs shrink-0 flex items-center"
+                size="sm"
+                disabled={isExecuting || !findingId}
+                onClick={handleRunWorkflow}
+              >
+                {isExecuting ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5 mr-2" />
+                )}
+                Spawn Compliance Flow
+              </Button>
+            </DisabledWithTooltip>
           </CardContent>
         </Card>
 
@@ -161,14 +170,14 @@ export default function Workflow() {
           <Card className="border-muted-foreground/10">
             <CardHeader className="flex flex-row items-center justify-between pb-3 space-y-0">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <Clock className="h-4.5 w-4.5 text-slate-500" />
+                <Clock className="h-4.5 w-4.5 text-muted-foreground" />
                 Active subagent Execution Workspace Line
               </CardTitle>
               {status !== "idle" && (
                 <span className={`text-[10px] font-bold uppercase rounded border px-1.5 py-0.5 ${
-                  status === "completed" ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-                  status === "waiting_approval" ? "bg-amber-50 border-amber-200 text-amber-700 animate-pulse" :
-                  "bg-blue-50 border-blue-200 text-blue-700"
+                  status === "completed" ? "bg-success/15 border-success/35 text-success" :
+                  status === "waiting_approval" ? "bg-warning/15 border-warning/35 text-foreground animate-pulse" :
+                  "bg-secondary/10 border-secondary/25 text-secondary"
                 }`}>
                   {status}
                 </span>
@@ -176,8 +185,8 @@ export default function Workflow() {
             </CardHeader>
             <CardContent className="space-y-6">
               {status === "idle" ? (
-                <div className="p-8 border border-dashed rounded-lg border-slate-200 text-center text-muted-foreground flex flex-col items-center justify-center">
-                  <ShieldAlert className="h-8 w-8 mb-2 text-slate-400" />
+                <div className="p-8 border border-dashed rounded-lg text-center text-muted-foreground flex flex-col items-center justify-center">
+                  <ShieldAlert className="h-8 w-8 mb-2 text-muted-foreground" />
                   <p className="text-xs font-semibold">Compliance Runner Inactive</p>
                   <p className="text-[11px] mt-1">Select a checklist finding item and click 'Spawn' above to step compliance controls.</p>
                 </div>
@@ -191,25 +200,35 @@ export default function Workflow() {
 
               {/* Approval Interruption Gating Panels */}
               {status === "waiting_approval" && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="rounded-lg border border-warning/35 bg-warning/10 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="space-y-1">
-                    <h5 className="font-semibold text-xs text-amber-800 flex items-center gap-1.5">
+                    <h5 className="font-semibold text-xs text-foreground flex items-center gap-1.5">
                       <AlertCircle className="h-4 w-4" />
                       Human-Gate Gate: Compliance Approvals Audit Required
                     </h5>
-                    <p className="text-[11.5px] text-amber-700 font-serif leading-relaxed">
+                    <p className="text-[11.5px] text-muted-foreground font-serif leading-relaxed">
                       {runState?.next_action_preview?.message || "Verify the compiled control change records evidence catalog before finalizing writes."}
                     </p>
                   </div>
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="text-emerald-700 hover:bg-emerald-50 border-emerald-200 text-xs shrink-0 h-8" onClick={() => handleApproveGate("approve")}>
-                      <CheckCircle className="h-3.5 w-3.5 mr-1" />
-                      Approve & Run
-                    </Button>
-                    <Button variant="outline" size="sm" className="text-rose-700 hover:bg-rose-50 border-rose-200 text-xs shrink-0 h-8" onClick={() => handleApproveGate("reject")}>
-                      <XSquare className="h-3.5 w-3.5 mr-1" />
-                      Reject Gaps
-                    </Button>
+                    <DisabledWithTooltip
+                      enabled={canRun}
+                      message="Requires canRunWorkflow to approve workflow gates"
+                    >
+                      <Button variant="outline" size="sm" className="text-success hover:bg-success/10 border-success/35 text-xs shrink-0 h-8" onClick={() => handleApproveGate("approve")}>
+                        <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                        Approve & Run
+                      </Button>
+                    </DisabledWithTooltip>
+                    <DisabledWithTooltip
+                      enabled={canRun}
+                      message="Requires canRunWorkflow to reject workflow gates"
+                    >
+                      <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10 border-destructive/35 text-xs shrink-0 h-8" onClick={() => handleApproveGate("reject")}>
+                        <XSquare className="h-3.5 w-3.5 mr-1" />
+                        Reject Gaps
+                      </Button>
+                    </DisabledWithTooltip>
                   </div>
                 </div>
               )}
@@ -218,11 +237,11 @@ export default function Workflow() {
               {status === "completed" && (
                 <div className="flex flex-col sm:flex-row gap-2 border-t pt-4">
                   <Button variant="outline" size="sm" className="text-xs shrink-0 flex items-center" onClick={() => handleDownloadReport("pdf")}>
-                    <FileDown className="h-3.5 w-3.5 mr-2 text-emerald-600" />
+                    <FileDown className="h-3.5 w-3.5 mr-2 text-success" />
                     Download PDF Compliance Report
                   </Button>
                   <Button variant="outline" size="sm" className="text-xs shrink-0 flex items-center" onClick={() => handleDownloadReport("ppt")}>
-                    <FileDown className="h-3.5 w-3.5 mr-2 text-orange-500" />
+                    <FileDown className="h-3.5 w-3.5 mr-2 text-primary" />
                     Download Executive PPT Slide Deck
                   </Button>
                 </div>

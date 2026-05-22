@@ -25,36 +25,36 @@ export function ConnectionBubble({ name, health, summary, isSelected, onSelect }
     switch (status?.toLowerCase()) {
       case "healthy":
       case "ok":
-        return "bg-emerald-500";
+        return "bg-success";
       case "degraded":
-        return "bg-amber-500";
+        return "bg-warning";
       case "disabled":
-        return "bg-slate-400";
+        return "bg-muted-foreground";
       case "error":
-        return "bg-rose-500";
+        return "bg-destructive";
       default:
-        return "bg-cyan-500"; // placeholder / mock
+        return "bg-secondary"; // placeholder / mock
     }
   };
 
   const getSystemIcon = (name: string) => {
     switch (name.toLowerCase()) {
       case "mongodb":
-        return <Database className="h-5 w-5 text-emerald-500" />;
+        return <Database className="h-5 w-5 text-success" />;
       case "jira":
-        return <Terminal className="h-5 w-5 text-blue-500" />;
+        return <Terminal className="h-5 w-5 text-secondary" />;
       case "confluence":
-        return <BookOpen className="h-5 w-5 text-cyan-500" />;
+        return <BookOpen className="h-5 w-5 text-secondary" />;
       case "github":
-        return <Github className="h-5 w-5 text-slate-800" />;
+        return <Github className="h-5 w-5 text-foreground" />;
       case "aws":
-        return <Cloud className="h-5 w-5 text-amber-500" />;
+        return <Cloud className="h-5 w-5 text-primary" />;
       case "servicenow":
-        return <Layers className="h-5 w-5 text-indigo-500" />;
+        return <Layers className="h-5 w-5 text-secondary" />;
       case "snowflake":
-        return <Hash className="h-5 w-5 text-sky-400" />;
+        return <Hash className="h-5 w-5 text-secondary" />;
       default:
-        return <HelpCircle className="h-5 w-5 text-slate-400" />;
+        return <HelpCircle className="h-5 w-5 text-muted-foreground" />;
     }
   };
 
