@@ -1,8 +1,32 @@
 # Progress
 
 ## Status
-**Stage 11 COMPLETE & verified live; Stage 12 COMPLETE & verified live (re-verified this session); Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending); Stage 6 followups COMPLETE; Stage 13 COMPLETE (one follow-up); Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate; Stage 15 Wrangler pipeline-code view COMPLETE; Stage 17 COMPLETE; roadmap stages 18–21 planned in IMPLEMENT.md.**
-Work branch: `stage-14-docs-wiki`; latest push to `origin/main`: `c49eb8d` (`docs: add roadmap stages and finish docs agent gate`).
+**Stages 0–2, 4, 6–12, 13, 15–17 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 mostly done (export/docs/verify remaining). Stage 19 auth/RBAC ~95% done (admin.1 page remaining). Stage 20 standup initial slice done (6 tasks remaining). Stages 21–22 all TBD. Stage 5 SHELVED.**
+Work branch: `stage-14-docs-wiki`; latest push to `origin/main`: `8ef52e8` (`docs: update COORDINATION.md`).
+
+## Session 2026-05-22 (pi agent) — landing S13/S15/S19/S20 + worktree cleanup
+
+Picked up handoff from previous multi-agent session. All co-mingled changes across S13, S15, S18, S19, S20 were disentangled and committed by stage.
+
+**Commits landed (6):**
+- `064af8d` feat(S15): ask_data deadline + batch notes + wrangler bulk projection + pipeline code view
+- `fdd3c02` feat(S13): migrate hardcoded color literals to semantic tokens (6 components, ported from pi-stage13-15 worktree)
+- `98850b3` feat(S19): web auth/RBAC — identity resolution, route guards, UI gating, actor audit
+- `2a3e853` feat(S20): standup Jira cockpit — websocket chat, dry-run agent, session persistence
+- `17553f3` docs: update IMPLEMENT.md + progress.md checkboxes
+- `8ef52e8` docs: update COORDINATION.md
+
+**S13 cleanup:** Ported 5 token-migration files from pi-stage13-15 worktree via direct copy (connection-bubble, hub-columns, relate-panel, workflow-stepper, hub). Workflow.tsx required surgical application — token changes only, preserving S19 auth gating (DisabledWithTooltip, useAuth).
+
+**S19 audit.1 fix:** The parallel Claude agent's audit.1 task was incomplete — MCP-side functions accepted `actor` param but `web/main.py` never injected it. Fixed by: (1) guards store resolved user in `request.state.user`, (2) `_actor_from_request()` extracts it, (3) all 14 write endpoints now inject `actor` dict into MCP tool args.
+
+**Worktree cleanup:**
+- Removed 2 stale Claude worktrees (`.claude/worktrees/agent-*`) — content confirmed fully in main
+- Removed pi-stage13-15 worktree + branch — S13 changes ported
+- Removed 6 disposable subagent report files
+- Pruned stale branch refs
+
+**Build verification:** py_compile + npm run build both green. Merged to main and pushed.
 
 ## Session 2026-05-22 (docs-wiki agent) — S18/S19 doc tasks + Stage 5 shelved + coordination
 - **S18.discovery.1 DONE** — `docs/architecture-inventory-template.md` (new): capture form for environments/accounts, AWS network detail (VPC/subnet/CIDR/SG), compute & data nodes (hostname/IP/instance_type/storage/retention/runbook_slug), integrations/edges (protocol/auth_mode/agentic_status), RISK→artifact flow checklist, and a known-unknowns table. All infra values `TBD`; field names align with the Stage-18 graph schema. Importable into the Docs Wiki.

@@ -4,7 +4,7 @@ This document is the implementation plan for evolving the current stack into an 
 
 > The repo name `sglandsimple` predates the framework choice. Despite the name, **this plan uses LangGraph**, not SGLang.
 
-> **Archive note (2026-05-22):** Stages 0–2, 4, 7–12, 16, 17 are complete and verified. Their full narrative + task checklists were moved to **`IMPLEMENT-ARCHIVE.md`** to keep this file focused on open work. See the "Completed stages" table below for one-line summaries; open `IMPLEMENT-ARCHIVE.md` for the full detail of any archived stage. This file retains the header/ground-rules, the **Env surface** table (live reference), and the **full content of every stage with open tasks** (3, 5, 6-followups, 13, 14, 15).
+> **Archive note (2026-05-22):** Stages 0–2, 4, 7–12, 13, 15, 16, 17 are complete and verified. Their full narrative + task checklists were moved to **`IMPLEMENT-ARCHIVE.md`** to keep this file focused on open work. See the "Completed stages" table below for one-line summaries; open `IMPLEMENT-ARCHIVE.md` for the full detail of any archived stage. This file retains the header/ground-rules, the **Env surface** table (live reference), and the **full content of every stage with open tasks** (3, 5, 6, 14, 18, 19, 20, 21, 22). Stages 6 (followups), 13, 14, and 15 are complete but retained here until the next archive pass.
 
 ## How to use this document
 
@@ -65,12 +65,14 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 | **12** | Domain-rich connector data + topology | Domain-shaped mock `sample_data` per connector (`schema` hints); `topology_graph` tool; React Flow `/architecture` page; Mongo bind-mount persistence (`./perm/db`). |
 | **16** | Editable Jira table + HIL bulk apply | `jira_staged_changes` store + five Jira staging tools (stage/validate/revert/apply, dry-run gated by `JIRA_WRITES_ENABLED`); editable Hub grid w/ Save/Validate/Revert/Apply; wired to hosted Atlassian MCP. LanGarland rebrand. |
 | **17** | Builder model → APEX + per-role max_tokens | Builder on `Qwen3.6-35B-A3B-APEX-MTP-I-Balanced` w/ 60k budget; `llm_max_tokens(role)`; agent omits empty `tools` field; `UPSTREAM_MAX_TOKENS`/`BUILDER_MAX_TOKENS`. |
+| **13** | Fleet-Dispatch design system | Navy/amber/teal tokens + Roboto + token-migration cleanup (6 components). Complete — eligible for archive. |
+| **15** | Operational fixes & UX quick-wins | ask_data deadline + batch notes + wrangler bulk projection + pipeline code view. Complete — eligible for archive. |
 
 ---
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD), **13** (one cleanup task), **18** (architecture diagram v2), **19** (web auth/RBAC), **20** (Standup Jira cockpit), **21** (Deep Agent platform), **22** (UX/chat polish + Wrangler derived fields). Stages **6** (followups), **14** (Docs Wiki, incl. the `S14.agent.1` LangGraph apply-gate), and **15** (operational fixes) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **13** (cleanup DONE — eligible for archive), **14** (DONE — eligible for archive), **15** (DONE — eligible for archive), **18** (architecture diagram v2 — 3 tasks remaining), **19** (web auth/RBAC — nearly complete, 2 tasks remaining), **20** (Standup Jira cockpit — initial slice done, 6 tasks remaining), **21** (Deep Agent platform — all TBD), **22** (UX/chat polish + Wrangler derived fields — all TBD). Stages **6** (followups — all done), **14** (Docs Wiki), and **15** (operational fixes) are complete but retained here until the next archive pass.
 
 ---
 
@@ -127,9 +129,10 @@ The remaining sections below are the stages with unfinished tasks: **3** (manual
 
 > The restyle (navy/amber/teal tokens + Roboto) is complete and verified; full narrative + checklist in `IMPLEMENT-ARCHIVE.md`. Only the token-migration cleanup remains.
 
-- [ ] **S13.cleanup.1 — Migrate hardcoded literals to tokens**
-  - Files: `web/src/components/hub-columns.tsx`, `web/src/routes/hub.tsx`, `web/src/components/workflow-stepper.tsx`, others surfaced by grep.
-  - Done when: load-bearing hardcoded Tailwind color literals are replaced with semantic tokens / on-brand equivalents; status red/green retained for meaning.
+- [x] **S13.cleanup.1 — Migrate hardcoded literals to tokens** ✅ DONE
+  - Files: `web/src/components/hub-columns.tsx`, `web/src/routes/hub.tsx`, `web/src/components/workflow-stepper.tsx`, `web/src/components/connection-bubble.tsx`, `web/src/components/relate-panel.tsx`, `web/src/routes/workflow.tsx`.
+  - Done: load-bearing hardcoded Tailwind color literals replaced with semantic tokens / on-brand equivalents across 6 components; status red/green retained for meaning. Ported from pi-stage13-15 worktree; workflow.tsx token changes applied surgically to preserve S19 auth gating. Committed `fdd3c02`.
+  - **Stage 13 is now COMPLETE — eligible for archival to IMPLEMENT-ARCHIVE.md.**
 
 ---
 
@@ -588,54 +591,55 @@ The real internal lookup code should be isolated behind a narrow interface so it
   - Files: `docs/auth-rbac.md` (new), `IMPLEMENT.md`.
   - Done: `docs/auth-rbac.md` consolidates the group→role mapping (env-configurable placeholder groups), the per-role capability matrix, the explicit `/api/*` capability requirements (read open to `sg_all_users`, mutations gated; 401 vs 403 semantics), the SSO-in-prod / Basic-Auth-for-POC assumptions and all six `AUTH_MODE`s, the seeded POC user set, the LDAP/auth-agent privacy boundary, and an Open-questions list (LDAP DNs, ownership scoping, signed claims, auth-explanation surface, cache TTL) explicitly flagged as non-blocking for POC basic/trusted-network mode. Importable into the Stage-14 Docs Wiki.
 
-- [ ] **S19.model.1 — Add web auth model and config**
-  - Files: `web/auth.py` (new), `.env.example`, `compose.yaml` if env passthrough is needed.
-  - Done when: `UserContext`, roles, capabilities, env-configured group names, Basic Auth config, SSO header config, and group→role derivation are implemented with unit-testable pure functions.
+- [x] **S19.model.1 — Add web auth model and config** ✅ DONE
+  - Files: `web/auth.py` (new), `.env.example`, `compose.yaml`.
+  - Done: `UserContext`, roles, capabilities, env-configured group names, Basic Auth config, SSO header config, and group→role derivation implemented with unit-testable pure functions. 6 auth modes: `sso`, `basic`, `trusted_network`, `headers`, `ldap`, `disabled`. Committed `98850b3`.
   - Depends on: S19.policy.1.
 
-- [ ] **S19.seed.1 — Seed deterministic Faker-style users per LDAP group/role**
-  - Files: `mongo-seed/15-auth-users.js` or `web/auth_seed.py`/`/data/auth/users.json` generator, `.env.example`, docs.
-  - Done when: at least one seeded `firstname.lastname@lanGarland.com` user exists for `sg_all_users`, `sg_sec_admin`, `sg_app_user`, and `sg_audit_users`, plus multi-role users; passwords are POC-only and provided by generated hashes or a gitignored/dev env secret, never committed as real credentials.
+- [x] **S19.seed.1 — Seed deterministic Faker-style users per LDAP group/role** ✅ DONE
+  - Files: `web/auth_seed.py` (new), `.env.example`, `compose.yaml`.
+  - Done: 6 seeded `firstname.lastname@lanGarland.com` users covering all 4 groups (`sg_all_users`, `sg_sec_admin`, `sg_app_user`, `sg_audit_users`) plus multi-role users; passwords are POC-only via `AUTH_BASIC_SEED_PASSWORD`; compose volume mount `./perm/auth:/data/auth`. Committed `98850b3`.
   - Depends on: S19.model.1.
 
-- [ ] **S19.backend.1 — Add request identity resolution modes**
+- [x] **S19.backend.1 — Add request identity resolution modes** ✅ DONE
   - Files: `web/auth.py`, `web/main.py`.
-  - Done when: `sso`, `basic`, `trusted_network`, `headers`, `disabled`, and stub `ldap` modes resolve a user consistently; Basic Auth validates seeded users; SSO trusts only configured proxy headers; dev headers are ignored unless explicitly enabled; failures produce clear 401/403 responses.
+  - Done: `sso`, `basic`, `trusted_network`, `headers`, `disabled`, and stub `ldap` modes resolve a user consistently; Basic Auth validates seeded users; SSO trusts only configured proxy headers; dev headers are ignored unless explicitly enabled; failures produce clear 401/403 responses. Startup guardrail enforces `AUTH_SSO_REQUIRED`. Committed `98850b3`.
   - Depends on: S19.model.1, S19.seed.1.
 
-- [ ] **S19.backend.2 — Add `/api/me` and auth diagnostics payload**
+- [x] **S19.backend.2 — Add `/api/me` and auth diagnostics payload** ✅ DONE
   - Files: `web/main.py`, `web/auth.py`, `web/src/lib/types.ts`, `web/src/lib/queries.ts`.
-  - Done when: `/api/me` returns user, groups, roles, capabilities, auth mode, and lookup source; React Query hook `useMe()` is available.
+  - Done: `/api/me` returns user, groups, roles, capabilities, auth mode, and source; React Query hook `useMe()` available; always returns HTTP 200. Committed `98850b3`.
   - Depends on: S19.backend.1.
 
-- [ ] **S19.backend.3 — Guard web API endpoints by capability**
+- [x] **S19.backend.3 — Guard web API endpoints by capability** ✅ DONE
   - Files: `web/main.py`, `docs/auth-rbac.md`.
-  - Done when: each `/api/*` route has an explicit required capability; admin-only mutation endpoints return 403 for non-admin/dev-simulated users; read-only endpoints remain available to `sg_all_users` as intended.
+  - Done: each `/api/*` route has an explicit required capability via `Depends(_guard_user/_guard_cap)`; admin-only mutation endpoints return 403 for non-admin; read-only endpoints remain available to `sg_all_users`. 33 guarded endpoints. Committed `98850b3`.
   - Depends on: S19.backend.2.
 
-- [ ] **S19.audit.1 — Propagate actor context into privileged actions**
-  - Files: `web/main.py`, `mcp/server.py` and relevant MCP tool handlers as needed, `mcp/db.py` audit helpers if actor fields are missing.
-  - Done when: docs writes, sheet writes, Jira apply, Archer/finding updates, workflow runs, and report generation can record actor/roles/groups or a tracked fallback actor.
+- [x] **S19.audit.1 — Propagate actor context into privileged actions** ✅ DONE
+  - Files: `web/main.py`, `mcp/server.py`, `mcp/connectors/jira.py`, `mcp/jira_staging.py`, `mcp/sheet_apply.py`, `mcp/wrangler.py`, `mcp/db.py`.
+  - Done: `_actor_from_request()` extracts user from `request.state.user` (set by guard dependencies); all 14 write endpoints inject `actor` dict into MCP args; MCP handlers pop `actor` from args and pass to `db._audit()`; audit rows now include `actor` when available. Committed `98850b3`.
   - Depends on: S19.backend.3.
 
-- [ ] **S19.frontend.1 — Add auth provider, route guard, and 403 page**
-  - Files: `web/src/App.tsx`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`, new auth components/hooks.
-  - Done when: app loads `/api/me`, provides capability helpers, protects direct route access, and renders a clear forbidden page with current user/roles.
+- [x] **S19.frontend.1 — Add auth provider, route guard, and 403 page** ✅ DONE
+  - Files: `web/src/App.tsx`, `web/src/components/auth-provider.tsx` (new), `web/src/components/forbidden.tsx` (new).
+  - Done: `AuthProvider` wraps the full app tree; `RequireCapability` gates routes; `/forbidden` renders a clear 403 page with current user/roles; `useAuth()` hook exposes `authenticated`, `roles`, `hasCapability()`, `authMode`. Committed `98850b3`.
   - Depends on: S19.backend.2.
 
-- [ ] **S19.frontend.2 — Gate sidebar and privileged UI actions**
-  - Files: `web/src/components/app-sidebar.tsx`, `web/src/components/topbar.tsx`, routes with mutation controls (`workflow`, `hub`, `docs`, `sheet`, `wrangler`, future `architecture`).
-  - Done when: routes/actions are hidden, disabled, or labelled based on capabilities; admin-only controls cannot be clicked by non-admin roles; topbar shows effective user/role/auth-mode context.
+- [x] **S19.frontend.2 — Gate sidebar and privileged UI actions** ✅ DONE
+  - Files: `web/src/components/app-sidebar.tsx`, `web/src/components/topbar.tsx`, `web/src/components/jira-editable-grid.tsx`, `web/src/routes/workflow.tsx`.
+  - Done: sidebar items show lock icon + tooltip when cap is missing; topbar shows display name, roles, auth mode badge; jira grid uses `DisabledWithTooltip` for Save/Validate/Revert/Apply; workflow uses `DisabledWithTooltip` for Spawn/Approve/Reject. Committed `98850b3`.
   - Depends on: S19.frontend.1.
 
 - [ ] **S19.admin.1 — Add auth diagnostics/admin page**
   - Files: `web/src/routes/auth-admin.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`, `web/main.py` if additional diagnostics endpoint is needed.
   - Done when: `sg_sec_admin` users can view group mappings, current mode, cache status, simulated identity hints in POC mode, recent deny reasons, and LDAP adapter status; non-admins get 403.
   - Depends on: S19.frontend.2.
+  - **Not yet implemented.** This is the only remaining S19 UI task.
 
-- [ ] **S19.ldap.1 — Define LDAP adapter interface and fixture implementation**
-  - Files: `web/auth_ldap.py` (new) or `mcp/auth_directory.py` (new), `docs/auth-rbac.md`.
-  - Done when: lookup interface is isolated (`lookup_user`, `lookup_groups`, `check_membership`), fixture/stub tests cover all four placeholder groups, and real internal code can be swapped in without changing route guards.
+- [x] **S19.ldap.1 — Define LDAP adapter interface and fixture implementation** ✅ DONE
+  - Files: `web/auth_ldap.py` (new), `docs/auth-rbac.md`.
+  - Done: `DirectoryAdapter` ABC with `lookup_user`, `lookup_groups`, `check_membership`; `FixtureAdapter` provides deterministic lookups for all 4 placeholder groups; real internal code can be swapped in without changing route guards. Committed `98850b3`.
   - Depends on: S19.backend.1.
 
 - [x] **S19.agent.1 — Decide skill vs MCP integration vs auth-specialist agent**
@@ -650,15 +654,16 @@ The real internal lookup code should be isolated behind a narrow interface so it
   - Depends on: S19.agent.1.
   - Done: `web/auth_explain.py` — `explain_access(username, capability_or_route) -> dict` with enforced privacy boundary (8 allowed output keys, no passwords/extra attrs). Route→capability map covers all 34 API endpoints. CLI: `python3 web/auth_explain.py <user> <cap_or_route>`. Verified: admin granted, viewer denied with reason, unknown user → clean not-found, no crash. `py_compile` passes.
 
-- [ ] **S19.tests.1 — Add auth/RBAC smoke tests**
-  - Files: `scripts/smoke_auth.sh` (new), optional frontend test notes.
-  - Done when: smoke covers Basic Auth login for every seeded role, default trusted-network viewer fallback, production-like SSO header resolution, dev-header admin/app_user/audit_user simulation, denied admin endpoint as non-admin, and `/api/me` payload shape.
+- [x] **S19.tests.1 — Add auth/RBAC smoke tests** ✅ DONE
+  - Files: `scripts/smoke_auth.sh` (new).
+  - Done: smoke covers Basic Auth login for every seeded role, default trusted-network viewer fallback, production-like SSO header resolution, dev-header admin/app_user/audit_user simulation, denied admin endpoint as non-admin, and `/api/me` payload shape. Committed `98850b3`.
   - Depends on: S19.backend.3.
 
 - [ ] **S19.verify.1 — Integrated verification**
   - Files: `IMPLEMENT.md`, `progress.md` after implementation.
   - Done when: `python3 -m py_compile web/*.py` and `cd web && npm run build` pass; smoke auth passes; manual UI checks confirm nav/action gating for all four groups; no secrets are committed.
   - Depends on: S19.frontend.2, S19.tests.1.
+  - **Nearly complete.** py_compile + npm build are green. smoke_auth.sh exists. Remaining: manual UI gating verification across all 4 groups and S19.admin.1.
 
 ---
 
@@ -1215,12 +1220,15 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `MCP_PORT` | `5451` | no | 0 | host bind for mcp (LAN-only) |
 | `MONGO_URL` | `mongodb://app:app@mongo:27017` | no | 1 | connection string |
 | `MONGO_DB` | `enterprise` | no | 1 |  |
-| `ASK_DATA_MAX_DOCS` | `10` | no | 1 | cap on per-doc fan-out |
+| `ASK_DATA_MAX_DOCS` | `4` | no | 1 | cap on per-doc fan-out |
+| `ASK_DATA_DEADLINE_SECONDS` | `240` | no | 15 | overall wall-clock deadline for ask_data |
+| `ASK_DATA_BATCH_NOTES` | `true` | no | 15 | batch per-doc interpretation into single LLM call |
 | `ASK_DATA_LIMIT_CEILING` | `50` | no | 1 | hard limit on query results |
 | `LANGGRAPH_CHECKPOINT_COLLECTION` | `lg_checkpoints` | no | 1 |  |
 | `LLM_TIMEOUT` | `120` | no | 1 | per-LLM-call timeout in seconds |
 | `LLM_CONCURRENCY` | `2` | no | 1 | semaphore cap for parallel LLM calls |
 | `WEB_PORT` | `5452` | no | 2 | host bind for web frontend |
+| `REQUEST_TIMEOUT` | `300` | no | 2 | web service proxy timeout (seconds) |
 | `MCP_AUTH_TOKEN` | (unset → open) | no | 3 | bearer token for MCP |
 | `MCP_RATE_PER_MIN` | `60` | no | 3 | per-session rate limit |
 | `PLANNER_BASE_URL` | `${UPSTREAM_BASE_URL}` | no | 4 | planner LLM endpoint |
