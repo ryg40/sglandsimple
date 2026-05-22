@@ -1101,6 +1101,14 @@ Update the top-left app banner/logo image to use:
 
 The image should be sized as a modern banner mark (not tiny, stretched, or pixelated), fit the sidebar/top-left chrome, and include appropriate alt text. If the source image should live under `web/src/assets` instead of committed `dist`, copy it into the source tree and reference it through the Vite asset pipeline.
 
+### 22e. Chat conversation readability: newest-first feed, collapsed query, slimmer banner
+
+Follow-up polish on the focused `/chat` workspace after the column flip (S22.chat.3). Three independent issues:
+
+- **Newest-first ordering.** The live conversation should render newest additions at the **top**, pushing older turns down. Today `ConversationFeed` renders oldest→newest with a scroll-to-bottom on send; invert so a new user/assistant turn appears at the top of the feed without the user having to scroll. Keep the request/response pairing legible (a turn and its reply should stay visually adjacent) and preserve the busy/"thinking…" indicator placement and `aria-live` semantics for screen readers.
+- **Collapse the Mongo query by default.** Ask Data answers currently always append a `## Query used` section with the raw spec as a fenced ```json block (`mcp/ask_data.py` `format_*`). Only show that query inline when the user **specifically asks for it** (e.g. the question mentions "query"/"pipeline"/"how did you", or an explicit toggle). Otherwise present it as a **single expandable** element (collapsed by default) rendered as a ```json snippet — e.g. a `<details>`-style disclosure in the rendered Markdown, or a front-end collapsible that the chat transcript card understands. The default answer view should be the prose + evidence, with the query one click away.
+- **Slim, dynamic hero banner.** The current `/chat` hero `Card` is a tall static marketing block that wastes vertical space. Replace it with something **dynamic** and compact: full viewport width but only ~100px tall. "Dynamic" = it should surface live/contextual content (e.g. message/turn count, active connector or MCP status, last-activity timestamp, a rotating tip, or a compact live signal) rather than fixed marketing copy. Free up the reclaimed vertical space for the conversation feed.
+
 ### Task checklist — Stage 22
 
 - [x] **S22.chat.1 — Redesign focused `/chat` page from Dribbble reference** ✅ DONE
@@ -1118,6 +1126,25 @@ The image should be sized as a modern banner mark (not tiny, stretched, or pixel
 - [x] **S22.brand.1 — Replace top-left banner image and modernize sizing** ✅ DONE
   - Files: `web/src/components/app-sidebar.tsx`, `web/src/assets/d6057657-40c7-4112-85fa-06322881a692.png`, `web/src/vite-env.d.ts`.
   - Done: the sidebar's top-left mark now uses the Vite-managed `d6057657-40c7-4112-85fa-06322881a692.png` banner asset with `alt="LanGarland Fleet Dispatch"`, modern cropped sizing for expanded/collapsed sidebar states, and no dependency on an ephemeral `dist`-only path.
+
+- [x] **S22.chat.3 — Flip `/chat` columns + compact suggested-prompt list** ✅ DONE
+  - Files: `web/src/components/chat-assistant.tsx`.
+  - Done: conversation feed + composer moved to the main wide right column (`xl:order-2`); suggested prompts moved to the narrow 18rem left rail (`xl:order-1`). Added a `variant: "chips" | "list"` prop to `PromptChips`; the rail renders Starter + Direct-data prompts as compact vertical lists. Dropped the redundant hero starter chips.
+
+- [ ] **S22.chat.4 — Newest-first live conversation feed**
+  - Files: `web/src/components/chat-assistant.tsx`.
+  - Done when: new turns appear at the **top** of `ConversationFeed`, pushing older turns down (no manual scroll needed); request/response pairs stay visually adjacent; the "thinking…" indicator and `aria-live` behavior are preserved; `cd web && npm run build` clean.
+  - Depends on: S22.chat.3.
+
+- [ ] **S22.chat.5 — Collapse Ask Data Mongo query unless requested**
+  - Files: `mcp/ask_data.py`, `web/src/components/chat-assistant.tsx` (and/or `web/src/components/markdown.tsx`).
+  - Done when: the `## Query used` spec is no longer always shown inline — it is shown expanded only when the user explicitly asks for the query (keyword heuristic or explicit toggle), otherwise rendered as a single **collapsed, expandable** ```json snippet (e.g. `<details>` disclosure) one click from the prose+evidence answer; default Ask Data view leads with answer + evidence; `python3 -m py_compile mcp/ask_data.py` + `cd web && npm run build` clean.
+  - Depends on: nothing (touches the formatter + transcript rendering).
+
+- [ ] **S22.chat.6 — Replace tall static hero with slim dynamic banner (~100px)**
+  - Files: `web/src/components/chat-assistant.tsx`.
+  - Done when: the focused `/chat` hero is full viewport width but only ~100px tall and shows dynamic/contextual content (e.g. turn count, connector/MCP status, last-activity time, rotating tip) instead of static marketing copy; reclaimed vertical space goes to the conversation feed; layout stays responsive; `cd web && npm run build` clean.
+  - Depends on: S22.chat.3.
 
 ---
 
