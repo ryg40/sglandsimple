@@ -4,6 +4,19 @@
 **Stages 0–2, 4, 6–20, and 22 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `1ab00d7` (`docs: reconcile S19 and S20 status`).
 
+## Session 2026-05-22 (pi agent) — Stage 19 finish-up: re-verify + branch cleanup
+
+Confirmed Stage 19 is fully complete and closed out housekeeping.
+
+**Re-verification (safe gates re-run today):**
+- `python3 -m py_compile web/*.py` — clean.
+- `cd web && npm run build` (tsc -b + vite) — clean (only the pre-existing >500 kB chunk-size *warning*).
+- `perm/` is fully gitignored — no password hashes/secrets tracked in git. `users.json` seeds all 6 POC users across all 4 groups with PBKDF2 hashes (no plaintext).
+- All 14 S19 tasks (`S19.policy.1`→`S19.verify.1`) remain `[x]` in `IMPLEMENT.md`; working tree clean.
+- The live `scripts/smoke_auth.sh` end-to-end run was intentionally **not** re-run: it requires re-seeding the running `sglandsimple-web` container's `users.json` to a known password, which would clobber the operator's chosen password (and `docker exec` is blocked in this environment). The prior session's run (83 PASS / 0 FAIL / 3 SKIP, basic mode) stands.
+
+**Branch cleanup.** All non-`main` branches were fully merged into `main` (ahead-by-0). Deleted the 4 stale merged local branches (`stage-11-overview`, `stage-14-docs-wiki`, `stage12-dynamic-overview-mockdata`, `stage9-w1`) and the 3 stale merged remote branches. **Left the 3 `pi-parallel-8f62f9a7-*` branches/worktrees untouched** — they back active parallel-agent worktrees (`/tmp/pi-worktree-*`).
+
 ## Session 2026-05-22 (pi orchestrator) — Stage 22 completion + Stage 18 closeout
 
 Closed all Stage-22 tasks and the remaining Stage-18 architecture tasks while also carrying forward the already-dirty Stage-20 completion work.
