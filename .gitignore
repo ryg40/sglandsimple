@@ -11,3 +11,6 @@ sandbox/*
 !sandbox/.gitkeep
 # Stage 12: Mongo bind-mount data — host-persisted DB files, never committed.
 perm/
+# Agent runtime / tooling scratch — never committed.
+.claude/
+.fusion/
