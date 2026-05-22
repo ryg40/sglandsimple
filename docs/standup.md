@@ -22,13 +22,15 @@ Future backend enforcement should map approval to `canApproveStandupActions` and
 ## Current slice
 
 - `/standup` provides an Explorer-dominant layout using the existing Jira editable grid.
-- The chat and proposal panels are local frontend placeholders until websocket persistence lands.
-- `standup_link_context` and `standup_summarize` MCP helpers are dry-run/side-effect-free.
+- FastAPI websocket chat persists session snapshots, messages, agent runs, and proposals in the web-owned JSON store.
+- Chat identity is wired to the Stage-19 auth context when available: message bubbles and presence use the logged-in display name, and persisted messages keep `author_email` for cross-service references. Auth-disabled or unresolved sessions fall back to the browser/legacy author behavior.
+- `standup_link_context` and `standup_summarize` MCP helpers remain dry-run/side-effect-free.
+- `standup_summarize` passes deterministic story-template context to the planner: acceptance-criteria format, default standup labels, priority/story-point guidance, selected epic/workflow context, and relevant Docs Wiki/Confluence links. Returned `new_jira_work` proposals are normalized to keep these fields in the dry-run payload.
+- Websocket `agent.summarize` persists dry-run standup proposals. Existing-Jira edit proposals with concrete `issue_key`/`changes` are staged and validated through the Stage-16 Jira staging tools, but the Standup path never calls live apply.
+- The Jira Configuration/tool trace bubble stays collapsed by default and expands to show websocket state, connector health, dry-run/live-write gates, tool traces, and detected cross-service associations.
 
 ## Future work
 
-1. Persist `standup_sessions`, `standup_messages`, `standup_agent_runs`, and `standup_proposals`.
-2. Add FastAPI websocket fanout with reconnect snapshots.
-3. Wire the frontend chat to the backend and MCP standup helpers.
-4. Add audited approval/edit/reject flows.
-5. Re-enable apply from Standup only after approval/RBAC gates are active.
+1. Add the full audited approval/edit/reject tray and enforce scrum-master/product-owner capability checks end-to-end.
+2. Re-enable apply from Standup only after approval/RBAC gates are active.
+3. Run the full rebuilt-stack websocket + agent + dry-run smoke and screen-share UI review.

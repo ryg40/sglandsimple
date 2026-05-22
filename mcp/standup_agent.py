@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 from llm import llm_model, structured
+from workflow.jira_template import render_jira_story
 
 
 DEFAULT_SUPPORTED_MODELS = {
@@ -34,6 +35,12 @@ URL_RE = re.compile(r"https?://[^\s<>\]\)\"']+", re.IGNORECASE)
 MENTION_RE = re.compile(r"(?<!\w)@([A-Za-z0-9._-]+)")
 JIRA_KEY_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?![A-Z0-9])")
 TRAILING_URL_PUNCT = ".,;:!?"
+DEFAULT_STANDUP_LABELS = ["standup-follow-up", "dry-run", "agent-proposed"]
+ACCEPTANCE_CRITERIA_FORMAT = [
+    "Given the standup context and linked evidence, when the owner starts the work, then the related Jira/Confluence/SNOW/Archer/GitHub references are reviewed and attached.",
+    "Given the implementation is complete, when it is reviewed, then validation evidence or screenshots are linked back to the Jira issue.",
+    "Given the work affects compliance proof, when it is closed, then the acceptance notes identify the control, risk, or blocker resolved.",
+]
 
 
 class UnsupportedStandupModel(RuntimeError):
@@ -105,7 +112,12 @@ outputs. Safety rules:
   selected_issue_keys, and may only use fields status, assignee, priority,
   story_points, summary, or duedate.
 - New Jira work must be a draft payload suitable for later review, not a live
-  create call.
+  create call. Use the supplied story_template_context: summary/description
+  shape, acceptance_criteria format, labels, priority/story_points guidance,
+  epic/workflow docs, and relevant Confluence/doc links.
+- For new_jira_work proposals, dry_run_payload should include summary,
+  description, issue_type, labels, priority, story_points, acceptance_criteria,
+  epic_link when available, related_links/doc_links when relevant, and dry_run.
 - If chat is vague (for example "the RDS thing"), use selected Jira rows and
   recently pasted links as context, and lower confidence rather than inventing.
 - Include source_message_ids and rationale for every proposal.
@@ -226,6 +238,163 @@ def build_link_context(
     ).model_dump(exclude_none=True)
 
 
+def _issue_fields(issue: dict[str, Any]) -> dict[str, Any]:
+    fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+    merged = dict(issue)
+    merged.update(fields)
+    return merged
+
+
+def _selected_epic_link(selected_issues: list[dict[str, Any]] | None, fallback_keys: list[str] | None = None) -> str | None:
+    for issue in selected_issues or []:
+        fields = _issue_fields(issue)
+        for key in ("epic_key", "customfield_epic_link", "parent", "key", "issue_key"):
+            value = fields.get(key)
+            if isinstance(value, dict):
+                value = value.get("key")
+            if value:
+                return str(value)
+    return (fallback_keys or [None])[0]
+
+
+def _doc_links(docs_context: list[dict[str, Any]] | None, detected_links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    links: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for doc in docs_context or []:
+        url = str(
+            doc.get("confluence_url")
+            or doc.get("url")
+            or doc.get("web_url")
+            or doc.get("link")
+            or ""
+        )
+        page_id = doc.get("confluence_page_id") or doc.get("page_id")
+        if not url and page_id:
+            url = f"confluence://{page_id}"
+        slug = str(doc.get("slug") or doc.get("path") or doc.get("id") or url)
+        if not slug and not url:
+            continue
+        identity = url or slug
+        if identity in seen:
+            continue
+        seen.add(identity)
+        links.append(
+            {
+                "title": doc.get("title") or slug,
+                "slug": slug,
+                "url": url,
+                "tags": list(doc.get("tags") or []),
+                "visibility": doc.get("visibility"),
+                "status": doc.get("status"),
+            }
+        )
+    for link in detected_links:
+        if link.get("service") != "confluence":
+            continue
+        url = str(link.get("url") or "")
+        if url and url not in seen:
+            seen.add(url)
+            links.append({"title": link.get("label") or "Confluence link", "url": url, "service": "confluence"})
+    return links
+
+
+def _template_labels(docs_context: list[dict[str, Any]] | None) -> list[str]:
+    labels = list(DEFAULT_STANDUP_LABELS)
+    for doc in docs_context or []:
+        labels.extend(str(tag) for tag in (doc.get("tags") or []) if tag)
+    return _dedupe([label.lower().replace(" ", "-") for label in labels])[:12]
+
+
+def build_story_template_context(
+    link_context: dict[str, Any],
+    *,
+    selected_issues: list[dict[str, Any]] | None = None,
+    docs_context: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Return deterministic Jira/story guidance for the LLM and dry-run payloads."""
+    epic_link = _selected_epic_link(selected_issues, link_context.get("jira_keys") or [])
+    template = render_jira_story(
+        {
+            "requirement": "Standup follow-up from meeting chat and selected Jira context",
+            "regulation": "Standup / compliance workflow",
+            "severity": "medium",
+        },
+        {"jira_key": epic_link or "STANDUP-1"},
+    )
+    workflow_docs = _doc_links(docs_context, link_context.get("links") or [])
+    selected_issue_summaries = []
+    for issue in selected_issues or []:
+        fields = _issue_fields(issue)
+        selected_issue_summaries.append(
+            {
+                "key": fields.get("key") or issue.get("key") or issue.get("issue_key"),
+                "summary": fields.get("summary"),
+                "status": (fields.get("status") or {}).get("name") if isinstance(fields.get("status"), dict) else fields.get("status"),
+                "priority": (fields.get("priority") or {}).get("name") if isinstance(fields.get("priority"), dict) else fields.get("priority"),
+                "epic_key": fields.get("epic_key") or fields.get("customfield_epic_link"),
+            }
+        )
+    return {
+        "story_template": template,
+        "new_jira_work_payload_contract": {
+            "issue_type": "Story/Task/Bug chosen from chat intent",
+            "summary": "Action-oriented Jira summary, prefixed with selected epic/key only when helpful",
+            "description": "Use the story template structure plus standup context, rationale, and source messages",
+            "acceptance_criteria": ACCEPTANCE_CRITERIA_FORMAT,
+            "labels": _template_labels(docs_context),
+            "priority_guidance": {
+                "Critical/Highest": "production outage, active blocker, P1/P2 incident, audit deadline at risk",
+                "High": "blocked sprint work, compliance risk, due soon, repeated owner ask",
+                "Medium": "normal follow-up or missing association",
+                "Low": "nice-to-have cleanup or documentation-only follow-up",
+            },
+            "story_point_guidance": {"1": "clarification/doc-only", "2-3": "small task", "5": "multi-step investigation", "8": "larger cross-service follow-up"},
+            "epic_link": epic_link,
+            "doc_links": workflow_docs,
+            "related_links": link_context.get("links") or [],
+            "dry_run": True,
+        },
+        "selected_issue_context": selected_issue_summaries,
+        "workflow_docs": workflow_docs,
+    }
+
+
+def _coerce_acceptance_criteria(value: Any) -> list[str]:
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if str(item).strip()]
+    elif isinstance(value, str) and value.strip():
+        items = [line.strip(" -") for line in value.splitlines() if line.strip(" -")]
+    else:
+        items = []
+    return items or list(ACCEPTANCE_CRITERIA_FORMAT)
+
+
+def _enrich_new_jira_payload(payload: dict[str, Any], proposal: dict[str, Any], template_context: dict[str, Any]) -> dict[str, Any]:
+    contract = template_context.get("new_jira_work_payload_contract") or {}
+    story_template = template_context.get("story_template") or {}
+    enriched = dict(payload)
+    enriched.setdefault("dry_run", True)
+    enriched.setdefault("issue_type", enriched.get("issuetype") or story_template.get("issuetype", {}).get("name") or "Story")
+    enriched.setdefault("summary", enriched.get("title") or proposal.get("title") or story_template.get("summary") or "Standup follow-up")
+    enriched.setdefault("description", story_template.get("description") or "Standup follow-up from meeting chat.")
+    enriched["acceptance_criteria"] = _coerce_acceptance_criteria(enriched.get("acceptance_criteria"))
+    enriched["labels"] = _dedupe([str(label) for label in (enriched.get("labels") or [])] + list(contract.get("labels") or []))
+    enriched.setdefault("priority", "Medium")
+    try:
+        points = float(enriched.get("story_points", 3))
+        enriched["story_points"] = int(points) if points.is_integer() else points
+    except (TypeError, ValueError):
+        enriched["story_points"] = 3
+    if contract.get("epic_link") and not enriched.get("epic_link"):
+        enriched["epic_link"] = contract["epic_link"]
+    if contract.get("doc_links") and not enriched.get("doc_links"):
+        enriched["doc_links"] = contract["doc_links"]
+    if contract.get("related_links") and not enriched.get("related_links"):
+        enriched["related_links"] = contract["related_links"]
+    enriched.setdefault("source_message_ids", proposal.get("source_message_ids") or [])
+    return enriched
+
+
 def _empty_result(link_context: dict[str, Any], model: str | None = None) -> dict[str, Any]:
     return {
         "summary": "",
@@ -240,7 +409,13 @@ def _empty_result(link_context: dict[str, Any], model: str | None = None) -> dic
     }
 
 
-def _normalise_agent_result(result: StandupAgentResult, link_context: dict[str, Any], model: str) -> dict[str, Any]:
+def _normalise_agent_result(
+    result: StandupAgentResult,
+    link_context: dict[str, Any],
+    model: str,
+    template_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    template_context = template_context or {}
     proposals: list[dict[str, Any]] = []
     for idx, proposal in enumerate(result.proposals, start=1):
         data = proposal.model_dump(exclude_none=True)
@@ -248,8 +423,11 @@ def _normalise_agent_result(result: StandupAgentResult, link_context: dict[str, 
         data["status"] = "proposed"
         data["dry_run"] = True
         payload = data.get("dry_run_payload") or {}
-        if isinstance(payload, dict):
-            payload.setdefault("dry_run", True)
+        if not isinstance(payload, dict):
+            payload = {"value": payload}
+        payload.setdefault("dry_run", True)
+        if data.get("type") == "new_jira_work":
+            payload = _enrich_new_jira_payload(payload, data, template_context)
         data["dry_run_payload"] = payload
         data.setdefault("source_message_ids", [])
         data.setdefault("rationale", "")
@@ -259,6 +437,7 @@ def _normalise_agent_result(result: StandupAgentResult, link_context: dict[str, 
     payload = result.model_dump(exclude_none=True)
     payload["proposals"] = proposals
     payload["link_context"] = link_context
+    payload["story_template_context"] = template_context
     payload["model"] = model
     payload["dry_run_only"] = True
     return payload
@@ -275,9 +454,16 @@ async def run_standup_summarize(
     """Plan standup follow-ups from chat/context without staging or writing."""
     clipped_messages = messages[-max_messages:] if max_messages > 0 else messages
     link_context = build_link_context(clipped_messages, selected_issues=selected_issues)
+    template_context = build_story_template_context(
+        link_context,
+        selected_issues=selected_issues,
+        docs_context=docs_context,
+    )
     model = assert_supported_model("planner")
     if not clipped_messages:
-        return _empty_result(link_context, model=model)
+        empty = _empty_result(link_context, model=model)
+        empty["story_template_context"] = template_context
+        return empty
 
     user_payload = {
         "trigger": trigger,
@@ -287,6 +473,7 @@ async def run_standup_summarize(
         "detected_jira_keys": link_context["jira_keys"],
         "detected_links": link_context["links"],
         "docs_context": docs_context or [],
+        "story_template_context": template_context,
         "allowed_existing_jira_edit_fields": ["status", "assignee", "priority", "story_points", "summary", "duedate"],
         "required_proposal_state": {"status": "proposed", "dry_run": True},
     }
@@ -297,7 +484,7 @@ async def run_standup_summarize(
         temperature=0.1,
         role="planner",
     )
-    return _normalise_agent_result(out, link_context, model)
+    return _normalise_agent_result(out, link_context, model, template_context)
 
 
 def render_markdown(payload: dict[str, Any]) -> str:

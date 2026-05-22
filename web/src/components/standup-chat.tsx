@@ -1,5 +1,6 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link2, MessageSquare, Radio, RefreshCw, UsersRound, WifiOff } from "lucide-react";
+import { useAuth } from "@/components/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,15 +11,22 @@ type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "local" | 
 type StandupChatMessage = {
   id: string;
   author: string;
+  authorEmail?: string;
   body: string;
   createdAt: string;
   pending?: boolean;
   source?: "seed" | "local" | "server";
 };
 
+type PresenceParticipant = {
+  id: string;
+  displayName: string;
+  email?: string;
+};
+
 type PresenceState = {
   count: number;
-  participants: string[];
+  participants: PresenceParticipant[];
 };
 
 type ConnectionState = {
@@ -26,9 +34,25 @@ type ConnectionState = {
   detail: string;
 };
 
+export type StandupAssociation = {
+  token: string;
+  kind: "jira" | "confluence" | "github" | "servicenow" | "archer" | "snowflake" | "mongodb" | "mention" | "url";
+  sourceMessageId: string;
+  sourceAuthor: string;
+};
+
+export type StandupTraceState = {
+  connection: ConnectionState;
+  presence: PresenceState;
+  messageCount: number;
+  associationCount: number;
+};
+
 type StandupChatProps = {
   sessionId?: string;
   onAssociationCountChange?: (count: number) => void;
+  onAssociationsChange?: (associations: StandupAssociation[]) => void;
+  onTraceChange?: (trace: StandupTraceState) => void;
 };
 
 const MAX_RECONNECT_ATTEMPTS = 2;
@@ -37,7 +61,7 @@ const INITIAL_MESSAGES: StandupChatMessage[] = [
   {
     id: "seed-1",
     author: "Scrum master",
-    body: "Keep notes here while triaging Jira. Live websocket persistence will attach when the Stage 20 endpoint is available.",
+    body: "Keep notes here while triaging Jira. Live websocket persistence keeps the session available across refreshes.",
     createdAt: "09:00",
     source: "seed",
   },
@@ -79,6 +103,7 @@ function normalizeMessage(raw: unknown): StandupChatMessage | null {
   return {
     id: String(record.id ?? record.message_id ?? makeId("server")),
     author: typeof author === "string" && author.trim() ? author : "Participant",
+    authorEmail: typeof record.author_email === "string" ? record.author_email : undefined,
     body,
     createdAt: formatTime(record.createdAt ?? record.created_at ?? record.timestamp),
     source: "server",
@@ -102,12 +127,36 @@ function extractTokens(body: string) {
   return Array.from(body.matchAll(TOKEN_PATTERN), (match) => match[0]);
 }
 
-function getAssociationCount(messages: StandupChatMessage[]) {
-  const tokens = new Set<string>();
+function classifyToken(token: string): StandupAssociation["kind"] {
+  const lower = token.toLowerCase();
+  if (token.startsWith("@")) return "mention";
+  if (/^[A-Z][A-Z0-9]+-\d+$/.test(token) || lower.includes("jira")) return "jira";
+  if (lower.includes("confluence") || lower.includes("/wiki/")) return "confluence";
+  if (lower.includes("github.com")) return "github";
+  if (lower.includes("servicenow") || lower.includes("snow") || /\b(?:inc|chg|ritm)\d+\b/i.test(token)) return "servicenow";
+  if (lower.includes("archer")) return "archer";
+  if (lower.includes("snowflake")) return "snowflake";
+  if (lower.includes("mongodb") || lower.includes("mongo")) return "mongodb";
+  return "url";
+}
+
+function getAssociations(messages: StandupChatMessage[]) {
+  const byKey = new Map<string, StandupAssociation>();
   for (const message of messages) {
-    extractTokens(message.body).forEach((token) => tokens.add(token));
+    for (const token of extractTokens(message.body)) {
+      const kind = classifyToken(token);
+      const key = `${kind}:${token}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          token,
+          kind,
+          sourceMessageId: message.id,
+          sourceAuthor: message.author,
+        });
+      }
+    }
   }
-  return tokens.size;
+  return Array.from(byKey.values());
 }
 
 function getWsUrl(sessionId: string) {
@@ -125,16 +174,24 @@ function normalizePresence(raw: Record<string, unknown>): PresenceState | null {
   const participantsRaw = raw.participants ?? raw.users ?? raw.members;
   const participants = Array.isArray(participantsRaw)
     ? participantsRaw
-        .map((participant) => {
-          if (typeof participant === "string") return participant;
+        .map((participant, index): PresenceParticipant | null => {
+          if (typeof participant === "string") return { id: participant, displayName: participant };
           if (participant && typeof participant === "object") {
             const record = participant as Record<string, unknown>;
-            const name = record.name ?? record.author ?? record.user ?? record.id;
-            return typeof name === "string" ? name : null;
+            const name = record.display_name ?? record.name ?? record.author ?? record.user ?? record.id;
+            const email = record.email;
+            const id = record.client_id ?? record.id ?? email ?? name ?? index;
+            return typeof name === "string" && name.trim()
+              ? {
+                  id: String(id),
+                  displayName: name,
+                  email: typeof email === "string" && email.trim() ? email : undefined,
+                }
+              : null;
           }
           return null;
         })
-        .filter((participant): participant is string => Boolean(participant))
+        .filter((participant): participant is PresenceParticipant => Boolean(participant))
     : [];
   const countRaw = raw.count ?? raw.online ?? raw.participant_count;
   const count = typeof countRaw === "number" ? countRaw : participants.length;
@@ -187,26 +244,55 @@ function statusBadgeVariant(status: ConnectionStatus) {
   return "warning";
 }
 
-export function StandupChat({ sessionId = "daily-standup", onAssociationCountChange }: StandupChatProps) {
+export function StandupChat({
+  sessionId = "daily-standup",
+  onAssociationCountChange,
+  onAssociationsChange,
+  onTraceChange,
+}: StandupChatProps) {
+  const { me } = useAuth();
   const [messages, setMessages] = useState<StandupChatMessage[]>(INITIAL_MESSAGES);
   const [draft, setDraft] = useState("");
   const [connection, setConnection] = useState<ConnectionState>({
     status: "connecting",
     detail: "Opening live standup websocket…",
   });
-  const [presence, setPresence] = useState<PresenceState>({ count: 1, participants: ["You"] });
+  const [presence, setPresence] = useState<PresenceState>({ count: 1, participants: [{ id: "local", displayName: "You" }] });
   const [retryToken, setRetryToken] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clientIdRef = useRef(makeId("client"));
-  const authorRef = useRef(`Browser ${clientIdRef.current.slice(-4)}`);
+  const fallbackAuthor = useMemo(() => `Browser ${clientIdRef.current.slice(-4)}`, []);
+  const displayName = me?.authenticated && me.user?.display_name ? me.user.display_name : fallbackAuthor;
+  const email = me?.authenticated && me.user?.email ? me.user.email : "";
+  const authorRef = useRef(displayName);
+  const emailRef = useRef(email);
 
-  const associationCount = useMemo(() => getAssociationCount(messages), [messages]);
+  useEffect(() => {
+    authorRef.current = displayName;
+    emailRef.current = email;
+  }, [displayName, email]);
+
+  const associations = useMemo(() => getAssociations(messages), [messages]);
+  const associationCount = associations.length;
 
   useEffect(() => {
     onAssociationCountChange?.(associationCount);
   }, [associationCount, onAssociationCountChange]);
+
+  useEffect(() => {
+    onAssociationsChange?.(associations);
+  }, [associations, onAssociationsChange]);
+
+  useEffect(() => {
+    onTraceChange?.({
+      connection,
+      presence,
+      messageCount: messages.length,
+      associationCount,
+    });
+  }, [associationCount, connection, messages.length, onTraceChange, presence]);
 
   const handleServerEvent = useCallback((raw: string) => {
     let parsed: unknown;
@@ -283,6 +369,8 @@ export function StandupChat({ sessionId = "daily-standup", onAssociationCountCha
           session_id: sessionId,
           client_id: clientIdRef.current,
           author: authorRef.current,
+          display_name: authorRef.current,
+          email: emailRef.current,
         }),
       );
     };
@@ -325,12 +413,13 @@ export function StandupChat({ sessionId = "daily-standup", onAssociationCountCha
       if (socketRef.current === ws) socketRef.current = null;
       ws.close();
     };
-  }, [handleServerEvent, retryToken, sessionId]);
+  }, [displayName, email, handleServerEvent, retryToken, sessionId]);
 
   function addLocalMessage(body: string, pending = false) {
     const message: StandupChatMessage = {
       id: makeId(pending ? "client" : "local"),
-      author: "You",
+      author: authorRef.current || "You",
+      authorEmail: emailRef.current,
       body,
       createdAt: formatTime(undefined),
       pending,
@@ -376,6 +465,8 @@ export function StandupChat({ sessionId = "daily-standup", onAssociationCountCha
           id: message.id,
           client_id: clientIdRef.current,
           author: authorRef.current,
+          display_name: authorRef.current,
+          email: emailRef.current,
           body,
         }),
       );
@@ -419,8 +510,8 @@ export function StandupChat({ sessionId = "daily-standup", onAssociationCountCha
             <UsersRound className="size-3.5" />
             <span>{presence.count} present</span>
             {presence.participants.slice(0, 4).map((participant) => (
-              <Badge key={participant} variant="outline" className="text-[10px]">
-                {participant}
+              <Badge key={participant.id} variant="outline" className="text-[10px]" title={participant.email}>
+                {participant.displayName}
               </Badge>
             ))}
           </div>

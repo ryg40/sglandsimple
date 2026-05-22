@@ -14,6 +14,7 @@ import asyncio
 import json
 import sys
 import time
+import urllib.request
 from typing import Any
 
 try:
@@ -24,6 +25,13 @@ except ImportError as exc:  # pragma: no cover - operator guidance
 
 def _default_url() -> str:
     return f"ws://localhost:5452/api/standup/ws/smoke-{int(time.time())}"
+
+
+def _snapshot_url(ws_url: str) -> str:
+    base, session_id = ws_url.split("/api/standup/ws/", 1)
+    session_id = session_id.split("?", 1)[0]
+    http_base = base.replace("ws://", "http://", 1).replace("wss://", "https://", 1)
+    return f"{http_base}/api/standup/sessions/{session_id}/snapshot"
 
 
 async def _send(ws: Any, event_type: str, **payload: Any) -> None:
@@ -61,15 +69,21 @@ async def main() -> int:
         assert "bob" in message.get("mentions", []), message
         assert "ABC-123" in message.get("jira_keys", []), message
 
-        await _send(bob, "agent.summarize")
-        proposed = await _recv_until(alice, "proposal.updated")
-        await _recv_until(bob, "proposal.updated")
-        proposal_id = proposed.get("proposal", {}).get("id")
+        await _send(bob, "agent.summarize", trigger="smoke", selected_issues=[{"key": "ABC-123"}])
+        proposed = await _recv_until(alice, "proposal.updated", timeout=30)
+        await _recv_until(bob, "proposal.updated", timeout=30)
+        proposal = proposed.get("proposal", {})
+        proposal_id = proposal.get("id")
         assert proposal_id, proposed
+        assert proposal.get("status") == "proposed", proposal
+        assert proposal.get("dry_run") is True, proposal
+        assert isinstance(proposal.get("dry_run_payload"), dict), proposal
+        assert isinstance(proposal.get("validation_state"), dict), proposal
 
-        await _send(alice, "proposal.approve", proposal_id=proposal_id)
-        approved = await _recv_until(bob, "proposal.updated")
-        assert approved.get("proposal", {}).get("status") == "approved", approved
+        with urllib.request.urlopen(_snapshot_url(url), timeout=5) as response:
+            snapshot = json.loads(response.read().decode("utf-8"))
+        proposal_ids = [item.get("id") for item in snapshot.get("proposals", [])]
+        assert proposal_id in proposal_ids, snapshot
 
     print(f"standup websocket smoke passed: {url}")
     return 0

@@ -102,6 +102,20 @@ def parse_links_mentions(body: str) -> dict[str, Any]:
     return {"links": links, "mentions": mentions, "jira_keys": jira_keys}
 
 
+def _proposal_validation_state(raw: dict[str, Any], staging: dict[str, Any] | None) -> dict[str, Any]:
+    if staging:
+        state = str(staging.get("state") or "staged")
+        return {"state": state, "details": deepcopy(staging)}
+    proposal_type = str(raw.get("type") or "")
+    target = str(raw.get("target_service") or "")
+    if proposal_type == "new_jira_work" or target == "jira":
+        return {
+            "state": "not_staged",
+            "reason": "retained as a dry-run standup proposal until HITL approval/apply is available",
+        }
+    return {"state": "not_required", "reason": "proposal does not require Stage-16 Jira validation"}
+
+
 class StandupStore:
     """Tiny async facade around a JSON file for standup session state."""
 
@@ -132,7 +146,7 @@ class StandupStore:
             self._save(data)
             return self._snapshot(session)
 
-    async def add_message(self, session_id: str, *, author: str, body: str, kind: str = "chat") -> dict[str, Any]:
+    async def add_message(self, session_id: str, *, author: str, body: str, kind: str = "chat", author_email: str = "") -> dict[str, Any]:
         body = body.strip()
         if not body:
             raise ValueError("message body is required")
@@ -144,6 +158,7 @@ class StandupStore:
                 "id": uuid.uuid4().hex,
                 "session_id": session_id,
                 "author": author or "anonymous",
+                "author_email": author_email or "",
                 "body": body,
                 "kind": kind or "chat",
                 "links": parsed["links"],
@@ -158,7 +173,76 @@ class StandupStore:
             self._save(data)
             return deepcopy(message)
 
-    async def create_summary_placeholder(self, session_id: str, *, actor: str) -> dict[str, Any]:
+    async def persist_agent_result(
+        self,
+        session_id: str,
+        *,
+        actor: str,
+        trigger: str,
+        agent_result: dict[str, Any],
+        staging_results: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Persist one standup agent run and its dry-run proposals."""
+        async with self._lock:
+            data = self._load()
+            session = self._ensure_session(data, session_id)
+            now = utc_now()
+            run_id = f"standup-run-{uuid.uuid4().hex[:12]}"
+            staging_results = staging_results or {}
+            proposals: list[dict[str, Any]] = []
+            for idx, raw in enumerate(agent_result.get("proposals") or [], start=1):
+                if not isinstance(raw, dict):
+                    continue
+                proposal_id = str(raw.get("id") or f"standup-prop-{uuid.uuid4().hex[:12]}")
+                dry_run_payload = raw.get("dry_run_payload") if isinstance(raw.get("dry_run_payload"), dict) else {}
+                dry_run_payload.setdefault("dry_run", True)
+                dry_run_payload.setdefault("agent_run_id", run_id)
+                proposals.append(
+                    {
+                        "id": proposal_id,
+                        "session_id": session_id,
+                        "agent_run_id": run_id,
+                        "type": str(raw.get("type") or "meeting_followup"),
+                        "target_service": str(raw.get("target_service") or "standup"),
+                        "title": str(raw.get("title") or raw.get("type") or f"Proposal {idx}"),
+                        "rationale": str(raw.get("rationale") or ""),
+                        "dry_run_payload": dry_run_payload,
+                        "validation_state": _proposal_validation_state(raw, staging_results.get(proposal_id)),
+                        "status": "proposed",
+                        "dry_run": True,
+                        "source_message_ids": list(raw.get("source_message_ids") or []),
+                        "confidence": raw.get("confidence"),
+                        "created_by": actor or "anonymous",
+                        "created_at": now,
+                        "updated_at": now,
+                        "approval": None,
+                    }
+                )
+
+            run = {
+                "id": run_id,
+                "session_id": session_id,
+                "trigger": trigger or "manual",
+                "summary": agent_result.get("summary") or "",
+                "decisions": agent_result.get("decisions") or [],
+                "risks_blockers": agent_result.get("risks_blockers") or [],
+                "follow_ups": agent_result.get("follow_ups") or [],
+                "service_associations": agent_result.get("service_associations") or [],
+                "proposal_ids": [proposal["id"] for proposal in proposals],
+                "proposal_count": len(proposals),
+                "model": agent_result.get("model"),
+                "dry_run_only": True,
+                "created_by": actor or "anonymous",
+                "created_at": now,
+                "staging_results": staging_results,
+            }
+            session["agent_runs"].append(run)
+            session["proposals"].extend(proposals)
+            session["session"]["updated_at"] = now
+            self._save(data)
+            return {"agent_run": deepcopy(run), "proposals": deepcopy(proposals)}
+
+    async def create_summary_placeholder(self, session_id: str, *, actor: str, error: str | None = None) -> dict[str, Any]:
         async with self._lock:
             data = self._load()
             session = self._ensure_session(data, session_id)
@@ -170,12 +254,15 @@ class StandupStore:
                 "type": "meeting_followup",
                 "target_service": "standup",
                 "title": "Agent summary requested",
-                "rationale": "Placeholder only: no LLM call, Jira staging, or external write was performed by the websocket handler.",
+                "rationale": "Fallback placeholder only: no Jira staging or external write was performed by the websocket handler.",
                 "dry_run_payload": {
-                    "summary": "Agent summarization placeholder pending MCP standup_summarize integration.",
+                    "summary": "Agent summarization unavailable; captured request as a dry-run proposal.",
                     "message_count": len(session["messages"]),
                     "recent_links": [link for msg in recent_messages for link in msg.get("links", [])],
+                    "error": error,
+                    "dry_run": True,
                 },
+                "validation_state": {"state": "not_staged", "reason": "agent summary unavailable; placeholder only"},
                 "status": "proposed",
                 "dry_run": True,
                 "source_message_ids": [msg["id"] for msg in recent_messages],
