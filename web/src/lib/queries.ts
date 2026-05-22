@@ -28,6 +28,13 @@ import type {
   JiraValidateResult,
   JiraRevertResult,
   JiraApplyResult,
+  DocsTreeResponse,
+  Doc,
+  DocUpsertResult,
+  DocFlagsResult,
+  DocsSearchResponse,
+  DocsSyncResponse,
+  DocsAgentResponse,
 } from "./types";
 
 export const keys = {
@@ -294,5 +301,99 @@ export function useApplyJira() {
   return useMutation({
     mutationFn: (issue_keys?: string[]) => api.post<JiraApplyResult>("/api/jira/apply", { issue_keys }),
     onSuccess: () => qc.invalidateQueries({ queryKey: jiraKeys.issues }),
+  });
+}
+
+// ---- Stage 14 — Docs Wiki -------------------------------------------------
+
+export const docsKeys = {
+  tree: (tag?: string, status?: string, visibility?: string) =>
+    ["docs-tree", tag ?? "", status ?? "", visibility ?? ""] as const,
+  doc: (slug: string) => ["docs-doc", slug] as const,
+  search: (q: string) => ["docs-search", q] as const,
+};
+
+export function useDocsTree(opts?: { tag?: string; status?: string; visibility?: string }) {
+  const { tag, status, visibility } = opts ?? {};
+  return useQuery({
+    queryKey: docsKeys.tree(tag, status, visibility),
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (tag) params.set("tag", tag);
+      if (status) params.set("status", status);
+      if (visibility) params.set("visibility", visibility);
+      const qs = params.toString();
+      return api.get<DocsTreeResponse>(`/api/docs/tree${qs ? `?${qs}` : ""}`);
+    },
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useDoc(slug: string | null) {
+  return useQuery({
+    queryKey: docsKeys.doc(slug ?? ""),
+    queryFn: () => api.get<Doc>(`/api/docs/${slug}`),
+    enabled: !!slug,
+  });
+}
+
+export function useDocsSearch(q: string) {
+  return useQuery({
+    queryKey: docsKeys.search(q),
+    queryFn: () => api.get<DocsSearchResponse>(`/api/docs/search?q=${encodeURIComponent(q)}`),
+    enabled: q.length >= 2,
+  });
+}
+
+export function useUpsertDoc() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (doc: {
+      slug: string;
+      path?: string;
+      title?: string;
+      body_md?: string;
+      tags?: string[];
+      status?: string;
+      visibility?: string;
+      owner?: string;
+      note?: string;
+    }) => api.post<DocUpsertResult>("/api/docs", doc),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["docs-tree"] });
+      qc.invalidateQueries({ queryKey: docsKeys.doc(vars.slug) });
+    },
+  });
+}
+
+export function useSetDocFlags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { slug: string; status?: string; visibility?: string; tags?: string[] }) =>
+      api.post<DocFlagsResult>(`/api/docs/${a.slug}/flags`, {
+        status: a.status,
+        visibility: a.visibility,
+        tags: a.tags,
+      }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["docs-tree"] });
+      qc.invalidateQueries({ queryKey: docsKeys.doc(vars.slug) });
+    },
+  });
+}
+
+export function useDocsSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug?: string) => api.post<DocsSyncResponse>("/api/docs/sync", slug ? { slug } : {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["docs-tree"] }),
+  });
+}
+
+export function useDocsAgent() {
+  return useMutation({
+    mutationFn: (limit_suggestions?: number) =>
+      api.post<DocsAgentResponse>("/api/docs/agent", limit_suggestions !== undefined ? { limit_suggestions } : {}),
   });
 }

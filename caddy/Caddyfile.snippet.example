@@ -3,7 +3,11 @@
 # real Caddyfile. The .local copy is gitignored.
 #
 # Your Caddy container must be attached to the external `proxy` network so it
-# can resolve `sglandsimple-agent` by container name.
+# can resolve `sglandsimple-agent` and `sglandsimple-mcp` by container name.
+#
+# MCP is LAN-only by default in compose. If you intentionally expose it through
+# Caddy, require MCP_AUTH_TOKEN and keep the `flush_interval -1` setting so SSE
+# events are not buffered.
 
 your-host.example.com {
     encode zstd gzip
@@ -11,4 +15,12 @@ your-host.example.com {
         # Stream tokens through if you later enable streaming in the agent.
         flush_interval -1
     }
+
+    # Optional public MCP endpoint for Streamable-HTTP clients.
+    # Uncomment only after setting MCP_AUTH_TOKEN.
+    # handle_path /mcp* {
+    #     reverse_proxy sglandsimple-mcp:8080 {
+    #         flush_interval -1
+    #     }
+    # }
 }

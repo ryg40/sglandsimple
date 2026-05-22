@@ -507,7 +507,9 @@ async def get_rows(
     skip = max(0, int(skip))
     limit = max(1, min(int(limit), LIMIT_CEILING))
     try:
-        total = await coll.estimated_document_count()
+        # S6.followups.1: accurate count so the grid header doesn't drift after
+        # writes (collections are tiny; the exact count is cheap here).
+        total = await coll.count_documents({})
         cursor = coll.find({})
         if sort:
             cursor = cursor.sort(list(sort.items()))

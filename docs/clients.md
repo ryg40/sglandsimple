@@ -1,14 +1,18 @@
 # Connecting external MCP clients
 
 The MCP server at `mcp:8080/mcp` (host port `${MCP_PORT}`, default `5451`)
-speaks JSON-RPC 2.0 over HTTP POST with an SSE keepalive on `GET /mcp`.
-Stage 3 adds:
+speaks JSON-RPC 2.0 over HTTP POST with a per-session SSE stream on
+`GET /mcp`. Stage 3 adds:
 
 - A `Mcp-Session-Id` header returned on `initialize` and required on
 every subsequent request.
 - Optional bearer auth via `MCP_AUTH_TOKEN`. If unset, the server logs a
 startup warning and accepts unauthenticated requests.
 - A per-session token-bucket rate limit (`MCP_RATE_PER_MIN`, default 60).
+- `GET /mcp` SSE framing (`event: ready`, `event: ping`, and
+  `event: message` for mirrored JSON-RPC responses). Normal POST responses
+  remain synchronous for compatibility; clients can opt into SSE-only POST
+  delivery with `Prefer: respond-async` or `X-MCP-Response-Mode: sse`.
 
 ---
 
@@ -178,12 +182,32 @@ If `MCP_AUTH_TOKEN` is unset on the server, omit the `headers` block.
 Most generic Streamable-HTTP clients want:
 
 - URL: `http://<your-host>:5451/mcp`
-- Method: POST for requests; GET for the keepalive SSE stream
+- Method: POST for requests; GET for the per-session SSE stream
 - Headers:
   - `Content-Type: application/json`
   - `Authorization: Bearer <MCP_AUTH_TOKEN>` (if set)
   - `Mcp-Session-Id: <id from initialize response>` on every call after
-    the first `initialize` exchange
+    the first `initialize` exchange, including `GET /mcp`
+
+`GET /mcp` emits:
+
+- `event: ready` once when the stream opens
+- `event: ping` every ~15 seconds while idle
+- `event: message` with JSON-RPC responses mirrored from POST calls for the
+  same session
+
+By default POST still returns the JSON-RPC response synchronously. If a client
+keeps `GET /mcp` open and wants the response only on that SSE stream, add one
+of these request headers to the POST:
+
+```http
+Prefer: respond-async
+# or
+X-MCP-Response-Mode: sse
+```
+
+The POST then returns HTTP `202` and the JSON-RPC response is delivered as an
+SSE `message` event.
 
 ## Quick smoke test (curl)
 
@@ -191,29 +215,60 @@ Most generic Streamable-HTTP clients want:
 # 1. initialize; grab the session id from the response header
 SID=$(curl -sS -i http://localhost:5451/mcp \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer $MCP_AUTH_TOKEN' \
+  ${MCP_AUTH_TOKEN:+-H "Authorization: Bearer $MCP_AUTH_TOKEN"} \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-  | awk '/^mcp-session-id:/ {print $2}' | tr -d '\r')
+  | awk '/^[Mm]cp-[Ss]ession-[Ii]d:/ {print $2}' | tr -d '\r')
 
 # 2. list tools using that session
 curl -sS http://localhost:5451/mcp \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  ${MCP_AUTH_TOKEN:+-H "Authorization: Bearer $MCP_AUTH_TOKEN"} \
   -H "Mcp-Session-Id: $SID" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq '.result.tools | map(.name)'
 
 # 3. call ask_data
 curl -sS http://localhost:5451/mcp \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  ${MCP_AUTH_TOKEN:+-H "Authorization: Bearer $MCP_AUTH_TOKEN"} \
   -H "Mcp-Session-Id: $SID" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ask_data","arguments":{"question":"open tickets per priority"}}}'
 ```
 
+## SSE smoke test (curl)
+
+Open a receive stream with the session id:
+
+```bash
+curl -N http://localhost:5451/mcp \
+  ${MCP_AUTH_TOKEN:+-H "Authorization: Bearer $MCP_AUTH_TOKEN"} \
+  -H "Mcp-Session-Id: $SID"
+```
+
+In another shell, send a request through the same session. The synchronous
+response is still returned by POST and also appears as `event: message` on the
+SSE stream:
+
+```bash
+curl -sS http://localhost:5451/mcp \
+  -H 'Content-Type: application/json' \
+  ${MCP_AUTH_TOKEN:+-H "Authorization: Bearer $MCP_AUTH_TOKEN"} \
+  -H "Mcp-Session-Id: $SID" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"ping"}'
+```
+
+For SSE-only delivery:
+
+```bash
+curl -i http://localhost:5451/mcp \
+  -H 'Content-Type: application/json' \
+  ${MCP_AUTH_TOKEN:+-H "Authorization: Bearer $MCP_AUTH_TOKEN"} \
+  -H "Mcp-Session-Id: $SID" \
+  -H 'Prefer: respond-async' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/list"}'
+# HTTP 202; response arrives as event: message on GET /mcp
+```
+
 ## Notes
 
-- The `GET /mcp` SSE stream currently emits only `event: ping` keepalives.
-  Stage 3.2 (deferred) wires per-session response push for clients that
-  prefer to receive responses on SSE rather than as the POST result.
 - Streaming chat completions (`stream: true`) is not supported by the
   agent. MCP tool calls are non-streaming JSON-RPC and are unaffected.

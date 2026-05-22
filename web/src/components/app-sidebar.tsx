@@ -10,6 +10,7 @@ import {
   Shield,
   Clock,
   Network,
+  BookText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCollections } from "@/lib/queries";
@@ -31,6 +32,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/hub", label: "Compliance Hub", icon: Shield },
       { to: "/architecture", label: "Architecture", icon: Network },
       { to: "/workflow", label: "Workflow Orchestrator", icon: Clock },
+      { to: "/docs", label: "Docs Wiki", icon: BookText },
     ],
   },
 ];

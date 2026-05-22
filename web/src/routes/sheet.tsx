@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -30,10 +30,21 @@ export default function SheetPanel() {
   const [active, setActive] = useState<string | null>(null);
   const [skip, setSkip] = useState(0);
   const [nl, setNl] = useState("");
+  // Extra columns discovered from NL applied ops (fields not on current page)
+  const [nlExtraColumns, setNlExtraColumns] = useState<string[]>([]);
 
   useEffect(() => {
     if (!active && cols.data?.collections.length) setActive(cols.data.collections[0].name);
   }, [cols.data, active]);
+
+  // Reset NL extra columns when switching collections
+  const prevActiveRef = useRef(active);
+  useEffect(() => {
+    if (prevActiveRef.current !== active) {
+      setNlExtraColumns([]);
+      prevActiveRef.current = active;
+    }
+  }, [active]);
 
   const rows = useSheetRows(active, skip, PAGE);
   const updateCell = useUpdateCell();
@@ -44,16 +55,43 @@ export default function SheetPanel() {
   const columns = useMemo(() => {
     const seen: string[] = [];
     for (const r of rows.data?.rows ?? []) for (const k of Object.keys(r)) if (!seen.includes(k)) seen.push(k);
+    // Union in any extra fields discovered from NL applied ops
+    for (const k of nlExtraColumns) if (!seen.includes(k)) seen.push(k);
     return seen.sort((a, b) => (a === "_id" ? -1 : b === "_id" ? 1 : 0));
-  }, [rows.data]);
+  }, [rows.data, nlExtraColumns]);
 
   const [edit, setEdit] = useState<{ id: string; field: string } | null>(null);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState<string>("");
+
+  /** True if the field value is a boolean. */
+  function isBoolField(r: Row, field: string): boolean {
+    return typeof r[field] === "boolean";
+  }
+
+  /** True if the field value is an array of strings (tag editor). */
+  function isStringArrayField(r: Row, field: string): boolean {
+    const v = r[field];
+    return Array.isArray(v) && (v.length === 0 || typeof v[0] === "string");
+  }
 
   function beginEdit(r: Row, field: string) {
     if (field === "_id") return;
     setEdit({ id: String(r._id), field });
-    setDraft(fmt(r[field]));
+    if (isStringArrayField(r, field)) {
+      setDraft((r[field] as string[]).join(", "));
+    } else {
+      setDraft(fmt(r[field]));
+    }
+  }
+
+  async function commitValue(r: Row, field: string, value: unknown) {
+    setEdit(null);
+    try {
+      await updateCell.mutateAsync({ collection: active!, _id: String(r._id), field, value, skip, limit: PAGE });
+      toast.success(`Updated ${field}`);
+    } catch (e) {
+      toast.error(`Save failed: ${(e as Error).message}`);
+    }
   }
 
   async function commit(r: Row, field: string) {
@@ -111,7 +149,12 @@ export default function SheetPanel() {
     try {
       const res = await applyNl.mutateAsync({ collection: active, instruction });
       if (res.isError || res.error) toast.error(res.error || res.summary || "failed", { id });
-      else toast.success(`${(res.applied ?? []).length} op(s) applied`, { id });
+      else {
+        // Union any newly-set fields from applied ops into the visible column set
+        const newFields = (res.applied ?? []).map((op) => op.field).filter((f): f is string => !!f);
+        if (newFields.length) setNlExtraColumns((prev) => [...new Set([...prev, ...newFields])]);
+        toast.success(`${(res.applied ?? []).length} op(s) applied`, { id });
+      }
       setNl("");
     } catch (err) {
       toast.error(`NL failed: ${(err as Error).message}`, { id });
@@ -208,7 +251,40 @@ export default function SheetPanel() {
                             : "cursor-cell"
                         )}
                       >
-                        {editing ? (
+                        {editing && isBoolField(r, c) ? (
+                          // Boolean: render a checkbox that commits immediately on change
+                          <input
+                            autoFocus
+                            type="checkbox"
+                            defaultChecked={r[c] as boolean}
+                            onChange={(e) => { commitValue(r, c, e.target.checked); }}
+                            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setEdit(null); } }}
+                            className="cursor-pointer"
+                          />
+                        ) : editing && isStringArrayField(r, c) ? (
+                          // String array: comma-separated tag editor
+                          <input
+                            autoFocus
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onBlur={() => {
+                              setEdit(null);
+                              const tags = draft.split(",").map((s) => s.trim()).filter(Boolean);
+                              const orig = (r[c] as string[]).join(", ");
+                              if (draft.trim() !== orig) commitValue(r, c, tags);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                const tags = draft.split(",").map((s) => s.trim()).filter(Boolean);
+                                commitValue(r, c, tags);
+                              }
+                              if (e.key === "Escape") { e.preventDefault(); setEdit(null); }
+                            }}
+                            placeholder="tag1, tag2, tag3"
+                            className="w-full min-w-40 rounded border border-ring bg-card px-1.5 py-0.5 text-sm focus-visible:outline-none"
+                          />
+                        ) : editing ? (
                           <input
                             autoFocus
                             value={draft}
@@ -220,6 +296,21 @@ export default function SheetPanel() {
                             }}
                             className="w-full min-w-32 rounded border border-ring bg-card px-1.5 py-0.5 text-sm focus-visible:outline-none"
                           />
+                        ) : isBoolField(r, c) ? (
+                          // Boolean display: read-only checkbox (click to enter edit mode)
+                          <input
+                            type="checkbox"
+                            checked={r[c] as boolean}
+                            readOnly
+                            className="cursor-cell"
+                          />
+                        ) : isStringArrayField(r, c) ? (
+                          // String array display: comma-joined chips
+                          <span className="block max-w-80 truncate text-xs">
+                            {(r[c] as string[]).map((tag, i) => (
+                              <span key={i} className="mr-1 inline-block rounded bg-muted px-1.5 py-0.5">{tag}</span>
+                            ))}
+                          </span>
                         ) : (
                           <span className="block max-w-80 truncate">{fmt(r[c])}</span>
                         )}

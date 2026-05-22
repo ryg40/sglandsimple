@@ -6,9 +6,9 @@ Implements the subset of the Model Context Protocol needed for tools:
 - tools/list
 - tools/call
 
-Transport is JSON-RPC 2.0 over HTTP POST at /mcp. A simple GET at /mcp
-returns an SSE stream that stays open for clients that expect one; this
-server is stateless and does not push server-initiated messages.
+Transport is JSON-RPC 2.0 over HTTP POST at /mcp. GET /mcp returns a
+per-session SSE stream with keepalives and JSON-RPC response events for
+clients that keep a Streamable-HTTP receive stream open.
 """
 
 from __future__ import annotations
@@ -1462,7 +1462,7 @@ SESSION_HEADER = "Mcp-Session-Id"
 
 
 class _Session:
-    __slots__ = ("id", "last_seen", "tokens", "last_refill")
+    __slots__ = ("id", "last_seen", "tokens", "last_refill", "events", "event_seq", "sse_clients")
 
     def __init__(self, sid: str):
         self.id = sid
@@ -1470,6 +1470,12 @@ class _Session:
         # Token-bucket: full to start, refills at MCP_RATE_PER_MIN per 60s.
         self.tokens = float(MCP_RATE_PER_MIN)
         self.last_refill = _time.time()
+        # Per-session SSE queue. JSON-RPC responses are mirrored here so
+        # Streamable-HTTP clients can consume them from GET /mcp while legacy
+        # clients still receive the normal synchronous POST response.
+        self.events: asyncio.Queue[str] = asyncio.Queue(maxsize=100)
+        self.event_seq = 0
+        self.sse_clients = 0
 
 
 _sessions: dict[str, _Session] = {}
@@ -1509,6 +1515,34 @@ def _unauthorized() -> JSONResponse:
 
 def _too_many() -> JSONResponse:
     return JSONResponse(_error(None, -32002, "Rate limit exceeded"), status_code=429)
+
+
+def _wants_sse_post_response(request: Request) -> bool:
+    """Opt-in async response routing for clients with an open GET /mcp stream."""
+    prefer = request.headers.get("Prefer", "").lower()
+    mode = request.headers.get("X-MCP-Response-Mode", "").lower()
+    return "respond-async" in prefer or mode == "sse"
+
+
+def _sse(event: str, data: str, event_id: int | None = None) -> str:
+    # Split data lines per SSE framing rules. JSON payloads are normally one
+    # line, but this keeps the function correct for any future pretty payload.
+    prefix = f"id: {event_id}\n" if event_id is not None else ""
+    lines = "\n".join(f"data: {line}" for line in data.splitlines() or [""])
+    return f"{prefix}event: {event}\n{lines}\n\n"
+
+
+async def _enqueue_sse_response(sess: _Session, payload: Any, *, force: bool = False) -> None:
+    if not force and sess.sse_clients < 1:
+        return
+    sess.event_seq += 1
+    event = _sse("message", json.dumps(payload, separators=(",", ":")), sess.event_seq)
+    if sess.events.full():
+        try:
+            sess.events.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+    await sess.events.put(event)
 
 
 app = FastAPI(title="sglandsimple MCP server")
@@ -1586,14 +1620,22 @@ async def mcp_post(request: Request) -> Response:
             return _too_many()
         sess.tokens -= 1.0
 
+    wants_sse = _wants_sse_post_response(request)
+
     if isinstance(msg, list):
         responses = [r for r in [await _handle_rpc(m) for m in msg] if r is not None]
         if not responses:
+            return Response(status_code=202, headers=response_headers)
+        await _enqueue_sse_response(sess, responses, force=wants_sse)
+        if wants_sse:
             return Response(status_code=202, headers=response_headers)
         return JSONResponse(responses, headers=response_headers)
 
     resp = await _handle_rpc(msg)
     if resp is None:
+        return Response(status_code=202, headers=response_headers)
+    await _enqueue_sse_response(sess, resp, force=wants_sse)
+    if wants_sse:
         return Response(status_code=202, headers=response_headers)
     return JSONResponse(resp, headers=response_headers)
 
@@ -1603,14 +1645,49 @@ async def mcp_get(request: Request) -> Response:
     if not _auth_ok(request):
         return _unauthorized()
 
-    async def event_stream():
-        # Stateless server: keep the SSE connection open with periodic
-        # comments. Clients that don't need server-pushed messages can
-        # ignore this. Stage 3.2 would route per-session responses here.
-        i = 0
-        while True:
-            i += 1
-            yield f"id: {i}\nevent: ping\ndata: {{}}\n\n"
-            await asyncio.sleep(15)
+    incoming_sid = request.headers.get(SESSION_HEADER)
+    response_headers: dict[str, str] = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    async with _sessions_lock:
+        await _gc_sessions()
+        if not incoming_sid:
+            # Lenient keepalive mode for older probes that just expect GET
+            # /mcp to be an SSE endpoint. They receive pings only until they
+            # initialize and reconnect with Mcp-Session-Id.
+            sid = str(uuid.uuid4())
+            sess = _sessions.setdefault(sid, _Session(sid))
+            response_headers[SESSION_HEADER] = sid
+        else:
+            sess = _sessions.get(incoming_sid)
+            if sess is None:
+                return JSONResponse(
+                    _error(None, -32004, "Unknown or expired session"),
+                    status_code=400,
+                )
+            sess.last_seen = _time.time()
+            response_headers[SESSION_HEADER] = sess.id
+
+    async def event_stream():
+        sess.sse_clients += 1
+        try:
+            sess.event_seq += 1
+            yield _sse("ready", json.dumps({"sessionId": sess.id}), sess.event_seq)
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(sess.events.get(), timeout=15)
+                    sess.last_seen = _time.time()
+                    yield event
+                except asyncio.TimeoutError:
+                    sess.event_seq += 1
+                    sess.last_seen = _time.time()
+                    yield _sse("ping", "{}", sess.event_seq)
+        finally:
+            sess.sse_clients = max(0, sess.sse_clients - 1)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=response_headers)

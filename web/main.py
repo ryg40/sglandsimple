@@ -32,6 +32,13 @@ API surface (all JSON):
 - POST /api/jira/validate      → MCP jira_validate_staged
 - POST /api/jira/revert        → MCP jira_revert_staged
 - POST /api/jira/apply         → MCP jira_apply_staged (dry-run unless JIRA_WRITES_ENABLED)
+- GET  /api/docs/tree          → MCP docs_list (path-grouped nav tree + review queue)
+- GET  /api/docs/search        → MCP docs_search
+- GET  /api/docs/{slug}        → MCP docs_get
+- POST /api/docs               → MCP docs_upsert (create or update by slug)
+- POST /api/docs/{slug}/flags  → MCP docs_set_flags (status / visibility / tags)
+- POST /api/docs/sync          → MCP docs_sync (Confluence reconciliation, dry-run by default)
+- POST /api/docs/agent         → MCP docs_agent_run (reconcile→triage→suggest)
 """
 
 from __future__ import annotations
@@ -458,6 +465,100 @@ async def api_jira_apply(request: Request) -> JSONResponse:
     res = await _mcp_tool("jira_apply_staged", args)
     payload = _extract_json_block(res)
     return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
+
+
+# ---------------------------------------------------------------------------
+# Stage 14 — Docs Wiki proxy endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/docs/tree")
+async def api_docs_tree(
+    tag: str | None = None,
+    status: str | None = None,
+    visibility: str | None = None,
+    include_archived: bool = False,
+) -> JSONResponse:
+    args: dict[str, Any] = {"include_archived": include_archived}
+    if tag:
+        args["tag"] = tag
+    if status:
+        args["status"] = status
+    if visibility:
+        args["visibility"] = visibility
+    res = await _mcp_tool("docs_list", args)
+    if res.get("isError"):
+        return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
+    return JSONResponse(_extract_json_block(res))
+
+
+@app.get("/api/docs/search")
+async def api_docs_search(q: str, limit: int = 25) -> JSONResponse:
+    if not q:
+        raise HTTPException(status_code=400, detail="q is required")
+    res = await _mcp_tool("docs_search", {"query": q, "limit": int(limit)})
+    if res.get("isError"):
+        return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
+    return JSONResponse(_extract_json_block(res))
+
+
+@app.get("/api/docs/{slug}")
+async def api_docs_get(slug: str) -> JSONResponse:
+    res = await _mcp_tool("docs_get", {"slug": slug})
+    if res.get("isError"):
+        payload = _extract_json_block(res)
+        if isinstance(payload, dict) and payload.get("error") == "not_found":
+            return JSONResponse(payload, status_code=404)
+        return JSONResponse({"error": payload}, status_code=400)
+    return JSONResponse(_extract_json_block(res))
+
+
+@app.post("/api/docs")
+async def api_docs_upsert(request: Request) -> JSONResponse:
+    body = await request.json()
+    if "slug" not in body:
+        raise HTTPException(status_code=400, detail="slug is required")
+    res = await _mcp_tool("docs_upsert", body)
+    if res.get("isError"):
+        return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
+    return JSONResponse(_extract_json_block(res))
+
+
+@app.post("/api/docs/{slug}/flags")
+async def api_docs_set_flags(slug: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    args: dict[str, Any] = {"slug": slug}
+    for field in ("status", "visibility", "tags"):
+        if field in body:
+            args[field] = body[field]
+    res = await _mcp_tool("docs_set_flags", args)
+    if res.get("isError"):
+        return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
+    return JSONResponse(_extract_json_block(res))
+
+
+@app.post("/api/docs/sync")
+async def api_docs_sync(request: Request) -> JSONResponse:
+    body = await request.json()
+    args: dict[str, Any] = {}
+    if body.get("slug"):
+        args["slug"] = body["slug"]
+    res = await _mcp_tool("docs_sync", args)
+    if res.get("isError"):
+        return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
+    return JSONResponse(_extract_json_block(res))
+
+
+@app.post("/api/docs/agent")
+async def api_docs_agent(request: Request) -> JSONResponse:
+    body = await request.json()
+    args: dict[str, Any] = {}
+    if "limit_suggestions" in body:
+        args["limit_suggestions"] = int(body["limit_suggestions"])
+    res = await _mcp_tool("docs_agent_run", args)
+    if res.get("isError"):
+        return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
+    return JSONResponse(_extract_json_block(res))
 
 
 @app.get("/api/reports/download")

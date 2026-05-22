@@ -327,3 +327,156 @@ export interface JiraApplyResult {
   plan: JiraApplyPlanItem[];
   note: string;
 }
+
+// ---- Stage 14 — Docs Wiki ------------------------------------------------
+
+export type DocStatus = "up_to_date" | "needs_attention" | "archivable" | "archived";
+export type DocVisibility = "internal" | "public";
+
+/** Lightweight doc record returned in the nav tree (no body). */
+export interface DocSummary {
+  _id: string;
+  slug: string;
+  path: string;
+  title: string;
+  tags: string[];
+  status: DocStatus;
+  visibility: DocVisibility;
+  version: number;
+  owner?: string | null;
+  last_reviewed_at?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+  confluence_page_id?: string | null;
+  /** Computed lifecycle status (may differ from stored status). */
+  derived_status?: DocStatus;
+}
+
+/** One group in the nav tree. */
+export interface DocTreeGroup {
+  group: string;
+  docs: DocSummary[];
+}
+
+/** Review-queue entry (needs_attention / archivable). */
+export interface DocReviewItem {
+  slug: string;
+  title: string | null;
+  status: DocStatus;
+  path: string | null;
+}
+
+/** Full response from GET /api/docs/tree. */
+export interface DocsTreeResponse {
+  tree: DocTreeGroup[];
+  docs: DocSummary[];
+  review_queue: DocReviewItem[];
+  count: number;
+  review_days: number;
+  generated_at: string;
+}
+
+/** Revision history entry. */
+export interface DocRevision {
+  _id: string;
+  doc_id: string;
+  version: number;
+  body_md: string;
+  author: string;
+  created_at: string;
+  note?: string | null;
+}
+
+/** Confluence sync-log entry. */
+export interface DocSyncLogEntry {
+  _id: string;
+  doc_id: string;
+  direction: "push" | "pull";
+  confluence_page_id?: string | null;
+  action: "create" | "update" | "skip" | "conflict";
+  at?: string | null;
+  detail?: string | null;
+}
+
+/** Full doc record returned by GET /api/docs/{slug}. */
+export interface Doc extends DocSummary {
+  body_md: string;
+  revisions: DocRevision[];
+  sync_log: DocSyncLogEntry[];
+}
+
+/** Result from docs_upsert. */
+export interface DocUpsertResult {
+  doc: DocSummary;
+  created: boolean;
+  revision_id: string;
+}
+
+/** Result from docs_set_flags. */
+export interface DocFlagsResult {
+  doc: DocSummary;
+}
+
+/** Single search hit. */
+export interface DocSearchHit {
+  slug: string;
+  path: string;
+  title: string;
+  snippet: string;
+  tags: string[];
+  status: DocStatus;
+  visibility: DocVisibility;
+}
+
+/** Full response from GET /api/docs/search. */
+export interface DocsSearchResponse {
+  query: string;
+  results: DocSearchHit[];
+}
+
+/** One action in the sync plan. */
+export interface DocSyncAction {
+  slug: string;
+  path: string;
+  planned_action: "create" | "update" | "skip";
+  action: string;
+  live: boolean;
+  detail: string;
+  confluence_page_id?: string | null;
+  labels: string[];
+}
+
+/** Full response from POST /api/docs/sync. */
+export interface DocsSyncResponse {
+  live: boolean;
+  space: string;
+  considered: number;
+  ancestors: Record<string, string>;
+  actions: DocSyncAction[];
+}
+
+/** Triage entry (stale / unreferenced doc). */
+export interface DocTriageEntry {
+  slug: string;
+  title: string | null;
+  current_status: DocStatus | null;
+  suggested_status: DocStatus;
+  reason: string;
+}
+
+/** Suggested improvement (proposal only, never auto-applied). */
+export interface DocSuggestion {
+  slug: string;
+  title: string | null;
+  rationale: string;
+  proposed_body_md: string;
+  applied: false;
+}
+
+/** Full response from POST /api/docs/agent. */
+export interface DocsAgentResponse {
+  reconcile: DocsSyncResponse;
+  triage: DocTriageEntry[];
+  suggestions: DocSuggestion[];
+  applied_any: false;
+}
