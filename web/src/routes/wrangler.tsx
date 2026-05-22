@@ -38,6 +38,41 @@ interface PreviewState {
   error?: string;
 }
 
+interface SuccessfulPipelineState {
+  collection: string;
+  pipeline: Record<string, unknown>[];
+  upto: number;
+  source: "preview" | "save" | "load";
+}
+
+function stableJson(v: unknown): string {
+  return JSON.stringify(v);
+}
+
+function formatStageJs(stage: Record<string, unknown>): string {
+  return JSON.stringify(stage, null, 2);
+}
+
+function collectionRef(collection: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(collection) ? `db.${collection}` : `db.getCollection(${JSON.stringify(collection)})`;
+}
+
+function formatPipelineJs(collection: string, pipeline: Record<string, unknown>[]): string {
+  const body = pipeline.length
+    ? pipeline.map((stage) => `  ${formatStageJs(stage).replace(/\n/g, "\n  ")}`).join(",\n")
+    : "  // Add and run stages to build this aggregation pipeline.";
+  return `${collectionRef(collection)}.aggregate([\n${body}\n])`;
+}
+
+async function copyText(label: string, text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success(`Copied ${label}`);
+  } catch (e) {
+    toast.error(`Copy failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 export default function WranglerPanel() {
   const cols = useCollections();
   const [active, setActive] = useState<string | null>(null);
@@ -45,6 +80,7 @@ export default function WranglerPanel() {
   const [previews, setPreviews] = useState<Record<number, PreviewState>>({});
   const [showSuggest, setShowSuggest] = useState(false);
   const [showLoad, setShowLoad] = useState(false);
+  const [lastSuccessfulPipeline, setLastSuccessfulPipeline] = useState<SuccessfulPipelineState | null>(null);
 
   const sample = useWranglerSample(active);
   const runPrefix = useRunPrefix();
@@ -71,13 +107,24 @@ export default function WranglerPanel() {
     return stages.slice(0, uptoIdx + 1).map(compileStage);
   }
 
+  const currentPipeline = useMemo(() => stages.map(compileStage), [stages]);
+  const lastSuccessfulCode = useMemo(
+    () => lastSuccessfulPipeline ? formatPipelineJs(lastSuccessfulPipeline.collection, lastSuccessfulPipeline.pipeline) : "",
+    [lastSuccessfulPipeline],
+  );
+  const currentFingerprint = stableJson(currentPipeline);
+  const successFingerprint = lastSuccessfulPipeline ? stableJson(lastSuccessfulPipeline.pipeline) : "";
+  const pipelineIsCurrent = !!lastSuccessfulPipeline && lastSuccessfulPipeline.collection === active && successFingerprint === currentFingerprint;
+
   async function runUpTo(idx: number) {
     const st = stages[idx];
     if (!st || !active) return;
     setPreviews((p) => ({ ...p, [st.id]: { ...(p[st.id] ?? { input: 0, output: 0, rows: [] }), loading: true } }));
     try {
-      const data = await runPrefix.mutateAsync({ collection: active, pipeline: buildPipeline(idx), upto: idx });
+      const pipeline = buildPipeline(idx);
+      const data = await runPrefix.mutateAsync({ collection: active, pipeline, upto: idx });
       setPreviews((p) => ({ ...p, [st.id]: { loading: false, input: data.input_count, output: data.output_count, rows: data.rows } }));
+      setLastSuccessfulPipeline({ collection: active, pipeline, upto: idx, source: "preview" });
     } catch (e) {
       setPreviews((p) => ({ ...p, [st.id]: { loading: false, input: 0, output: 0, rows: [], error: (e as Error).message } }));
       toast.error(`Stage ${idx}: ${(e as Error).message}`);
@@ -95,13 +142,14 @@ export default function WranglerPanel() {
     }, 300);
   }
 
-  function hydrate(raw: { name: string; stages: Record<string, unknown>[] }) {
-    setStages(decompile(raw.stages));
+  function hydrate(raw: { name: string; stages: Record<string, unknown>[]; collection?: string }) {
+    const loaded = decompile(raw.stages);
+    setStages(loaded);
     setPreviews({});
+    setLastSuccessfulPipeline({ collection: raw.collection ?? active ?? "collection", pipeline: raw.stages, upto: raw.stages.length - 1, source: "load" });
     setShowSuggest(false);
     setShowLoad(false);
     toast.success(`Loaded “${raw.name}”`);
-    setTimeout(() => stages.length && runUpTo(stages.length - 1), 0);
   }
 
   async function doSave() {
@@ -109,7 +157,9 @@ export default function WranglerPanel() {
     const name = prompt("Pipeline name:");
     if (!name) return;
     try {
-      const r = await savePipeline.mutateAsync({ name, collection: active, stages: stages.map(compileStage) });
+      const pipeline = stages.map(compileStage);
+      const r = await savePipeline.mutateAsync({ name, collection: active, stages: pipeline });
+      setLastSuccessfulPipeline({ collection: active, pipeline, upto: stages.length - 1, source: "save" });
       toast.success(`Saved “${name}” (${r._id})`);
     } catch (e) {
       toast.error(`Save failed: ${(e as Error).message}`);
@@ -130,7 +180,7 @@ export default function WranglerPanel() {
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col p-5">
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <Tabs value={active ?? ""} onValueChange={(v) => { setActive(v); setStages([]); setPreviews({}); }}>
+          <Tabs value={active ?? ""} onValueChange={(v) => { setActive(v); setStages([]); setPreviews({}); setLastSuccessfulPipeline(null); }}>
             <TabsList>
               {cols.data?.collections.map((c) => (
                 <TabsTrigger key={c.name} value={c.name}>{c.name}</TabsTrigger>
@@ -209,6 +259,14 @@ export default function WranglerPanel() {
         </div>
       </div>
 
+      <PipelineCodePanel
+        active={active}
+        currentPipeline={currentPipeline}
+        lastSuccessfulPipeline={lastSuccessfulPipeline}
+        code={lastSuccessfulCode}
+        isCurrent={pipelineIsCurrent}
+      />
+
       {showSuggest && (
         <SidePanel title="Suggested pipelines" onClose={() => setShowSuggest(false)}>
           {suggest.isPending ? (
@@ -246,6 +304,89 @@ export default function WranglerPanel() {
         </SidePanel>
       )}
     </div>
+  );
+}
+
+function PipelineCodePanel({
+  active,
+  currentPipeline,
+  lastSuccessfulPipeline,
+  code,
+  isCurrent,
+}: {
+  active: string | null;
+  currentPipeline: Record<string, unknown>[];
+  lastSuccessfulPipeline: SuccessfulPipelineState | null;
+  code: string;
+  isCurrent: boolean;
+}) {
+  const visiblePipeline = lastSuccessfulPipeline?.pipeline ?? currentPipeline;
+  const visibleCollection = lastSuccessfulPipeline?.collection ?? active ?? "collection";
+  const visibleCode = code || formatPipelineJs(visibleCollection, visiblePipeline);
+  const status = !lastSuccessfulPipeline
+    ? "draft"
+    : isCurrent
+      ? `current · ${lastSuccessfulPipeline.source}`
+      : `last successful · ${lastSuccessfulPipeline.source}`;
+
+  return (
+    <aside className="hidden w-[28rem] shrink-0 flex-col border-l border-border bg-card/70 xl:flex">
+      <div className="border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold">MongoDB aggregation JS</h3>
+            <p className="text-[11px] text-muted-foreground">
+              {status} {lastSuccessfulPipeline ? `· ${lastSuccessfulPipeline.pipeline.length} stage(s)` : "· run a stage to lock in valid code"}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => copyText("full pipeline", visibleCode)}
+            disabled={!visiblePipeline.length}
+          >
+            <Copy className="size-3.5" /> Copy all
+          </Button>
+        </div>
+        {!isCurrent && lastSuccessfulPipeline && (
+          <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Current visual edits have not run successfully yet; showing the last successful pipeline.
+          </p>
+        )}
+      </div>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+        <pre className="overflow-auto rounded-lg border border-border bg-slate-950 p-3 text-[11px] leading-relaxed text-slate-100 shadow-inner">
+          <code>{visibleCode}</code>
+        </pre>
+
+        <div className="space-y-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Stage snippets</div>
+          {visiblePipeline.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+              Add stages and run a preview to generate copyable snippets.
+            </p>
+          ) : (
+            visiblePipeline.map((stage, idx) => {
+              const stageCode = formatStageJs(stage);
+              const op = Object.keys(stage)[0] ?? `stage ${idx + 1}`;
+              return (
+                <Card key={`${idx}-${op}`} className="space-y-2 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold">{idx + 1}. {op}</span>
+                    <Button size="sm" variant="ghost" onClick={() => copyText(`${op} stage`, stageCode)}>
+                      <Copy className="size-3.5" /> Copy stage
+                    </Button>
+                  </div>
+                  <pre className="max-h-36 overflow-auto rounded-md bg-muted p-2 text-[11px] leading-relaxed">
+                    <code>{stageCode}</code>
+                  </pre>
+                </Card>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </aside>
   );
 }
 

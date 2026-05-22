@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-**Stage 11 COMPLETE & verified live; Stage 12 COMPLETE & verified live (re-verified this session); Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending); Stage 6 followups COMPLETE; Stage 13 COMPLETE (one follow-up); Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate; Stage 17 COMPLETE; roadmap stages 18–21 planned in IMPLEMENT.md.**
+**Stage 11 COMPLETE & verified live; Stage 12 COMPLETE & verified live (re-verified this session); Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending); Stage 6 followups COMPLETE; Stage 13 COMPLETE (one follow-up); Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate; Stage 15 Wrangler pipeline-code view COMPLETE; Stage 17 COMPLETE; roadmap stages 18–21 planned in IMPLEMENT.md.**
 Work branch: `stage-14-docs-wiki`; latest push to `origin/main`: `c49eb8d` (`docs: add roadmap stages and finish docs agent gate`).
 
 ## Stage 11 — Compliance command center: Overview page (DONE)
@@ -40,6 +40,10 @@ Work branch: `stage-14-docs-wiki`; latest push to `origin/main`: `c49eb8d` (`doc
 - **Env (defaulted, sync off)**: `DOCS_REVIEW_DAYS=90`, `DOCS_CONFLUENCE_SPACE=COMP`, `DOCS_SYNC_ENABLED=false`, `DOCS_DEFAULT_VISIBILITY=internal` — added to `.env.example` + `.env.local`.
 - **Migration + web (S14.migrate.1/S14.web.1/S14.web.2, DONE)**: `scripts/import_docs.py` imports the repo `.md` corpus as v1 wiki docs; `/api/docs*` proxies and typed hooks landed; `/docs` SPA route provides tree, Markdown view, editor/preview, flag/tag controls, search, sync and agent actions, plus review queue.
 
+## Stage 15 — Operational fixes & UX quick-wins (partial)
+- **S15.wrangler.2 COMPLETE**: `/wrangler` now has an XL-screen MongoDB aggregation JS panel that renders `db.<collection>.aggregate([...])`, updates after successful preview/run/save/load, preserves the last successful pipeline when visual edits are invalid or untested, and supports copy-to-clipboard for the full pipeline and each individual stage snippet. Verified with `cd web && npm run build`.
+- Still open: `S15.wrangler.1` bulk projection actions and `S15.askdata.1` timeout/empty-response fix.
+
 ## Stage 17 — Builder model upgrade to APEX + per-role `max_tokens` (COMPLETE)
 - Builder subagent now runs on `Qwen3.6-35B-A3B-APEX-MTP-I-Balanced` (port 9292) with 60k `max_tokens`.
 - Agent endpoint retains `qwen3.6-27b` as default upstream model.
@@ -61,10 +65,11 @@ Work branch: `stage-14-docs-wiki`; latest push to `origin/main`: `c49eb8d` (`doc
 - `mcp/db.py`, `web/src/routes/sheet.tsx` — Stage 6 followups: accurate row counts, NL column reactivity, boolean/string-array editors.
 - `caddy/Caddyfile.snippet.example`, `docs/clients.md`, `mcp/server.py` — Stage 3 SSE framing and optional Caddy MCP snippet.
 - `scripts/import_docs.py` — Stage 14 markdown corpus importer.
+- `web/src/routes/wrangler.tsx` — Stage 15 live MongoDB aggregation JS panel + copy actions.
 
 ## Next agent — start here
 1. **Read `COORDINATION.md` first** — respect file ownership, especially shared files (`IMPLEMENT.md`, `web/main.py`, `mcp/server.py`, `mcp/db.py`, `web/src/lib/{queries,types}.ts`).
 2. **Stage 14 — COMPLETE.** All `S14.*` done incl. the docs-agent LangGraph apply-gate; eligible for archival to `IMPLEMENT-ARCHIVE.md` on the next pass.
 3. `S13.cleanup.1` — finish migrating non-semantic color literals to tokens.
-4. `S15.*` — wrangler bulk projection and ask_data timeout fixes, per `IMPLEMENT.md` ownership map.
+4. `S15.*` — wrangler bulk projection (`S15.wrangler.1`) and ask_data timeout fixes (`S15.askdata.1`), per `IMPLEMENT.md` ownership map. `S15.wrangler.2` is complete.
 5. Stages **18–21** (architecture diagram v2, web auth/RBAC, Standup Jira cockpit, Deep Agent platform) — newer roadmap, see `IMPLEMENT.md`.

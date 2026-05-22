@@ -251,7 +251,33 @@ Both respect the existing live-rerun/debounce path (`liveRerun(idx)`); a "clear 
   - Files: `web/src/routes/wrangler.tsx` (project-stage block + field-chip helpers), the wrangler-stages helper (`compileStage`/`newStage`/`EditableStage` — imported at top of `wrangler.tsx`).
   - Done when: a `project` stage shows **Add all fields** and **Exclude all (`*:0`)** buttons; "Add all" seeds all sampled fields as includes, "Exclude all" sets all to exclude; both flow through live-rerun and round-trip through save/`compileStage`; no illegal mixed projection (exclude-all is all-`:0`, add-all is all-`:1`).
 
-### 15b. Ask Data — fix timeouts / empty responses
+### 15b. Wrangler — live MongoDB aggregation pipeline code view
+
+**Problem.** Wrangler teaches users how to build data transformations visually, but teammates cannot see the actual MongoDB aggregation pipeline JavaScript being generated. That makes it harder for team members to learn database query skills or copy a working pipeline into an editor, shell, runbook, or review comment.
+
+**Goal.** Add a code-focused column/panel in `/wrangler` that displays the full current MongoDB aggregation pipeline as JavaScript and updates dynamically after each successful stage/run. Users should be able to copy the entire pipeline or stage-specific snippets to the clipboard.
+
+Requirements:
+
+- Show a readable JS snippet such as:
+  ```js
+  db.<collection>.aggregate([
+    { $match: { ... } },
+    { $project: { ... } }
+  ])
+  ```
+- Update the displayed pipeline after successful preview/rerun/save operations so the code always matches the currently valid staged pipeline.
+- Show per-stage snippets next to, or underneath, each stage so users can copy individual `$match`, `$project`, `$group`, etc. fragments.
+- Include **Copy full pipeline** and **Copy stage** buttons with clear success/error feedback.
+- If the current visual config is invalid or has not successfully run yet, keep showing the last successful pipeline and label it as such (`last successful`, `current invalid`, etc.) instead of teaching from broken code.
+- Prefer a syntax-highlighted, monospace code block; avoid introducing a heavy dependency unless the existing markdown/highlight stack can be reused.
+
+- [x] **S15.wrangler.2 — Live aggregation pipeline JS column + copy actions**
+  - Files: `web/src/routes/wrangler.tsx`.
+  - Done: `/wrangler` now shows an XL-screen right-side MongoDB aggregation JS panel with `db.<collection>.aggregate([...])`, Copy full pipeline, per-stage snippets with Copy stage buttons, and success/error toasts. The code view updates after successful preview/run, save, or load; in-progress invalid/untested edits preserve and label the last successful pipeline instead of overwriting it.
+  - Verified: `cd web && npm run build` passes.
+
+### 15c. Ask Data — fix timeouts / empty responses
 
 **Problem.** The Chat **"Ask Data"** function (`/api/ask_data` → `mcp/ask_data.py::run_ask_data`, surfaced in `web/src/routes/chat.tsx`) **times out and returns no data**. The graph makes several **sequential** upstream LLM calls (`discover_schema → plan_query → execute_query → fan_out interpret_doc per doc → synthesize`) throttled by `LLM_CONCURRENCY=2` and fanned out up to `ASK_DATA_MAX_DOCS=10`; on the slow upstream the end-to-end latency exceeds the client/proxy timeout, so the UI gets nothing.
 
@@ -367,9 +393,9 @@ Because exact infrastructure details will arrive later, provide a durable captur
 
 ### Task checklist — Stage 18
 
-- [ ] **S18.discovery.1 — Inventory exact questions for later technical fill-in**
-  - Files: `docs/architecture-inventory-template.md` (or Stage-14 wiki seed later), `IMPLEMENT.md`.
-  - Done when: template asks for environments, AWS accounts/regions/VPCs/subnets/security groups, EC2/Mongo sizing, warehouse/log-retention details, SaaS endpoints, webhook/API paths, owners, data classifications, and open unknowns. No invented IPs/account IDs.
+- [x] **S18.discovery.1 — Inventory exact questions for later technical fill-in** ✅ DONE
+  - Files: `docs/architecture-inventory-template.md` (new), `IMPLEMENT.md`.
+  - Done: template captures environments/accounts (kind, account/subscription/project id, region, owner, classification, criticality), AWS network detail (VPC/subnet/CIDR/security groups/peering), compute & data nodes (hostname/private_ip/instance_type/storage_gb/retention_days/runbook_slug), integrations/edges (protocol/auth_mode/endpoint_ref/frequency/sla/agentic_status), the RISK→artifact flow checklist, and a Known-unknowns table. Field names align with the Stage-18 graph schema's reserved metadata keys; all unknown infra values are `TBD` — no invented IPs/account IDs. Importable into the Stage-14 Docs Wiki via `scripts/import_docs.py`.
 
 - [ ] **S18.model.1 — Define architecture graph v2 schema**
   - Files: `mcp/topology.py` or new `mcp/architecture.py`, `web/src/lib/types.ts`.
@@ -558,9 +584,9 @@ The real internal lookup code should be isolated behind a narrow interface so it
 
 ### Task checklist — Stage 19
 
-- [ ] **S19.policy.1 — Finalize placeholder RBAC policy and capability map**
-  - Files: `IMPLEMENT.md`, `docs/auth-rbac.md` (new).
-  - Done when: group→role→capability mapping is documented; SSO-in-prod and Basic-Auth-for-POC assumptions are explicit; route/API capability requirements are listed; unresolved policy questions are captured without blocking POC basic/trusted-network mode.
+- [x] **S19.policy.1 — Finalize placeholder RBAC policy and capability map** ✅ DONE
+  - Files: `docs/auth-rbac.md` (new), `IMPLEMENT.md`.
+  - Done: `docs/auth-rbac.md` consolidates the group→role mapping (env-configurable placeholder groups), the per-role capability matrix, the explicit `/api/*` capability requirements (read open to `sg_all_users`, mutations gated; 401 vs 403 semantics), the SSO-in-prod / Basic-Auth-for-POC assumptions and all six `AUTH_MODE`s, the seeded POC user set, the LDAP/auth-agent privacy boundary, and an Open-questions list (LDAP DNs, ownership scoping, signed claims, auth-explanation surface, cache TTL) explicitly flagged as non-blocking for POC basic/trusted-network mode. Importable into the Stage-14 Docs Wiki.
 
 - [ ] **S19.model.1 — Add web auth model and config**
   - Files: `web/auth.py` (new), `.env.example`, `compose.yaml` if env passthrough is needed.
