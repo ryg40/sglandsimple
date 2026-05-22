@@ -90,26 +90,45 @@ function PromptChips({
   label,
   prompts,
   onPick,
+  variant = "chips",
 }: {
   label: string;
   prompts: string[];
   onPick: (prompt: string) => void;
+  variant?: "chips" | "list";
 }) {
   return (
     <div className="space-y-2">
       <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-      <div className="flex flex-wrap gap-2">
-        {prompts.map((prompt) => (
-          <button
-            key={prompt}
-            type="button"
-            onClick={() => onPick(prompt)}
-            className="rounded-full border border-border bg-background/80 px-3 py-1.5 text-left text-xs text-foreground transition hover:border-primary/40 hover:bg-accent hover:text-accent-foreground"
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
+      {variant === "list" ? (
+        <ul className="space-y-1.5">
+          {prompts.map((prompt) => (
+            <li key={prompt}>
+              <button
+                type="button"
+                onClick={() => onPick(prompt)}
+                className="flex w-full items-start gap-2 rounded-lg border border-border bg-background/80 px-3 py-2 text-left text-xs leading-5 text-foreground transition hover:border-primary/40 hover:bg-accent hover:text-accent-foreground"
+              >
+                <Sparkles className="mt-0.5 size-3 shrink-0 text-primary" />
+                <span>{prompt}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {prompts.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => onPick(prompt)}
+              className="rounded-full border border-border bg-background/80 px-3 py-1.5 text-left text-xs text-foreground transition hover:border-primary/40 hover:bg-accent hover:text-accent-foreground"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -266,7 +285,6 @@ export function ChatWorkspace() {
                   compare signals across systems, and turn findings into concise updates without leaving the app.
                 </p>
               </div>
-              <PromptChips label="Starter prompts" prompts={CHAT_PROMPTS} onPick={(prompt) => session.setInput(prompt)} />
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
@@ -284,27 +302,23 @@ export function ChatWorkspace() {
         </Card>
 
         <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[18rem_minmax(0,1fr)]">
-          <div className="space-y-4 xl:order-2">
+          <div className="space-y-4 xl:order-1">
             <Card className="border-border/80 bg-card/90 p-4 shadow-sm">
               <div className="mb-3 flex items-center gap-2">
                 <MessageSquare className="size-4 text-secondary" />
-                <h3 className="text-sm font-semibold">Context rail</h3>
+                <h3 className="text-sm font-semibold">Suggested prompts</h3>
               </div>
-              <div className="space-y-3 text-sm text-muted-foreground">
-                <div className="rounded-xl border border-border bg-background/70 p-3">
-                  <div className="mb-1 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Best for</div>
-                  Cross-system questions, summary drafting, connector-aware guidance, and MCP tool-assisted answers.
-                </div>
-                <div className="rounded-xl border border-border bg-background/70 p-3">
-                  <div className="mb-1 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Power move</div>
+              <div className="space-y-4">
+                <PromptChips label="Starter prompts" prompts={CHAT_PROMPTS} onPick={(prompt) => session.setInput(prompt)} variant="list" />
+                <PromptChips label="Direct data prompts" prompts={DATA_PROMPTS} onPick={(prompt) => session.run("ask", prompt)} variant="list" />
+                <div className="rounded-lg border border-border bg-background/70 p-3 text-xs leading-5 text-muted-foreground">
                   Start in natural language, then switch to <span className="font-medium text-foreground">Ask Data</span> when you need a grounded result set.
                 </div>
-                <PromptChips label="Direct data prompts" prompts={DATA_PROMPTS} onPick={(prompt) => session.run("ask", prompt)} />
               </div>
             </Card>
           </div>
 
-          <div className="flex min-h-[36rem] flex-col gap-4 xl:order-1">
+          <div className="flex min-h-[36rem] flex-col gap-4 xl:order-2">
             <Card className="flex min-h-0 flex-1 flex-col border-border/80 bg-card/92 p-4 shadow-xl sm:p-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
                 <div>

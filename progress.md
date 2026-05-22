@@ -4,6 +4,17 @@
 **Stages 0–2, 4, 6–20, and 22 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 23 PLANNED (not started). Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `5032767` (`docs(S19): record finish-up re-verification + branch cleanup`).
 
+## Session 2026-05-22 (pi agent) — S22 chat layout: flip columns + compact prompt list
+
+UX follow-up on the Stage-22 focused `/chat` page per user request: the chat needs to be readable while the suggested prompts should be compact in the left column.
+
+**Change (`web/src/components/chat-assistant.tsx` only):**
+- **Flipped the two-column layout.** The conversation feed + composer now occupy the **main wide right column** (`xl:order-2` in the `xl:grid-cols-[18rem_minmax(0,1fr)]` grid); the suggested-prompts rail is the **narrow 18rem left column** (`xl:order-1`). Previously chat was left/order-1 and the context rail right/order-2.
+- **Compact list format for prompts.** Added a `variant: "chips" | "list"` prop to `PromptChips`. The new `list` variant renders prompts as a tight vertical stack of full-width buttons (small leading sparkle icon, `leading-5` text) instead of wrapped pills. The left rail now shows **Starter prompts** (fills composer) and **Direct data prompts** (runs Ask Data) both as compact lists, plus the one-line "switch to Ask Data" hint.
+- Removed the duplicate starter-prompt chips from the hero header (now redundant with the left rail); hero keeps its value-prop insight cards. The `GlobalAssistant` panel and its default-`chips` `PromptChips` are unchanged.
+
+**Verification:** `cd web && npm run build` (tsc -b + vite) clean — only the pre-existing >500 kB chunk-size *warning*. No backend/seed/connector files touched. Stage 23 remains PLANNED/not-started; this is Stage-22 polish.
+
 ## Session 2026-05-22 (pi agent) — Stage 23 PLANNED: Confluence wire-up + cross-system enrichment
 
 Authored the **Stage 23** plan only (no implementation). Stage 23 has two threads: (1) promote the Confluence connector from mock-only to **live-capable** via a `CONFLUENCE_TOKEN` env var, mirroring the proven Stage-16 Jira live-MCP pattern (`mcp/connectors/jira.py`); (2) **cross-system data enrichment** so the POC dashboard looks lively and teachable — denser, internally-consistent seed collections + connector samples whose keys line up to form the full **overlap chain** (`archer finding → Jira epic → commit/PR → ServiceNow change → Snowflake evidence → Confluence page`), plus three process/teaching docs (overlap chain, agentic workflows, MCP-in-this-stack) for coworkers learning deep agents/agentic workflows/MCP.
