@@ -1,8 +1,8 @@
 # Progress
 
 ## Status
-**Stage 11 COMPLETE & verified live; Stage 12 COMPLETE & verified live (re-verified this session); Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending); Stage 6 followups COMPLETE; Stage 13 COMPLETE (one follow-up); Stage 14 migration+web COMPLETE (agent StateGraph conversion pending); Stage 17 COMPLETE.**
-Work branch: `stage-14-docs-wiki`.
+**Stage 11 COMPLETE & verified live; Stage 12 COMPLETE & verified live (re-verified this session); Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending); Stage 6 followups COMPLETE; Stage 13 COMPLETE (one follow-up); Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate; Stage 17 COMPLETE; roadmap stages 18–21 planned in IMPLEMENT.md.**
+Work branch: `stage-14-docs-wiki`; latest push to `origin/main`: `c49eb8d` (`docs: add roadmap stages and finish docs agent gate`).
 
 ## Stage 11 — Compliance command center: Overview page (DONE)
 - **`overview_summary` MCP tool** (`mcp/overview.py`): reads `audit_findings`, `epics`, `work_items`, `pr_records` + the connector registry; evaluates six attention rules server-side (overdue, due_soon, prioritized, high_severity, blocked_pr, stalled); returns `{kpis, attention[], connectors[], tables{}, generated_at}` in one round-trip.
@@ -31,7 +31,7 @@ Work branch: `stage-14-docs-wiki`.
 - Font → Roboto, self-hosted via `@fontsource/roboto` (offline-safe), imported in `main.tsx`.
 - **Follow-up `S13.cleanup.1` (partial)**: status-color literals remain in `hub-columns.tsx`/`hub.tsx`/`workflow-stepper.tsx` by design (red/green semantics); fuller token migration of non-semantic blues/purples is open.
 
-## Stage 14 — Docs Wiki + Confluence sync (MIGRATION + WEB DONE; agent StateGraph pending)
+## Stage 14 — Docs Wiki + Confluence sync (COMPLETE)
 - **Data model (S14.model.1, DONE)**: `mongo-seed/14-docs.js` seeds `docs`/`doc_revisions`/`doc_sync_log` (incl. one deliberately-stale doc to exercise lifecycle). `mcp/db.py` gained docs system-of-record helpers — `docs_list/get/upsert/set_flags/search`, `doc_sync_log_append/recent`, `docs_set_confluence_id` — all auditing via `_audit(source="docs_*")`. Flags validated against the 14b enums (`status` ∈ up_to_date/needs_attention/archivable/archived; `visibility` ∈ internal/public).
 - **CRUD tools (S14.api.1, DONE)**: `mcp/docs.py` adds path-grouped tree building + `derive_status` lifecycle (needs_attention when stale > `DOCS_REVIEW_DAYS`; archivable when stale AND unreferenced). `mcp/server.py` registers + dispatches 7 tools (`docs_list/get/upsert/set_flags/search/sync/agent_run`). Verified: upsert v1→v3 with revisions preserved + audit row written.
 - **Confluence sync (S14.sync.1, DONE — dry-run)**: `mcp/docs_sync.py` maps `path`→Confluence ancestor pages, pushes public docs idempotently (stores `confluence_page_id`, updates in place after), `tags[]`→labels, logs every action to `doc_sync_log`. Connector gained `confluence_update_page` + create now returns a deterministic page id. Dry-run by default; live only when `DOCS_SYNC_ENABLED` + `CONN_CONFLUENCE_ENABLED` + `WORKFLOW_WRITES_ENABLED`. Verified plan mirrors `runbooks/` into space `COMP`, no outbound calls.
@@ -53,21 +53,14 @@ Work branch: `stage-14-docs-wiki`.
 - `/architecture` → HTTP 200; web `/healthz` ok; all containers healthy.
 - Persistence survives `down && up --build`.
 
-## Key files changed (Stages 12–13, 17)
-- `IMPLEMENT.md` (Stage 17 section + task checklist)
-- `docs/deep_agent.md` (builder model + `BUILDER_MAX_TOKENS` docs)
-- `agent/main.py` — conditional `tools`, `UPSTREAM_MAX_TOKENS`
-- `mcp/llm.py` — `llm_max_tokens()` helper
-- `mcp/deep_agent/builder.py` — `max_tokens` on builder calls
-- `.env.local`, `.env.example` — new env vars, updated `BUILDER_MODEL`
-- `mcp/connectors/{aws,jira,servicenow,github,confluence,snowflake,mongodb,archer}.py`
-- `mcp/topology.py` (new), `mcp/server.py`
-- `web/main.py`
-- `web/src/routes/architecture.tsx` (new), `web/src/components/hub-columns.tsx` (new)
-- `web/src/routes/hub.tsx`, `web/src/lib/{queries,types}.ts`, `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`
-- `web/src/index.css`, `web/src/main.tsx`, `web/package.json`
-- `compose.yaml`, `.gitignore`, `scripts/reseed.sh` (new)
-- `IMPLEMENT.md`, `progress.md`
+## Key files changed / committed this session
+- `IMPLEMENT.md` — archived completed sections; added/updated roadmap stages **18** (architecture diagram v2), **19** (SSO/Basic Auth + LDAP RBAC), **20** (Standup Jira cockpit), **21** (Deep Agent platform); env surface updated.
+- `IMPLEMENT-ARCHIVE.md`, `COORDINATION.md` — archive + multi-agent coordination rules.
+- `mcp/docs_agent.py`, `mcp/server.py` — Stage 14 docs-agent converted to checkpointed LangGraph HITL apply gate and exposed via MCP.
+- `web/main.py`, `web/src/lib/{queries,types}.ts`, `web/src/routes/docs.tsx` — Docs Wiki web proxies/hooks/UI plus docs-agent apply/reject controls.
+- `mcp/db.py`, `web/src/routes/sheet.tsx` — Stage 6 followups: accurate row counts, NL column reactivity, boolean/string-array editors.
+- `caddy/Caddyfile.snippet.example`, `docs/clients.md`, `mcp/server.py` — Stage 3 SSE framing and optional Caddy MCP snippet.
+- `scripts/import_docs.py` — Stage 14 markdown corpus importer.
 
 ## Next agent — start here
 1. **Read `COORDINATION.md` first** — respect file ownership, especially shared files (`IMPLEMENT.md`, `web/main.py`, `mcp/server.py`, `mcp/db.py`, `web/src/lib/{queries,types}.ts`).
