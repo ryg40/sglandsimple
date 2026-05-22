@@ -864,6 +864,12 @@ Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventin
   - Done: `cd web && npm run build` passes (tsc + vite; only the pre-existing chunk-size warning). The `/standup` layout keeps the Jira Explorer dominant (xl two-column, ~1fr/23rem), the chat panel captures notes/links/mentions in the aside, the approval tray renders dry-run proposals with status/validation badges + Approve/Reject (capability-gated) + Summarize, and the Jira Configuration/tool-trace bubble stays collapsed by default. Approver vs read-only is reflected in the header badge.
   - Depends on: S20.explorer.1, S20.chat.1, S20.approval.1.
 
+- [ ] **S20.chat.2 — Deduplicate optimistic + echoed standup messages into one entry**
+  - Files: `web/src/components/standup-chat.tsx` (and `web/standup_ws.py` if the server echo must carry the client id back).
+  - Bug: a sent message shows **twice** — once optimistically as `pending`/"sending · HH:MM" and again when the server broadcasts it back (e.g. "Jordan Reyes · sending · 06:07 PM / hey its me" immediately followed by "Jordan Reyes · 06:07 PM / hey its me"). Root cause: `addLocalMessage` mints a client-side id (`makeId("client"|"local")`) while the websocket echo arrives with a server-assigned id (`record.id ?? record.message_id ?? makeId("server")`), and `mergeMessages` dedups **by `id` only**, so the optimistic and echoed copies coexist.
+  - Done when: a message the local client sent renders as a **single** entry — the server echo *replaces* (reconciles) the optimistic `pending` row instead of appending a second one. Correlate via the `client_id`/`id` already included in the send payload (carry it through the server echo if needed) so dedup matches on client id, falling back to id; the consolidated row drops the `pending`/"sending" state once acknowledged; other participants' messages and reconnection/snapshot replay still merge without dupes; `cd web && npm run build` clean (plus `python3 -m py_compile web/standup_ws.py` if touched).
+  - Depends on: S20.chat.1.
+
 ---
 
 ## Stage 21 — Deep Agent platform: containerized LangGraph agents + HITL deployment runtime
