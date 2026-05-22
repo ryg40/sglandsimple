@@ -181,7 +181,7 @@ def _summarize(result: SheetApplyResult) -> str:
     return "; ".join(parts) + "."
 
 
-async def run_sheet_apply(collection: str, instruction: str) -> SheetApplyResult:
+async def run_sheet_apply(collection: str, instruction: str, actor: dict | None = None) -> SheetApplyResult:
     """Plan + apply a natural-language edit instruction."""
     result = SheetApplyResult(collection=collection, instruction=instruction)
 
@@ -233,19 +233,19 @@ async def run_sheet_apply(collection: str, instruction: str) -> SheetApplyResult
                     else {"$unset": {op.field: ""}}
                 )
                 info = await dbmod.update_one(
-                    collection, op.id, update_payload, source="sheet_apply_nl"
+                    collection, op.id, update_payload, source="sheet_apply_nl", actor=actor
                 )
                 applied = AppliedOp(op="set_cell", id=str(op.id), field=op.field)
                 applied.before = (info.get("before") or {}).get(op.field)
                 applied.after = (info.get("after") or {}).get(op.field)
                 result.applied.append(applied)
             elif isinstance(op, InsertRow):
-                info = await dbmod.insert_one(collection, op.doc, source="sheet_apply_nl")
+                info = await dbmod.insert_one(collection, op.doc, source="sheet_apply_nl", actor=actor)
                 result.applied.append(
                     AppliedOp(op="insert_row", id=str(info["_id"]), after=info.get("after"))
                 )
             elif isinstance(op, DeleteRow):
-                info = await dbmod.delete_one(collection, op.id, source="sheet_apply_nl")
+                info = await dbmod.delete_one(collection, op.id, source="sheet_apply_nl", actor=actor)
                 result.applied.append(
                     AppliedOp(op="delete_row", id=str(op.id), before=info.get("before"))
                 )

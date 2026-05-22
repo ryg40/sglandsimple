@@ -26,6 +26,7 @@ API surface (all JSON):
 - GET  /api/connectors         → MCP connector_health + connector_summary (per bubble)
 - GET  /api/connectors/{name}  → MCP connector_health + connector_summary (one)
 - GET  /api/topology           → MCP topology_graph (Architecture page)
+- GET  /api/architecture       → MCP architecture_graph (Architecture page v2)
 - GET  /api/overview           → MCP overview_summary (compliance command center)
 - GET  /api/jira/issues        → MCP jira_list_issues (sample + staged overlay)
 - POST /api/jira/stage         → MCP jira_stage_edits (HIL drafts)
@@ -49,9 +50,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+# S19.backend.1 — identity resolution (resolve_user / require_user / require_capability)
+import auth as _auth  # noqa: E402  (import after FastAPI so startup guard can reference app)
+from standup_ws import router as standup_router  # noqa: E402
 
 AGENT_URL = os.environ.get("AGENT_URL", "http://agent:8000").rstrip("/")
 MCP_URL = os.environ.get("MCP_URL", "http://mcp:8080/mcp")
@@ -62,6 +67,52 @@ REQUEST_TIMEOUT = float(os.environ.get("REQUEST_TIMEOUT", "300"))
 DIST_DIR = Path(os.environ.get("WEB_DIST_DIR", "dist"))
 
 app = FastAPI(title="sglandsimple web")
+app.include_router(standup_router)
+
+# S19 startup guardrail: if AUTH_SSO_REQUIRED=true the operator expects SSO mode.
+# Warn loudly (or raise) at startup if the configured mode is something else.
+if _auth.CONFIG.sso_required and _auth.CONFIG.auth_mode != "sso":
+    raise RuntimeError(
+        f"AUTH_SSO_REQUIRED=true but AUTH_MODE={_auth.CONFIG.auth_mode!r}. "
+        "Set AUTH_MODE=sso or unset AUTH_SSO_REQUIRED."
+    )
+
+
+# ---------------------------------------------------------------------------
+# S19.backend.3 — typed guard wrappers for FastAPI dependency injection.
+#
+# auth.py uses `request: Any` so it stays importable without FastAPI on the
+# host.  FastAPI only recognises `fastapi.Request` (not `Any`) as "inject the
+# live request object", so thin wrappers with the proper annotation are needed.
+# These are the callables passed to `Depends(...)` in route decorators below.
+# ---------------------------------------------------------------------------
+
+def _guard_user(request: Request) -> _auth.UserContext:
+    """Dependency: require any authenticated user (401 if not authed).
+    Also stores the resolved user in request.state for downstream actor injection (S19.audit.1)."""
+    user = _auth.require_user(request)
+    request.state.user = user
+    return user
+
+
+def _guard_cap(capability: str):
+    """Dependency factory: require a specific capability (401/403).
+    Also stores the resolved user in request.state for downstream actor injection (S19.audit.1)."""
+    def _inner(request: Request) -> _auth.UserContext:
+        user = _auth.require_capability(capability)(request)
+        request.state.user = user
+        return user
+    _inner.__name__ = f"guard_{capability}"
+    return _inner
+
+
+def _actor_from_request(request: Request) -> dict[str, Any] | None:
+    """Extract actor context from request.state (set by _guard_user/_guard_cap).
+    Returns None if no user was resolved (unguarded routes)."""
+    user: _auth.UserContext | None = getattr(request.state, "user", None)
+    if user is None:
+        return None
+    return {"username": user.username, "roles": user.roles, "groups": user.groups}
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +198,35 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/me")
+async def api_me(request: Request) -> JSONResponse:
+    """S19.backend.2 — return the caller's identity + capability set.
+
+    Always returns HTTP 200 so the SPA can react to an unauthenticated state
+    by rendering a login prompt rather than treating the call as an error.
+    """
+    user = _auth.resolve_user(request)
+    if user is None:
+        return JSONResponse({
+            "authenticated": False,
+            "auth_mode": _auth.CONFIG.auth_mode,
+            "capabilities": [],
+        })
+    return JSONResponse({
+        "authenticated": True,
+        "user": {
+            "username": user.username,
+            "display_name": user.display_name,
+            "email": user.email,
+        },
+        "groups": user.groups,
+        "roles": user.roles,
+        "capabilities": sorted(user.capabilities),
+        "auth_mode": user.auth_mode,
+        "source": user.source,
+    })
+
+
 async def _proxy_chat(body: dict[str, Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         r = await client.post(f"{AGENT_URL}/v1/chat/completions", json=body)
@@ -156,7 +236,7 @@ async def _proxy_chat(body: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-@app.post("/api/chat")
+@app.post("/api/chat", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_READ_CHAT))])
 async def api_chat(request: Request) -> JSONResponse:
     body = await request.json()
     data = await _proxy_chat(body)
@@ -168,14 +248,14 @@ async def api_chat(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/sheet/collections")
+@app.get("/api/sheet/collections", dependencies=[Depends(_guard_user)])
 async def api_sheet_collections() -> JSONResponse:
     result = await _mcp_tool("mongo_list_collections", {})
     payload = _extract_json_block(result)
     return JSONResponse(payload)
 
 
-@app.get("/api/sheet/rows")
+@app.get("/api/sheet/rows", dependencies=[Depends(_guard_user)])
 async def api_sheet_rows(collection: str, skip: int = 0, limit: int = 50) -> JSONResponse:
     result = await _mcp_tool(
         "sheet_get_rows",
@@ -186,7 +266,7 @@ async def api_sheet_rows(collection: str, skip: int = 0, limit: int = 50) -> JSO
     return JSONResponse(_extract_json_block(result))
 
 
-@app.post("/api/sheet/cell")
+@app.post("/api/sheet/cell", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_EDIT_DATA))])
 async def api_sheet_cell(request: Request) -> JSONResponse:
     body = await request.json()
     required = {"collection", "_id", "field"}
@@ -199,45 +279,60 @@ async def api_sheet_cell(request: Request) -> JSONResponse:
     }
     if "value" in body:
         args["value"] = body["value"]
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
     result = await _mcp_tool("sheet_update_cell", args)
     if result.get("isError"):
         return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
     return JSONResponse(_extract_json_block(result))
 
 
-@app.post("/api/sheet/row")
+@app.post("/api/sheet/row", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_EDIT_DATA))])
 async def api_sheet_row_insert(request: Request) -> JSONResponse:
     body = await request.json()
     if "collection" not in body or "doc" not in body:
         raise HTTPException(status_code=400, detail="collection and doc required")
+    actor = _actor_from_request(request)
+    args: dict[str, Any] = {"collection": body["collection"], "doc": body["doc"]}
+    if actor:
+        args["actor"] = actor
     result = await _mcp_tool(
         "sheet_insert_row",
-        {"collection": body["collection"], "doc": body["doc"]},
+        args,
     )
     if result.get("isError"):
         return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
     return JSONResponse(_extract_json_block(result))
 
 
-@app.delete("/api/sheet/row")
-async def api_sheet_row_delete(collection: str, _id: str) -> JSONResponse:
+@app.delete("/api/sheet/row", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_EDIT_DATA))])
+async def api_sheet_row_delete(collection: str, _id: str, request: Request) -> JSONResponse:
+    actor = _actor_from_request(request)
+    args: dict[str, Any] = {"collection": collection, "_id": _id}
+    if actor:
+        args["actor"] = actor
     result = await _mcp_tool(
         "sheet_delete_row",
-        {"collection": collection, "_id": _id},
+        args,
     )
     if result.get("isError"):
         return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
     return JSONResponse(_extract_json_block(result))
 
 
-@app.post("/api/sheet/nl")
+@app.post("/api/sheet/nl", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_EDIT_DATA))])
 async def api_sheet_nl(request: Request) -> JSONResponse:
     body = await request.json()
     if "collection" not in body or "instruction" not in body:
         raise HTTPException(status_code=400, detail="collection and instruction required")
+    actor = _actor_from_request(request)
+    args: dict[str, Any] = {"collection": body["collection"], "instruction": body["instruction"]}
+    if actor:
+        args["actor"] = actor
     result = await _mcp_tool(
         "sheet_apply_nl",
-        {"collection": body["collection"], "instruction": body["instruction"]},
+        args,
     )
     payload = _extract_json_block(result)
     payload["isError"] = bool(result.get("isError"))
@@ -251,7 +346,7 @@ async def api_sheet_nl(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/wrangler/sample")
+@app.get("/api/wrangler/sample", dependencies=[Depends(_guard_user)])
 async def api_wrangler_sample(collection: str, limit: int | None = None) -> JSONResponse:
     args: dict[str, Any] = {"collection": collection}
     if limit:
@@ -262,7 +357,7 @@ async def api_wrangler_sample(collection: str, limit: int | None = None) -> JSON
     return JSONResponse(_extract_json_block(result))
 
 
-@app.post("/api/wrangler/run")
+@app.post("/api/wrangler/run", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_EDIT_DATA))])
 async def api_wrangler_run(request: Request) -> JSONResponse:
     body = await request.json()
     for k in ("collection", "pipeline", "upto"):
@@ -277,7 +372,7 @@ async def api_wrangler_run(request: Request) -> JSONResponse:
     return JSONResponse(_extract_json_block(result))
 
 
-@app.post("/api/wrangler/save")
+@app.post("/api/wrangler/save", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_EDIT_DATA))])
 async def api_wrangler_save(request: Request) -> JSONResponse:
     body = await request.json()
     for k in ("name", "collection", "stages"):
@@ -286,13 +381,16 @@ async def api_wrangler_save(request: Request) -> JSONResponse:
     args = {"name": body["name"], "collection": body["collection"], "stages": body["stages"]}
     if body.get("_id"):
         args["_id"] = body["_id"]
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
     result = await _mcp_tool("wrangler_save_pipeline", args)
     if result.get("isError"):
         return JSONResponse({"error": _extract_json_block(result)}, status_code=400)
     return JSONResponse(_extract_json_block(result))
 
 
-@app.get("/api/wrangler/pipelines")
+@app.get("/api/wrangler/pipelines", dependencies=[Depends(_guard_user)])
 async def api_wrangler_pipelines(collection: str | None = None) -> JSONResponse:
     args = {"collection": collection} if collection else {}
     result = await _mcp_tool("wrangler_list_pipelines", args)
@@ -301,7 +399,7 @@ async def api_wrangler_pipelines(collection: str | None = None) -> JSONResponse:
     return JSONResponse(_extract_json_block(result))
 
 
-@app.post("/api/wrangler/suggest")
+@app.post("/api/wrangler/suggest", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_EDIT_DATA))])
 async def api_wrangler_suggest(request: Request) -> JSONResponse:
     body = await request.json()
     if "collection" not in body:
@@ -320,7 +418,7 @@ async def api_wrangler_suggest(request: Request) -> JSONResponse:
 AUDIT_RECENT_LIMIT = int(os.environ.get("AUDIT_RECENT_LIMIT", "25"))
 
 
-@app.get("/api/audit/recent")
+@app.get("/api/audit/recent", dependencies=[Depends(_guard_user)])
 async def api_audit_recent(limit: int | None = None) -> JSONResponse:
     result = await _mcp_tool("audit_recent", {"limit": int(limit or AUDIT_RECENT_LIMIT)})
     if result.get("isError"):
@@ -328,33 +426,42 @@ async def api_audit_recent(limit: int | None = None) -> JSONResponse:
     return JSONResponse(_extract_json_block(result))
 
 
-@app.post("/api/ask_data")
+@app.post("/api/ask_data", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_READ_CHAT))])
 async def api_ask_data(request: Request) -> JSONResponse:
-    """Convenience: force the agent to call ask_data with the user's question.
+    """Run ask_data directly through MCP and return a chat-shaped response.
 
-    Implemented as a chat completion with tool_choice steering the model
-    to call the named function. The agent's tool loop dispatches to MCP
-    and the final assistant message is what we return.
+    The previous path forced an agent tool call and then required one more LLM
+    summary after MCP returned. On slow upstreams that extra hop pushed the
+    browser request over its timeout and could surface as an empty assistant
+    bubble. Returning the tool markdown directly preserves the frontend API
+    shape while avoiding the redundant final LLM call.
     """
     body = await request.json()
-    question = body.get("question") or ""
-    payload = {
-        "model": body.get("model") or os.environ.get("DEFAULT_MODEL", "qwen3.6-27b"),
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You must answer the user's question by calling the ask_data tool. "
-                    "Pass the user's question verbatim as the `question` argument, then "
-                    "summarise the cited markdown the tool returns."
-                ),
-            },
-            {"role": "user", "content": question},
-        ],
-        "tool_choice": {"type": "function", "function": {"name": "ask_data"}},
+    question = (body.get("question") or "").strip()
+    if not question:
+        return JSONResponse({"error": {"detail": "question is required"}}, status_code=400)
+    try:
+        result = await _mcp_tool("ask_data", {"question": question})
+    except httpx.TimeoutException as e:
+        return JSONResponse(
+            {"error": {"detail": f"ask_data timed out after {REQUEST_TIMEOUT:.0f}s", "cause": str(e)}},
+            status_code=504,
+        )
+    except HTTPException as e:
+        return JSONResponse({"error": {"detail": e.detail}}, status_code=e.status_code)
+
+    blocks = [c.get("text", "") for c in result.get("content", []) if c.get("type") == "text"]
+    markdown = blocks[0] if blocks else ""
+    payload = _extract_json_block(result)
+    if not markdown:
+        markdown = "# Ask Data\n\nNo response content was returned by the data tool."
+    response: dict[str, Any] = {
+        "choices": [{"message": {"role": "assistant", "content": markdown}}],
+        "ask_data": payload,
     }
-    data = await _proxy_chat(payload)
-    return JSONResponse(data)
+    if result.get("isError"):
+        response["error"] = {"detail": payload}
+    return JSONResponse(response, status_code=200)
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +469,7 @@ async def api_ask_data(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/connectors")
+@app.get("/api/connectors", dependencies=[Depends(_guard_user)])
 async def api_get_connectors() -> JSONResponse:
     try:
         # Pings connectors to aggregate bubble statuses
@@ -385,7 +492,7 @@ async def api_get_connectors() -> JSONResponse:
         raise HTTPException(status_code=500, detail=f"Failed to fetch connector bubbles: {e}")
 
 
-@app.get("/api/connectors/{name}")
+@app.get("/api/connectors/{name}", dependencies=[Depends(_guard_user)])
 async def api_get_connector_detail(name: str) -> JSONResponse:
     try:
         health_res = await _mcp_tool("connector_health", {"name": name})
@@ -399,7 +506,7 @@ async def api_get_connector_detail(name: str) -> JSONResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/topology")
+@app.get("/api/topology", dependencies=[Depends(_guard_user)])
 async def api_get_topology() -> JSONResponse:
     """Stage 12: cross-system interconnectivity graph for the Architecture page."""
     try:
@@ -409,7 +516,17 @@ async def api_get_topology() -> JSONResponse:
         raise HTTPException(status_code=500, detail=f"Failed to fetch topology: {e}")
 
 
-@app.get("/api/overview")
+@app.get("/api/architecture", dependencies=[Depends(_guard_user)])
+async def api_get_architecture() -> JSONResponse:
+    """Stage 18: architecture graph v2 (layers/nodes/edges/flows/concerns)."""
+    try:
+        res = await _mcp_tool("architecture_graph", {})
+        return JSONResponse(_extract_json_block(res))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch architecture graph: {e}")
+
+
+@app.get("/api/overview", dependencies=[Depends(_guard_user)])
 async def api_get_overview() -> JSONResponse:
     """Stage 11: compliance command-center roll-up (KPIs, attention, connectors, tables)."""
     try:
@@ -424,7 +541,7 @@ async def api_get_overview() -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/jira/issues")
+@app.get("/api/jira/issues", dependencies=[Depends(_guard_user)])
 async def api_jira_issues() -> JSONResponse:
     res = await _mcp_tool("jira_list_issues", {})
     if res.get("isError"):
@@ -432,36 +549,49 @@ async def api_jira_issues() -> JSONResponse:
     return JSONResponse(_extract_json_block(res))
 
 
-@app.post("/api/jira/stage")
+@app.post("/api/jira/stage", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_VALIDATE_JIRA))])
 async def api_jira_stage(request: Request) -> JSONResponse:
     body = await request.json()
-    res = await _mcp_tool("jira_stage_edits", {"edits": body.get("edits") or []})
+    args: dict[str, Any] = {"edits": body.get("edits") or []}
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
+    res = await _mcp_tool("jira_stage_edits", args)
     payload = _extract_json_block(res)
     return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
 
 
-@app.post("/api/jira/validate")
+@app.post("/api/jira/validate", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_VALIDATE_JIRA))])
 async def api_jira_validate(request: Request) -> JSONResponse:
     body = await request.json()
-    args = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    args: dict[str, Any] = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
     res = await _mcp_tool("jira_validate_staged", args)
     payload = _extract_json_block(res)
     return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
 
 
-@app.post("/api/jira/revert")
+@app.post("/api/jira/revert", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_APPLY_JIRA))])
 async def api_jira_revert(request: Request) -> JSONResponse:
     body = await request.json()
-    args = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    args: dict[str, Any] = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
     res = await _mcp_tool("jira_revert_staged", args)
     payload = _extract_json_block(res)
     return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
 
 
-@app.post("/api/jira/apply")
+@app.post("/api/jira/apply", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_APPLY_JIRA))])
 async def api_jira_apply(request: Request) -> JSONResponse:
     body = await request.json()
-    args = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    args: dict[str, Any] = {"issue_keys": body.get("issue_keys")} if body.get("issue_keys") else {}
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
     res = await _mcp_tool("jira_apply_staged", args)
     payload = _extract_json_block(res)
     return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
@@ -472,7 +602,7 @@ async def api_jira_apply(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/docs/tree")
+@app.get("/api/docs/tree", dependencies=[Depends(_guard_user)])
 async def api_docs_tree(
     tag: str | None = None,
     status: str | None = None,
@@ -492,7 +622,7 @@ async def api_docs_tree(
     return JSONResponse(_extract_json_block(res))
 
 
-@app.get("/api/docs/search")
+@app.get("/api/docs/search", dependencies=[Depends(_guard_user)])
 async def api_docs_search(q: str, limit: int = 25) -> JSONResponse:
     if not q:
         raise HTTPException(status_code=400, detail="q is required")
@@ -502,7 +632,7 @@ async def api_docs_search(q: str, limit: int = 25) -> JSONResponse:
     return JSONResponse(_extract_json_block(res))
 
 
-@app.get("/api/docs/{slug}")
+@app.get("/api/docs/{slug}", dependencies=[Depends(_guard_user)])
 async def api_docs_get(slug: str) -> JSONResponse:
     res = await _mcp_tool("docs_get", {"slug": slug})
     if res.get("isError"):
@@ -513,43 +643,52 @@ async def api_docs_get(slug: str) -> JSONResponse:
     return JSONResponse(_extract_json_block(res))
 
 
-@app.post("/api/docs")
+@app.post("/api/docs", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_MANAGE_DOCS))])
 async def api_docs_upsert(request: Request) -> JSONResponse:
     body = await request.json()
     if "slug" not in body:
         raise HTTPException(status_code=400, detail="slug is required")
+    actor = _actor_from_request(request)
+    if actor:
+        body["actor"] = actor
     res = await _mcp_tool("docs_upsert", body)
     if res.get("isError"):
         return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
     return JSONResponse(_extract_json_block(res))
 
 
-@app.post("/api/docs/{slug}/flags")
+@app.post("/api/docs/{slug}/flags", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_MANAGE_DOCS))])
 async def api_docs_set_flags(slug: str, request: Request) -> JSONResponse:
     body = await request.json()
     args: dict[str, Any] = {"slug": slug}
     for field in ("status", "visibility", "tags"):
         if field in body:
             args[field] = body[field]
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
     res = await _mcp_tool("docs_set_flags", args)
     if res.get("isError"):
         return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
     return JSONResponse(_extract_json_block(res))
 
 
-@app.post("/api/docs/sync")
+@app.post("/api/docs/sync", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_SYNC_DOCS))])
 async def api_docs_sync(request: Request) -> JSONResponse:
     body = await request.json()
     args: dict[str, Any] = {}
     if body.get("slug"):
         args["slug"] = body["slug"]
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
     res = await _mcp_tool("docs_sync", args)
     if res.get("isError"):
         return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
     return JSONResponse(_extract_json_block(res))
 
 
-@app.post("/api/docs/agent")
+@app.post("/api/docs/agent", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_SYNC_DOCS))])
 async def api_docs_agent(request: Request) -> JSONResponse:
     body = await request.json()
     args: dict[str, Any] = {}
@@ -559,13 +698,16 @@ async def api_docs_agent(request: Request) -> JSONResponse:
         args["run_id"] = body["run_id"]
     if "resume_decision" in body:
         args["resume_decision"] = body["resume_decision"]
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
     res = await _mcp_tool("docs_agent_run", args)
     if res.get("isError"):
         return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
     return JSONResponse(_extract_json_block(res))
 
 
-@app.get("/api/reports/download")
+@app.get("/api/reports/download", dependencies=[Depends(_guard_user)])
 async def api_download_report(finding_id: str, format: str) -> FileResponse:
     if format not in ("pdf", "ppt"):
         raise HTTPException(status_code=400, detail="Invalid format. Supported: pdf, ppt")
@@ -606,7 +748,7 @@ async def api_download_report(finding_id: str, format: str) -> FileResponse:
         raise HTTPException(status_code=500, detail=f"Report build download failure: {e}")
 
 
-@app.post("/api/workflow/run")
+@app.post("/api/workflow/run", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_RUN_WORKFLOW))])
 async def api_run_workflow(request: Request) -> JSONResponse:
     body = await request.json()
     finding_id = body.get("finding_id")
@@ -618,6 +760,9 @@ async def api_run_workflow(request: Request) -> JSONResponse:
         args["resume_decision"] = body["resume_decision"]
     if "checkpoint_id" in body:
         args["checkpoint_id"] = body["checkpoint_id"]
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor
 
     result = await _mcp_tool("workflow_run", args)
     if result.get("isError"):

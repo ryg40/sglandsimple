@@ -298,20 +298,22 @@ class JiraConnector:
         ):
             import jira_staging as stg
 
+            # S19.audit.1 — extract actor context injected by the web layer.
+            actor = args.get("actor") or None
             try:
                 if name == "jira_list_issues":
                     return self._envelope(await stg.list_issues(list(self._SAMPLE)))
                 if name == "jira_stage_edits":
                     return self._envelope(
-                        await stg.stage_edits(args.get("edits") or [], list(self._SAMPLE))
+                        await stg.stage_edits(args.get("edits") or [], list(self._SAMPLE), actor=actor)
                     )
                 if name == "jira_validate_staged":
-                    return self._envelope(await stg.validate_staged(args.get("issue_keys")))
+                    return self._envelope(await stg.validate_staged(args.get("issue_keys"), actor=actor))
                 if name == "jira_revert_staged":
-                    return self._envelope(await stg.revert_staged(args.get("issue_keys")))
+                    return self._envelope(await stg.revert_staged(args.get("issue_keys"), actor=actor))
                 if name == "jira_apply_staged":
                     return self._envelope(
-                        await stg.apply_staged(args.get("issue_keys"), live_writer=self._live_update_issue)
+                        await stg.apply_staged(args.get("issue_keys"), live_writer=self._live_update_issue, actor=actor)
                     )
             except Exception as e:  # noqa: BLE001
                 return self._envelope({"error": f"{type(e).__name__}: {e}"}, is_error=True)

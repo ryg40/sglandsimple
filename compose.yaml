@@ -49,7 +49,9 @@ services:
       SEARXNG_URL: ${SEARXNG_URL:?SEARXNG_URL is required (set in .env.local)}
       MONGO_URL: ${MONGO_URL:-mongodb://app:app@mongo:27017}
       MONGO_DB: ${MONGO_DB:-enterprise}
-      ASK_DATA_MAX_DOCS: ${ASK_DATA_MAX_DOCS:-10}
+      ASK_DATA_MAX_DOCS: ${ASK_DATA_MAX_DOCS:-4}
+      ASK_DATA_DEADLINE_SECONDS: ${ASK_DATA_DEADLINE_SECONDS:-240}
+      ASK_DATA_BATCH_NOTES: ${ASK_DATA_BATCH_NOTES:-true}
       ASK_DATA_LIMIT_CEILING: ${ASK_DATA_LIMIT_CEILING:-50}
       LANGGRAPH_CHECKPOINT_COLLECTION: ${LANGGRAPH_CHECKPOINT_COLLECTION:-lg_checkpoints}
       # Stage 16 — HIL-gated Jira bulk edits. Apply only mutates the live Jira
@@ -127,6 +129,29 @@ services:
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
       DEFAULT_MODEL: ${UPSTREAM_MODEL:?UPSTREAM_MODEL is required (set in .env.local)}
       AUDIT_RECENT_LIMIT: ${AUDIT_RECENT_LIMIT:-25}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-300}
+      # Stage 19 — Web auth / RBAC
+      AUTH_MODE: ${AUTH_MODE:-basic}
+      AUTH_ALL_USERS_GROUP: ${AUTH_ALL_USERS_GROUP:-sg_all_users}
+      AUTH_ADMIN_GROUP: ${AUTH_ADMIN_GROUP:-sg_sec_admin}
+      AUTH_APP_USER_GROUP: ${AUTH_APP_USER_GROUP:-sg_app_user}
+      AUTH_AUDIT_USER_GROUP: ${AUTH_AUDIT_USER_GROUP:-sg_audit_users}
+      AUTH_TRUSTED_HEADER_USER: ${AUTH_TRUSTED_HEADER_USER:-X-Forwarded-User}
+      AUTH_TRUSTED_HEADER_GROUPS: ${AUTH_TRUSTED_HEADER_GROUPS:-X-Forwarded-Groups}
+      AUTH_SSO_REQUIRED: ${AUTH_SSO_REQUIRED:-false}
+      AUTH_BASIC_USERS_FILE: ${AUTH_BASIC_USERS_FILE:-/data/auth/users.json}
+      AUTH_BASIC_SEED_PASSWORD: ${AUTH_BASIC_SEED_PASSWORD:-}
+      AUTH_DEV_HEADERS_ENABLED: ${AUTH_DEV_HEADERS_ENABLED:-false}
+      AUTH_LDAP_URL: ${AUTH_LDAP_URL:-}
+      AUTH_LDAP_BASE_DN: ${AUTH_LDAP_BASE_DN:-}
+      AUTH_LDAP_BIND_SECRET_FILE: ${AUTH_LDAP_BIND_SECRET_FILE:-}
+      AUTH_CACHE_TTL_SECONDS: ${AUTH_CACHE_TTL_SECONDS:-300}
+    volumes:
+      # Stage 19: Basic Auth users file. Host bind mount so the file
+      # persists across container rebuilds and is never baked into the image.
+      # Generate with: AUTH_BASIC_SEED_PASSWORD=<secret> python3 web/auth_seed.py
+      # perm/ is gitignored — the file is never committed.
+      - ./perm/auth:/data/auth
     ports:
       - "${WEB_PORT:-5452}:3000"
     networks:

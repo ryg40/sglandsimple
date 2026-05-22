@@ -14,3 +14,7 @@ perm/
 # Agent runtime / tooling scratch — never committed.
 .claude/
 .fusion/
+# Stage 19 auth (POC, never commit credentials)
+data/
+/data/auth/
+/data/auth/users.json

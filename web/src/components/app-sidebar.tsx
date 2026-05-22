@@ -11,15 +11,23 @@ import {
   Clock,
   Network,
   BookText,
+  UsersRound,
+  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCollections } from "@/lib/queries";
+import { useAuth, Capability } from "@/components/auth-provider";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface NavItem {
   to: string;
   label: string;
   icon: typeof LayoutDashboard;
   end?: boolean;
+  /** Capability required to navigate this item. Missing cap = disabled + tooltip. */
+  requiresCap?: string;
+  /** Tooltip message when cap is missing. */
+  capTooltip?: string;
 }
 const NAV: { group: string; items: NavItem[] }[] = [
   { group: "Workspace", items: [{ to: "/", label: "Overview", icon: LayoutDashboard, end: true }] },
@@ -31,8 +39,15 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: "/wrangler", label: "Wrangler", icon: Workflow },
       { to: "/hub", label: "Compliance Hub", icon: Shield },
       { to: "/architecture", label: "Architecture", icon: Network },
-      { to: "/workflow", label: "Workflow Orchestrator", icon: Clock },
+      {
+        to: "/workflow",
+        label: "Workflow Orchestrator",
+        icon: Clock,
+        requiresCap: Capability.CAN_RUN_WORKFLOW,
+        capTooltip: "Requires canRunWorkflow (app_user, audit_user, or admin role)",
+      },
       { to: "/docs", label: "Docs Wiki", icon: BookText },
+      { to: "/standup", label: "Standup", icon: UsersRound },
     ],
   },
 ];
@@ -46,6 +61,7 @@ export function AppSidebar({
 }) {
   const { data, isError } = useCollections();
   const total = data?.collections.reduce((s, c) => s + c.count, 0) ?? 0;
+  const { hasCapability } = useAuth();
 
   return (
     <aside
@@ -76,26 +92,61 @@ export function AppSidebar({
                 {section.group}
               </div>
             )}
-            {section.items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  cn(
-                    "mb-0.5 flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-                    collapsed && "justify-center"
-                  )
-                }
-                title={collapsed ? item.label : undefined}
-              >
-                <item.icon className="size-4 shrink-0" />
-                {!collapsed && <span>{item.label}</span>}
-              </NavLink>
-            ))}
+            {section.items.map((item) => {
+              const allowed = !item.requiresCap || hasCapability(item.requiresCap);
+              const tooltip = item.capTooltip ?? "Insufficient permissions";
+
+              const linkCls = cn(
+                "mb-0.5 flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium transition-colors",
+                allowed
+                  ? "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+                  : "cursor-not-allowed text-sidebar-foreground/40",
+                collapsed && "justify-center"
+              );
+
+              const inner = (
+                <>
+                  <item.icon className="size-4 shrink-0" />
+                  {!collapsed && <span className="flex-1">{item.label}</span>}
+                  {!collapsed && !allowed && <Lock className="size-3 shrink-0 text-muted-foreground" />}
+                </>
+              );
+
+              if (allowed) {
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      cn(
+                        linkCls,
+                        isActive && "bg-sidebar-accent text-sidebar-accent-foreground"
+                      )
+                    }
+                    title={collapsed ? item.label : undefined}
+                  >
+                    {inner}
+                  </NavLink>
+                );
+              }
+
+              // Disabled: show as a non-navigable element with a tooltip.
+              return (
+                <Tooltip key={item.to}>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={linkCls}
+                      aria-disabled="true"
+                      title={collapsed ? item.label : undefined}
+                    >
+                      {inner}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">{tooltip}</TooltipContent>
+                </Tooltip>
+              );
+            })}
           </div>
         ))}
       </nav>

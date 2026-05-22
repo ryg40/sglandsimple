@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { AlertCircle, Save, CheckCircle2, Undo2, Rocket, AlertTriangle } from "lucide-react";
+import { useAuth, Capability, DisabledWithTooltip } from "./auth-provider";
 
 // Stage 16 — editable Jira grid with HIL-gated bulk apply.
 // Edits are local until Save (stages them), Validate runs server rules, and
@@ -42,7 +43,11 @@ function stageBadge(row: JiraIssueRow) {
   return <Badge variant="warning" className="text-[9px]">staged</Badge>;
 }
 
-export function JiraEditableGrid() {
+export function JiraEditableGrid({ allowApply = true }: { allowApply?: boolean } = {}) {
+  const { hasCapability } = useAuth();
+  const canValidate = hasCapability(Capability.CAN_VALIDATE_JIRA);
+  const canApplyJira = hasCapability(Capability.CAN_APPLY_JIRA);
+
   const { data, isLoading, isError, error, refetch } = useJiraIssues();
   const stage = useStageJiraEdits();
   const validate = useValidateJira();
@@ -140,6 +145,7 @@ export function JiraEditableGrid() {
 
   const stagedRows = useMemo(() => rows.filter((r) => r._stage_status && r._stage_status !== "applied"), [rows]);
   const validatedCount = stagedRows.filter((r) => r._stage_status === "validated").length;
+  const canApply = allowApply && validatedCount > 0;
 
   if (isLoading) return <Skeleton className="h-64 w-full rounded-lg" />;
   if (isError)
@@ -160,24 +166,44 @@ export function JiraEditableGrid() {
           {dirtyCount > 0 ? `${dirtyCount} unsaved edit(s)` : `${stagedRows.length} staged`}
         </span>
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button size="sm" variant="default" onClick={onSave} disabled={dirtyCount === 0 || stage.isPending}>
-            <Save className="mr-1.5 h-3.5 w-3.5" /> Save
-          </Button>
-          <Button size="sm" variant="outline" onClick={onValidate} disabled={stagedRows.length === 0 || validate.isPending}>
-            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Validate
-          </Button>
-          <Button size="sm" variant="outline" onClick={onRevert} disabled={stagedRows.length === 0 || revert.isPending}>
-            <Undo2 className="mr-1.5 h-3.5 w-3.5" /> Revert
-          </Button>
-          <Button
-            size="sm"
-            variant="default"
-            onClick={() => { setApplyResult(null); setApplyOpen(true); }}
-            disabled={validatedCount === 0}
-            title={validatedCount === 0 ? "Validate staged edits first" : undefined}
+          <DisabledWithTooltip
+            enabled={canValidate}
+            message="Requires canValidateJira (audit_user or admin)"
           >
-            <Rocket className="mr-1.5 h-3.5 w-3.5" /> Apply ({validatedCount})
-          </Button>
+            <Button size="sm" variant="default" onClick={onSave} disabled={dirtyCount === 0 || stage.isPending}>
+              <Save className="mr-1.5 h-3.5 w-3.5" /> Save
+            </Button>
+          </DisabledWithTooltip>
+          <DisabledWithTooltip
+            enabled={canValidate}
+            message="Requires canValidateJira (audit_user or admin)"
+          >
+            <Button size="sm" variant="outline" onClick={onValidate} disabled={stagedRows.length === 0 || validate.isPending}>
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Validate
+            </Button>
+          </DisabledWithTooltip>
+          <DisabledWithTooltip
+            enabled={canApplyJira}
+            message="Requires canApplyJira (admin only) to revert staged edits"
+          >
+            <Button size="sm" variant="outline" onClick={onRevert} disabled={stagedRows.length === 0 || revert.isPending}>
+              <Undo2 className="mr-1.5 h-3.5 w-3.5" /> Revert
+            </Button>
+          </DisabledWithTooltip>
+          <DisabledWithTooltip
+            enabled={canApplyJira}
+            message="Requires canApplyJira (admin only)"
+          >
+            <Button
+              size="sm"
+              variant="default"
+              onClick={() => { setApplyResult(null); setApplyOpen(true); }}
+              disabled={!canApply}
+              title={!allowApply ? "Apply is disabled in Standup until approval/RBAC lands" : validatedCount === 0 ? "Validate staged edits first" : undefined}
+            >
+              <Rocket className="mr-1.5 h-3.5 w-3.5" /> Apply ({validatedCount})
+            </Button>
+          </DisabledWithTooltip>
         </div>
       </div>
 
@@ -283,10 +309,15 @@ export function JiraEditableGrid() {
             ) : (
               <>
                 <Button variant="outline" onClick={() => setApplyOpen(false)}>Cancel</Button>
-                <Button variant="default" onClick={onApplyConfirm} disabled={apply.isPending}>
-                  <Rocket className="mr-1.5 h-3.5 w-3.5" />
-                  Confirm Apply
-                </Button>
+                <DisabledWithTooltip
+                  enabled={canApplyJira}
+                  message="Requires canApplyJira (admin only)"
+                >
+                  <Button variant="default" onClick={onApplyConfirm} disabled={apply.isPending}>
+                    <Rocket className="mr-1.5 h-3.5 w-3.5" />
+                    Confirm Apply
+                  </Button>
+                </DisabledWithTooltip>
               </>
             )}
           </DialogFooter>

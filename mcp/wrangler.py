@@ -164,6 +164,7 @@ async def save_pipeline(
     collection: str,
     stages: list[dict[str, Any]],
     pipeline_id: str | None = None,
+    actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if collection not in dbmod.KNOWN_COLLECTIONS:
         raise dbmod.SpecError(f"unknown collection: {collection!r}")
@@ -194,6 +195,7 @@ async def save_pipeline(
         existing,
         {"name": name, "collection": collection, "stages": stages},
         "wrangler_save",
+        actor,
     )
     return {"_id": pid, "name": name, "collection": collection, "saved": True}
 

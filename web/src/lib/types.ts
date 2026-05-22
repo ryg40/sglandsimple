@@ -554,3 +554,26 @@ export interface ArchitectureGraph {
   flows: ArchFlow[];
   concerns: ArchConcern[];
 }
+
+// Stage 19 — /api/me identity + capability response.
+// capabilities values are the Capability constant strings from web/auth.py.
+export type Capability = string;
+
+export interface MeResponse {
+  authenticated: boolean;
+  /** Present only when authenticated === true. */
+  user?: {
+    username: string;
+    display_name: string;
+    email: string;
+  };
+  /** Present only when authenticated === true. */
+  groups?: string[];
+  /** Present only when authenticated === true. */
+  roles?: string[];
+  /** Sorted list of granted capabilities; empty array when unauthenticated. */
+  capabilities: Capability[];
+  auth_mode: string;
+  /** Present only when authenticated === true. */
+  source?: string;
+}

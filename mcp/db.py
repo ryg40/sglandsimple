@@ -409,27 +409,50 @@ def validate_write_spec(spec: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-async def _audit(action: str, collection: str, _id: str | None, before: Any, after: Any, source: str) -> None:
+async def _audit(
+    action: str,
+    collection: str,
+    _id: str | None,
+    before: Any,
+    after: Any,
+    source: str,
+    actor: dict[str, Any] | None = None,
+) -> None:
+    """Write an audit-log entry.
+
+    ``actor`` is an optional dict carrying identity context injected by the web
+    layer (S19.audit.1).  Shape: ``{"username": str, "roles": [...], "groups": [...]}``.
+    When absent (internal/tool calls) the field is omitted from the audit row so
+    existing callers are unaffected.  Best-effort: a write failure is logged but
+    never propagates.
+    """
     db = get_db()
     try:
         # Note: the audit-log doc must NOT use the row's _id as its own _id.
         # Store the row id under `doc_id` and let Mongo auto-assign _id.
-        await db[SHEET_AUDIT_COLLECTION].insert_one(
-            {
-                "action": action,
-                "collection": collection,
-                "doc_id": _id,
-                "before": before,
-                "after": after,
-                "ts": _dt.datetime.utcnow(),
-                "source": source,
-            }
-        )
+        doc: dict[str, Any] = {
+            "action": action,
+            "collection": collection,
+            "doc_id": _id,
+            "before": before,
+            "after": after,
+            "ts": _dt.datetime.utcnow(),
+            "source": source,
+        }
+        if actor:
+            doc["actor"] = actor
+        await db[SHEET_AUDIT_COLLECTION].insert_one(doc)
     except Exception as e:  # noqa: BLE001 — audit is best-effort, never fail the write
         print(f"[db] audit write failed: {e}", flush=True)
 
 
-async def insert_one(collection: str, doc: dict[str, Any], *, source: str = "mcp_direct") -> dict[str, Any]:
+async def insert_one(
+    collection: str,
+    doc: dict[str, Any],
+    *,
+    source: str = "mcp_direct",
+    actor: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     _require_writes_enabled()
     spec = validate_write_spec({"action": "insertOne", "collection": collection, "doc": doc})
     db = get_db()
@@ -442,12 +465,17 @@ async def insert_one(collection: str, doc: dict[str, Any], *, source: str = "mcp
     after = await coll.find_one({"_id": inserted_id})
     after = _stringify_ids(after) if after is not None else None
     _id_str = str(inserted_id)
-    await _audit("insertOne", spec["collection"], _id_str, None, after, source)
+    await _audit("insertOne", spec["collection"], _id_str, None, after, source, actor)
     return {"_id": _id_str, "after": after}
 
 
 async def update_one(
-    collection: str, _id: str, update: dict[str, Any], *, source: str = "mcp_direct"
+    collection: str,
+    _id: str,
+    update: dict[str, Any],
+    *,
+    source: str = "mcp_direct",
+    actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _require_writes_enabled()
     spec = validate_write_spec(
@@ -465,7 +493,7 @@ async def update_one(
     after = await coll.find_one({"_id": spec["_id"]})
     before_s = _stringify_ids(before)
     after_s = _stringify_ids(after) if after is not None else None
-    await _audit("updateOne", spec["collection"], str(spec["_id"]), before_s, after_s, source)
+    await _audit("updateOne", spec["collection"], str(spec["_id"]), before_s, after_s, source, actor)
     return {
         "_id": str(spec["_id"]),
         "matched": result.matched_count,
@@ -475,7 +503,13 @@ async def update_one(
     }
 
 
-async def delete_one(collection: str, _id: str, *, source: str = "mcp_direct") -> dict[str, Any]:
+async def delete_one(
+    collection: str,
+    _id: str,
+    *,
+    source: str = "mcp_direct",
+    actor: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     _require_writes_enabled()
     spec = validate_write_spec({"action": "deleteOne", "collection": collection, "_id": _id})
     db = get_db()
@@ -488,7 +522,7 @@ async def delete_one(collection: str, _id: str, *, source: str = "mcp_direct") -
     except Exception as e:  # noqa: BLE001
         raise ExecError(f"delete_one failed: {e}") from e
     before_s = _stringify_ids(before)
-    await _audit("deleteOne", spec["collection"], str(spec["_id"]), before_s, None, source)
+    await _audit("deleteOne", spec["collection"], str(spec["_id"]), before_s, None, source, actor)
     return {"_id": str(spec["_id"]), "deleted": result.deleted_count, "before": before_s}
 
 
@@ -788,6 +822,7 @@ async def docs_upsert(
     note: str = "",
     source: str = "docs_upsert",
     last_reviewed: bool = True,
+    actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create or update a doc by slug, writing an append-only revision and
     bumping the version. Returns {doc, revision, created}. Audited."""
@@ -859,7 +894,7 @@ async def docs_upsert(
 
     before_s = _stringify_ids(before) if before else None
     after_s = _stringify_ids(doc)
-    await _audit("upsertOne", DOCS_COLLECTION, doc["_id"], before_s, after_s, source)
+    await _audit("upsertOne", DOCS_COLLECTION, doc["_id"], before_s, after_s, source, actor)
     return {"doc": after_s, "revision": _stringify_ids(rev), "created": created}
 
 
@@ -870,6 +905,7 @@ async def docs_set_flags(
     visibility: str | None = None,
     tags: list[str] | None = None,
     source: str = "docs_set_flags",
+    actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Set lifecycle/visibility/tags on a doc without creating a content
     revision. Validated against the 14b enums. Audited."""
@@ -894,7 +930,7 @@ async def docs_set_flags(
     after = await coll.find_one({"slug": slug})
     before_s = _stringify_ids(before)
     after_s = _stringify_ids(after)
-    await _audit("updateOne", DOCS_COLLECTION, before["_id"], before_s, after_s, source)
+    await _audit("updateOne", DOCS_COLLECTION, before["_id"], before_s, after_s, source, actor)
     return {"doc": after_s}
 
 

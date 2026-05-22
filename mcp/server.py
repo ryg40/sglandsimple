@@ -35,6 +35,7 @@ from topology import build_topology
 from architecture import build_architecture
 from overview import build_overview
 import docs as docsmod
+import standup_agent as standupmod
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
 
@@ -532,6 +533,50 @@ TOOLS.append({
     "inputSchema": {"type": "object", "properties": {}},
 })
 
+# Stage 20 — Standup Jira cockpit dry-run planning helpers.
+TOOLS.extend([
+    {
+        "name": "standup_link_context",
+        "description": "Parse standup chat messages for Jira/Confluence/GitHub/SNOW/Archer links, @mentions, and Jira issue keys. Performs no writes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "author": {"type": "string"},
+                            "body": {"type": "string"},
+                            "kind": {"type": "string"},
+                            "created_at": {"type": "string"},
+                        },
+                        "required": ["body"],
+                    },
+                },
+                "selected_issues": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["messages"],
+        },
+    },
+    {
+        "name": "standup_summarize",
+        "description": "Summarize standup chat and selected Jira context into proposed/dry-run follow-ups. Does not stage or write to external systems.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "messages": {"type": "array", "items": {"type": "object"}},
+                "selected_issues": {"type": "array", "items": {"type": "object"}},
+                "docs_context": {"type": "array", "items": {"type": "object"}},
+                "trigger": {"type": "string", "default": "manual"},
+                "max_messages": {"type": "integer", "minimum": 1, "maximum": 500, "default": 80},
+            },
+            "required": ["messages"],
+        },
+    },
+])
+
 # Stage 14 — docs wiki CRUD/search/sync/agent tools.
 TOOLS.extend([
     {
@@ -679,6 +724,41 @@ def _docs_envelope(md: str, payload: Any, *, is_error: bool = False) -> dict[str
         ],
         "isError": is_error,
     }
+
+
+def _standup_envelope(payload: Any, *, is_error: bool = False) -> dict[str, Any]:
+    md = standupmod.render_markdown(payload) if isinstance(payload, dict) else str(payload)
+    return {
+        "content": [
+            {"type": "text", "text": md},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": is_error,
+    }
+
+
+async def _tool_standup_link_context(args: dict[str, Any]) -> dict[str, Any]:
+    payload = standupmod.build_link_context(
+        args.get("messages") or [],
+        selected_issues=args.get("selected_issues") or [],
+    )
+    return _standup_envelope(payload)
+
+
+async def _tool_standup_summarize(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        payload = await standupmod.run_standup_summarize(
+            args.get("messages") or [],
+            selected_issues=args.get("selected_issues") or [],
+            docs_context=args.get("docs_context") or [],
+            trigger=args.get("trigger") or "manual",
+            max_messages=int(args.get("max_messages", 80) or 80),
+        )
+    except standupmod.UnsupportedStandupModel as e:
+        return _standup_envelope({"error": str(e), "code": "unsupported_model"}, is_error=True)
+    except Exception as e:  # noqa: BLE001
+        return _standup_envelope({"error": f"{type(e).__name__}: {e}"}, is_error=True)
+    return _standup_envelope(payload)
 
 
 async def _tool_docs_list(args: dict[str, Any]) -> dict[str, Any]:
@@ -1187,6 +1267,8 @@ async def _tool_sheet_get_rows(args: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def _tool_sheet_update_cell(args: dict[str, Any]) -> list[dict[str, Any]]:
+    # S19.audit.1 — actor is injected by the web layer; pop it before forwarding db args.
+    actor = args.pop("actor", None) or None
     update: dict[str, Any]
     field = args["field"]
     if "value" in args:
@@ -1194,7 +1276,7 @@ async def _tool_sheet_update_cell(args: dict[str, Any]) -> list[dict[str, Any]]:
     else:
         update = {"$unset": {field: ""}}
     info = await dbmod.update_one(
-        args["collection"], args["_id"], update, source="sheet_cell"
+        args["collection"], args["_id"], update, source="sheet_cell", actor=actor
     )
     return [
         {"type": "text", "text": json.dumps(info, indent=2, default=str)},
@@ -1202,12 +1284,14 @@ async def _tool_sheet_update_cell(args: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def _tool_sheet_insert_row(args: dict[str, Any]) -> list[dict[str, Any]]:
-    info = await dbmod.insert_one(args["collection"], args["doc"], source="sheet_insert")
+    actor = args.pop("actor", None) or None  # S19.audit.1
+    info = await dbmod.insert_one(args["collection"], args["doc"], source="sheet_insert", actor=actor)
     return [{"type": "text", "text": json.dumps(info, indent=2, default=str)}]
 
 
 async def _tool_sheet_delete_row(args: dict[str, Any]) -> list[dict[str, Any]]:
-    info = await dbmod.delete_one(args["collection"], args["_id"], source="sheet_delete")
+    actor = args.pop("actor", None) or None  # S19.audit.1
+    info = await dbmod.delete_one(args["collection"], args["_id"], source="sheet_delete", actor=actor)
     return [{"type": "text", "text": json.dumps(info, indent=2, default=str)}]
 
 
@@ -1215,7 +1299,8 @@ async def _tool_sheet_apply_nl(args: dict[str, Any]) -> dict[str, Any]:
     from sheet_apply import render_markdown as _sheet_render_md
     from sheet_apply import run_sheet_apply
 
-    result = await run_sheet_apply(args["collection"], args["instruction"])
+    actor = args.pop("actor", None) or None  # S19.audit.1
+    result = await run_sheet_apply(args["collection"], args["instruction"], actor)
     md = _sheet_render_md(result)
     payload = result.model_dump(exclude_none=True, by_alias=True)
     return {
@@ -1363,6 +1448,10 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if name == "ask_data":
         return await _tool_ask_data(args)
+    if name == "standup_link_context":
+        return await _tool_standup_link_context(args)
+    if name == "standup_summarize":
+        return await _tool_standup_summarize(args)
     if name == "docs_list":
         return await _tool_docs_list(args)
     if name == "docs_get":

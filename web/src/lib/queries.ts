@@ -36,6 +36,7 @@ import type {
   DocsSearchResponse,
   DocsSyncResponse,
   DocsAgentResponse,
+  MeResponse,
 } from "./types";
 
 export const keys = {
@@ -417,5 +418,23 @@ export function useDocsAgent() {
       // Applying suggestions writes revisions; refresh the tree/docs.
       if (data.applied_any) qc.invalidateQueries({ queryKey: ["docs-tree"] });
     },
+  });
+}
+
+// ---- Stage 19 — current-user identity + capabilities ----------------------
+
+/** Fetch the caller's identity and capability set from /api/me.
+ *
+ * Always returns HTTP 200 (authenticated: false when unauthenticated), so
+ * this query never errors on missing credentials — the SPA uses the result
+ * to decide whether to render a login prompt or the full UI.
+ *
+ * staleTime: 60 s  — identity rarely changes mid-session; avoid chatty re-fetches.
+ */
+export function useMe() {
+  return useQuery({
+    queryKey: ["me"] as const,
+    queryFn: () => api.get<MeResponse>("/api/me"),
+    staleTime: 60_000,
   });
 }

@@ -106,6 +106,7 @@ async def stage_edits(
     current_issues: list[dict[str, Any]],
     *,
     staged_by: str = "web",
+    actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist proposed field changes as staged diffs. Bulk.
 
@@ -145,7 +146,7 @@ async def stage_edits(
         if not changes:
             # editing back to original clears the staged doc
             await db[STAGE_COLLECTION].delete_one({"_id": sid})
-            await dbmod._audit("jira_unstage", STAGE_COLLECTION, sid, before, None, "jira_stage")
+            await dbmod._audit("jira_unstage", STAGE_COLLECTION, sid, before, None, "jira_stage", actor)
             continue
 
         doc = {
@@ -158,7 +159,7 @@ async def stage_edits(
             "staged_at": _dt.datetime.utcnow(),
         }
         await db[STAGE_COLLECTION].replace_one({"_id": sid}, doc, upsert=True)
-        await dbmod._audit("jira_stage", STAGE_COLLECTION, sid, before, doc, "jira_stage")
+        await dbmod._audit("jira_stage", STAGE_COLLECTION, sid, before, doc, "jira_stage", actor)
         staged_keys.append(key)
 
     return {"staged": staged_keys, "rejected": rejected, "writes_enabled": JIRA_WRITES_ENABLED}
@@ -193,7 +194,7 @@ def _validate_change(field: str, value: Any) -> str | None:
     return None
 
 
-async def validate_staged(issue_keys: list[str] | None = None) -> dict[str, Any]:
+async def validate_staged(issue_keys: list[str] | None = None, *, actor: dict[str, Any] | None = None) -> dict[str, Any]:
     """Run validation rules over staged docs, marking each validated/invalid."""
     db = dbmod.get_db()
     query: dict[str, Any] = {"status": {"$in": ["staged", "validated", "invalid"]}}
@@ -220,7 +221,7 @@ async def validate_staged(issue_keys: list[str] | None = None) -> dict[str, Any]
             {"$set": {"status": new_status, "validation": validation, "validated_at": _dt.datetime.utcnow()}},
         )
         await dbmod._audit(
-            "jira_validate", STAGE_COLLECTION, doc["_id"], before.get("validation"), validation, "jira_validate"
+            "jira_validate", STAGE_COLLECTION, doc["_id"], before.get("validation"), validation, "jira_validate", actor
         )
         results.append({"issue_key": doc["issue_key"], "status": new_status, "validation": validation})
 
@@ -232,7 +233,7 @@ async def validate_staged(issue_keys: list[str] | None = None) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-async def revert_staged(issue_keys: list[str] | None = None) -> dict[str, Any]:
+async def revert_staged(issue_keys: list[str] | None = None, *, actor: dict[str, Any] | None = None) -> dict[str, Any]:
     """Delete staged docs (all if no keys) so the grid returns to live state."""
     db = dbmod.get_db()
     query: dict[str, Any] = {}
@@ -242,7 +243,7 @@ async def revert_staged(issue_keys: list[str] | None = None) -> dict[str, Any]:
     reverted: list[str] = []
     async for doc in db[STAGE_COLLECTION].find(query):
         await db[STAGE_COLLECTION].delete_one({"_id": doc["_id"]})
-        await dbmod._audit("jira_revert", STAGE_COLLECTION, doc["_id"], doc, None, "jira_revert")
+        await dbmod._audit("jira_revert", STAGE_COLLECTION, doc["_id"], doc, None, "jira_revert", actor)
         reverted.append(doc["issue_key"])
     return {"reverted": reverted}
 
@@ -256,6 +257,7 @@ async def apply_staged(
     issue_keys: list[str] | None,
     *,
     live_writer=None,
+    actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply **validated** staged changes.
 
@@ -295,7 +297,7 @@ async def apply_staged(
             {"$set": {"status": "applied", "apply_mode": mode, "applied_at": _dt.datetime.utcnow()}},
         )
         await dbmod._audit(
-            "jira_apply", STAGE_COLLECTION, doc["_id"], before, {"fields": fields, "apply_mode": mode}, "jira_apply"
+            "jira_apply", STAGE_COLLECTION, doc["_id"], before, {"fields": fields, "apply_mode": mode}, "jira_apply", actor
         )
         applied.append(doc["issue_key"])
 
