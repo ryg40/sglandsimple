@@ -604,11 +604,13 @@ TOOLS.extend([
     },
     {
         "name": "docs_agent_run",
-        "description": "Docs agent workflow: reconcile (sync) → triage (flag stale/unreferenced) → suggest (draft improvement proposals for needs_attention docs). Suggestions are human-in-the-loop proposals, never auto-applied.",
+        "description": "Docs agent LangGraph workflow: reconcile (sync) → triage (flag stale/unreferenced) → suggest (draft improvement proposals) → apply-gate (human-in-the-loop interrupt). A fresh run pauses at the gate with status='waiting_approval' and returns a run_id + proposals; resume it by calling again with that run_id and a resume_decision (slugs to apply, 'all', or 'reject') to apply only approved suggestions via an audited docs_upsert.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "limit_suggestions": {"type": "integer", "minimum": 0, "maximum": 10, "default": 3},
+                "run_id": {"type": "string", "description": "Run id from a prior waiting_approval response; required to resume."},
+                "resume_decision": {"description": "Apply decision to resume an interrupted run: a list of slugs, a comma-separated string, 'all'/'approve', or 'reject'/'none'."},
             },
         },
     },
@@ -749,18 +751,39 @@ async def _tool_docs_sync(args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _tool_docs_agent_run(args: dict[str, Any]) -> dict[str, Any]:
-    from docs_agent import run_docs_agent
+    from docs_agent import run_docs_agent_graph
 
-    payload = await run_docs_agent(limit_suggestions=int(args.get("limit_suggestions", 3) or 3))
+    payload = await run_docs_agent_graph(
+        limit_suggestions=int(args.get("limit_suggestions", 3) or 3),
+        run_id=args.get("run_id"),
+        resume_decision=args.get("resume_decision", None),
+    )
     md_lines = ["# Docs agent run", ""]
-    md_lines.append(f"**Reconcile:** {payload['reconcile']['considered']} public doc(s), {len(payload['reconcile']['actions'])} action(s).")
+    md_lines.append(f"_run `{payload['run_id']}` · status **{payload['status']}**_")
+    rec = payload.get("reconcile", {})
+    md_lines.append(
+        f"\n**Reconcile:** {rec.get('considered', 0)} public doc(s), {len(rec.get('actions', []))} action(s)."
+    )
     md_lines.append(f"**Triage:** {len(payload['triage'])} doc(s) flagged.")
     for t in payload["triage"]:
         md_lines.append(f"- `{t['slug']}` → {t['suggested_status']} ({t['reason']})")
-    md_lines.append(f"\n**Suggestions (proposals — not applied):** {len(payload['suggestions'])}")
+    md_lines.append(f"\n**Suggestions (proposals):** {len(payload['suggestions'])}")
     for s in payload["suggestions"]:
-        md_lines.append(f"- `{s['slug']}`: {s['rationale']}")
-    md_lines.append("\n_All suggestions are proposals. Approve one via docs_upsert to create an audited revision._")
+        flag = " ✅ applied" if s.get("applied") else ""
+        md_lines.append(f"- `{s['slug']}`: {s['rationale']}{flag}")
+    if payload["status"] == "waiting_approval":
+        md_lines.append(
+            f"\n_Paused at the apply gate. Resume with `docs_agent_run(run_id=\"{payload['run_id']}\", "
+            f"resume_decision=<slugs | 'all' | 'reject'>)` to apply approved proposals._"
+        )
+    else:
+        applied = payload.get("applied", [])
+        md_lines.append(f"\n**Applied:** {len(applied)} revision(s) (audited).")
+        for a in applied:
+            if a.get("error"):
+                md_lines.append(f"- `{a['slug']}`: error — {a['error']}")
+            else:
+                md_lines.append(f"- `{a['slug']}` → v{a.get('version')}")
     return _docs_envelope("\n".join(md_lines), payload)
 
 

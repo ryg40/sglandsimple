@@ -392,8 +392,20 @@ export function useDocsSync() {
 }
 
 export function useDocsAgent() {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: (limit_suggestions?: number) =>
-      api.post<DocsAgentResponse>("/api/docs/agent", limit_suggestions !== undefined ? { limit_suggestions } : {}),
+    // A fresh run passes { limit_suggestions } and pauses at the HIL apply gate;
+    // resume by passing { run_id, resume_decision } to apply approved proposals.
+    mutationFn: (
+      arg?: number | { limit_suggestions?: number; run_id?: string; resume_decision?: unknown },
+    ) => {
+      const body =
+        typeof arg === "number" ? { limit_suggestions: arg } : (arg ?? {});
+      return api.post<DocsAgentResponse>("/api/docs/agent", body);
+    },
+    onSuccess: (data) => {
+      // Applying suggestions writes revisions; refresh the tree/docs.
+      if (data.applied_any) qc.invalidateQueries({ queryKey: ["docs-tree"] });
+    },
   });
 }

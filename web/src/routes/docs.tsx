@@ -14,7 +14,10 @@ import {
   Bot,
   Globe,
   Lock,
+  Check,
+  CircleSlash,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -351,11 +354,38 @@ function ArticleEditor({ slug, initialBody, onSaved }: ArticleEditorProps) {
 function AgentPanel() {
   const agent = useDocsAgent();
   const [result, setResult] = useState<DocsAgentResponse | null>(null);
+  // Which proposal slugs the human has ticked to apply at the gate.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const waiting = result?.status === "waiting_approval";
+  // Only proposals with a body are appliable.
+  const appliable = (result?.suggestions ?? []).filter((s) => s.proposed_body_md);
 
   const run = async () => {
     const data = await agent.mutateAsync(0);
     setResult(data);
+    setSelected(new Set());
   };
+
+  const resume = async (decision: unknown, label: string) => {
+    if (!result) return;
+    try {
+      const data = await agent.mutateAsync({ run_id: result.run_id, resume_decision: decision });
+      setResult(data);
+      const n = data.applied.filter((a) => !a.error).length;
+      const failed = data.applied.filter((a) => a.error).length;
+      toast.success(`${label}: ${n} revision(s) applied${failed ? `, ${failed} failed` : ""}`);
+    } catch (e) {
+      toast.error(`Apply failed: ${(e as Error).message}`);
+    }
+  };
+
+  const toggle = (slug: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(slug) ? next.delete(slug) : next.add(slug);
+      return next;
+    });
 
   return (
     <Card>
@@ -365,7 +395,7 @@ function AgentPanel() {
           Docs Agent
         </CardTitle>
         <CardDescription className="text-xs">
-          Reconcile → triage → suggest. Suggestions are proposals only — never auto-applied.
+          Reconcile → triage → suggest → human-approved apply. Proposals are never auto-applied.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -377,7 +407,7 @@ function AgentPanel() {
           className="gap-1"
         >
           <RefreshCw className={cn("size-3.5", agent.isPending && "animate-spin")} />
-          {agent.isPending ? "Running…" : "Run agent"}
+          {agent.isPending && !waiting ? "Running…" : "Run agent"}
         </Button>
 
         {agent.isError && (
@@ -386,6 +416,12 @@ function AgentPanel() {
 
         {result && (
           <div className="space-y-3 text-sm">
+            <div className="flex items-center gap-2">
+              <Badge variant={waiting ? "warning" : "success"} className="text-[10px]">
+                {waiting ? "waiting approval" : "completed"}
+              </Badge>
+              <span className="font-mono text-[10px] text-muted-foreground">{result.run_id}</span>
+            </div>
             <div>
               <span className="font-medium">Sync:</span>{" "}
               {result.reconcile.considered} public docs considered,{" "}
@@ -411,13 +447,79 @@ function AgentPanel() {
                 <ul className="space-y-2">
                   {result.suggestions.map((s) => (
                     <li key={s.slug} className="rounded border bg-muted/40 px-3 py-2 text-xs">
-                      <div className="font-medium">{s.title || s.slug}</div>
-                      <div className="mt-0.5 text-muted-foreground">{s.rationale}</div>
+                      <label className="flex items-start gap-2">
+                        {waiting && s.proposed_body_md && (
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={selected.has(s.slug)}
+                            onChange={() => toggle(s.slug)}
+                          />
+                        )}
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-1.5 font-medium">
+                            {s.title || s.slug}
+                            {s.applied && <Check className="size-3 text-success" />}
+                          </span>
+                          <span className="mt-0.5 block text-muted-foreground">{s.rationale}</span>
+                        </span>
+                      </label>
                     </li>
                   ))}
                 </ul>
               </div>
             )}
+
+            {/* HIL apply gate */}
+            {waiting && appliable.length > 0 && (
+              <div className="flex flex-wrap gap-2 border-t pt-2">
+                <Button
+                  size="sm"
+                  disabled={agent.isPending || selected.size === 0}
+                  onClick={() => resume([...selected], "Applied selected")}
+                  className="gap-1"
+                >
+                  <Check className="size-3.5" />
+                  Apply selected ({selected.size})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={agent.isPending}
+                  onClick={() => resume("all", "Applied all")}
+                  className="gap-1"
+                >
+                  Apply all
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={agent.isPending}
+                  onClick={() => resume("reject", "Rejected")}
+                  className="gap-1 text-muted-foreground"
+                >
+                  <CircleSlash className="size-3.5" />
+                  Reject
+                </Button>
+              </div>
+            )}
+
+            {!waiting && result.applied.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="mb-1 font-medium">Applied ({result.applied.length})</div>
+                <ul className="space-y-1 text-xs">
+                  {result.applied.map((a) => (
+                    <li key={a.slug} className={cn("flex items-center gap-2", a.error && "text-destructive")}>
+                      <span className="font-medium">{a.slug}</span>
+                      <span className="text-muted-foreground">
+                        {a.error ? a.error : `→ v${a.version} (audited)`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {result.triage.length === 0 && result.suggestions.length === 0 && (
               <p className="text-muted-foreground">All docs are healthy — no action needed.</p>
             )}

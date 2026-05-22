@@ -70,7 +70,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD), **13** (one cleanup task), **14** (`S14.agent.1` StateGraph conversion), **15** (operational fixes). Stage 6 followups are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD), **13** (one cleanup task), **15** (operational fixes), **18** (architecture diagram v2), **19** (web auth/RBAC), **20** (Standup Jira cockpit), **21** (Deep Agent platform). Stages **6** (followups) and **14** (Docs Wiki, incl. the `S14.agent.1` LangGraph apply-gate) are complete but retained here until the next archive pass.
 
 ---
 
@@ -137,7 +137,7 @@ The remaining sections below are the stages with unfinished tasks: **3** (manual
 
 > **Pick-up point.** Docs today are scattered Markdown at the repo root (`README.md`, `IMPLEMENT.md`, `CLAUDE.md`, etc.) with no index, lifecycle, or audience control. Stage 14 stands up a **documentation library inside the app** — an MkDocs/Docusaurus-style wiki — as the single home for all docs. Each doc carries lifecycle/visibility **flags** and **tags**; **public** docs sync to **Confluence** mirroring the same tree; an **agent workflow** keeps the two in sync and proposes improvements. Builds on the Stage-9 Confluence connector and the Stage-6 audited write-layer.
 >
-> **Status:** backend, migration, web proxies/hooks, and `/docs` SPA are done in main (`S14.model.1`, `S14.api.1`, `S14.migrate.1`, `S14.web.1`, `S14.web.2`, `S14.sync.1` ✅). `S14.agent.1` remains partial: the procedural agent is reachable from the UI, but still needs conversion to a checkpointed LangGraph `StateGraph` with interrupt/resume at the apply gate.
+> **Status: COMPLETE & verified live.** All `S14.*` tasks done: backend system-of-record + CRUD/search tools, Markdown corpus migration script, web proxies/hooks, `/docs` SPA, Confluence reconciliation (dry-run), and the docs agent — now a checkpointed LangGraph `StateGraph` with a human-in-the-loop interrupt/resume at the apply gate. Eligible for archival to `IMPLEMENT-ARCHIVE.md`.
 
 ### 14a. Scope of "100% of our docs"
 
@@ -226,10 +226,10 @@ A LangGraph workflow (reuse the Stage-9 orchestrator pattern + checkpointer), ex
   - Files: `mcp/docs_sync.py`, `mcp/connectors/confluence.py` (`confluence_update_page` + deterministic create page id), `mcp/server.py` (`docs_sync` tool).
   - Done: public docs map path→Confluence ancestors+page; create stores `confluence_page_id`, subsequent runs update in place; `tags[]`→labels; actions logged to `doc_sync_log`; dry-run by default. Pull-side drift detection is stubbed for the mock connector.
 
-- [~] **S14.agent.1 — Docs agent workflow (sync + suggestions)** ◑ PARTIAL — procedural form done & verified
-  - Files: `mcp/docs_agent.py`, `mcp/server.py` (`docs_agent_run`).
-  - Done: reconcile→triage→suggest runs; triage flags stale/unreferenced; suggestions are HIL proposals returning `proposed_body_md`, never auto-applied; applying one is a separate audited `docs_upsert`.
-  - Remaining: not yet a checkpointed LangGraph `StateGraph` (so a run can interrupt at the apply gate and resume). The `/api/docs/agent` web proxy + `useDocsAgent` hook now exist (landed with S14.web.1), so the procedural agent is reachable from the UI; only the StateGraph conversion is left.
+- [x] **S14.agent.1 — Docs agent workflow (sync + suggestions)** ✅ DONE & verified live
+  - Files: `mcp/docs_agent.py` (LangGraph `StateGraph`), `mcp/server.py` (`docs_agent_run` + resume args), `web/main.py` (`/api/docs/agent` run_id/resume passthrough), `web/src/lib/{types,queries}.ts`, `web/src/routes/docs.tsx` (apply-gate UI).
+  - Done: rewritten as a checkpointed `StateGraph` `do_reconcile → do_triage → do_suggest → apply_gate (interrupt) → apply_approved → END`, compiled with a `MemorySaver` keyed by `thread_id`. A fresh run pauses at the gate (`status="waiting_approval"`, returns `run_id` + proposals); resuming with `{run_id, resume_decision}` (slugs / `"all"` / `"reject"`) applies only approved proposals via an audited `docs_upsert` (`source="docs_agent_apply"`). The `/docs` Agent panel renders the gate with per-proposal checkboxes + Apply selected / Apply all / Reject.
+  - Verified live (mcp+web rebuilt): fresh run → `waiting_approval`; resume `reject` → `completed`, no writes; resume `all` on a seeded `needs_attention` doc → doc v1→v2, status→`up_to_date`, new audited revision; web proxy returns the run_id/status payload.
 
 ---
 
@@ -266,6 +266,761 @@ Address (in priority order):
 - [ ] **S15.askdata.1 — Make Ask Data return within budget (no more timeouts)**
   - Files: `mcp/ask_data.py` (deadline, fan-out tuning, partial-result fallback), `web/main.py` (`/api/ask_data` timeout + error passthrough), `web/src/routes/chat.tsx` (error/empty-state surfacing), env defaults in `.env.example`/compose.
   - Done when: an Ask Data question over a seeded collection returns a useful answer (or a clear partial/error) within the request budget — never a silent empty response; verified with `scripts/smoke_ask_data.sh`. Capture the root-cause finding (which timeout fired) in the commit/PR.
+
+---
+
+## Stage 18 — Architecture diagram v2: AWS topology + enterprise data-flow overlay
+
+**Goal:** Replace/extend the current connector-centric `/architecture` graph with a modern, classic AWS/network-topology diagram that is useful for both technical and non-technical audiences. It should show **where systems live** (on-prem, AWS, Azure, GCP, Atlassian/SaaS, data/observability, artifact generation) and optionally overlay the main **risk-to-artifact data flow**:
+
+`RISK / SNOW → Atlassian → implementation → data storage + observability → artifact generation`
+
+The diagram must accommodate detailed infrastructure metadata later (VPCs, accounts, regions, CIDRs, IPs/hostnames, EC2 instance types/sizing, MongoDB fork/data-warehouse topology, webhook/API endpoints), but it should be immediately useful with mock/placeholder data. The default view should be readable by non-technical stakeholders; a details mode should expose engineering metadata for team learning and documentation.
+
+### 18a. Information architecture
+
+Represent the estate as layered containers rather than a flat node graph:
+
+1. **Source environments** — on-prem, AWS, Azure, GCP, SaaS sources; all produce logs/events/findings.
+2. **Risk / ITSM intake** — Archer/RISK and ServiceNow/SNOW as finding/incident/change sources.
+3. **Atlassian work management** — Jira epics/issues and Confluence docs/epic logs.
+4. **Implementation** — GitHub repos/PRs/actions, deployment path, agentic workflow workers.
+5. **Data storage + observability** — EC2-hosted MongoDB NoSQL fork/data warehouse as the central evidence/log store; optional Snowflake/other analytical stores; log pipelines from every environment.
+6. **Artifact generation** — PDF/PPT reports, audit packets, Confluence/public docs, Jira status updates.
+
+Use environment boundaries that can later map to real accounts/VPCs/subnets:
+
+- AWS: accounts, regions, VPCs, subnets/security groups, EC2 compute, MongoDB warehouse.
+- On-prem: network zones, log shippers, private services.
+- Azure/GCP: projects/subscriptions, services, log exporters.
+- SaaS: Atlassian, ServiceNow, Archer/RISK, GitHub, Snowflake.
+
+### 18b. Data-flow overlay
+
+Add a toggleable overlay that draws the canonical end-to-end flow with numbered steps and directional edges:
+
+1. Findings/incidents/changes originate in RISK/Archer and SNOW/ServiceNow.
+2. Findings become Jira epics/issues and Confluence epic logs via REST APIs/webhooks.
+3. Implementation work happens in GitHub/CI/CD and agentic workflows coordinate planned actions.
+4. Runtime logs, evidence, tickets, docs, PR records, and connector snapshots land in the EC2-hosted MongoDB warehouse; logs from on-prem/AWS/Azure/GCP also land there.
+5. Observability/analytics read from the warehouse and related stores.
+6. Artifact generation emits PDFs/PPTs/audit packets and updates docs/tickets.
+
+Overlay requirements:
+
+- Toggle **Topology** vs **Data flow** vs **Both**.
+- Edges carry a `protocol`/`transport` label (`webhook`, `REST`, `log shipper`, `MCP tool`, `agent workflow`, `SQL/export`, etc.).
+- Edges distinguish current integrations (webhooks/REST/log shipping) from planned agentic workflows.
+- Highlight weak spots from Stage 11/12 concerns without obscuring the high-level flow.
+
+### 18c. Data model and backend shape
+
+Keep Stage 12 `topology_graph` compatible or add a v2 tool (`architecture_graph`) if the old graph would become too overloaded.
+
+Proposed JSON shape:
+
+```json
+{
+  "layers": [{"id":"aws-prod","label":"AWS prod","kind":"aws_account","parent_id":null,"meta":{}}],
+  "nodes": [{"id":"ec2-mongo-wh","label":"MongoDB Warehouse","kind":"ec2_mongodb","layer_id":"aws-prod", "meta":{}}],
+  "edges": [{"from":"servicenow","to":"jira","label":"finding → ticket","protocol":"REST/webhook","flow":"risk_to_artifact","planned":false}],
+  "flows": [{"id":"risk_to_artifact","label":"Risk to artifact","steps":["archer","servicenow","jira","github","ec2-mongo-wh","reports"]}],
+  "concerns": []
+}
+```
+
+Initial data can be mocked/static in code, but the schema must reserve fields for later technical detail:
+
+- `account_id`, `subscription_id`, `project_id`, `region`, `vpc_id`, `subnet_id`, `cidr`, `security_groups`, `hostname`, `private_ip`, `public_url`, `instance_type`, `storage_gb`, `retention_days`, `owner`, `data_classification`, `criticality`, `runbook_slug`.
+- `integration`: `direction`, `protocol`, `auth_mode`, `endpoint_ref`, `frequency`, `sla`, `agentic_status` (`current` | `planned` | `experimental`).
+
+### 18d. Frontend design direction
+
+Build a new architecture experience on `/architecture` (or `/architecture?view=v2`) using React Flow, but make it look closer to an AWS/network diagram than a generic node graph:
+
+- Group boxes for environments/accounts/VPCs/subnets with subtle branded headers.
+- AWS-style icons where possible via the existing icon set or lightweight inline SVGs; avoid large icon packages unless justified.
+- Distinct visual lanes for: Sources → Risk/ITSM → Atlassian → Implementation → Warehouse/Observability → Artifacts.
+- A legend explaining icons, protocols, line styles, and current vs planned/agentic integrations.
+- Stakeholder mode: simplified labels and plain-English descriptions.
+- Engineer mode: details drawer with endpoints, network/account metadata, owners, sizing, runbook/doc links, and raw JSON.
+- Search/filter by environment, service, owner, data classification, and integration protocol.
+- Export/download path: at minimum PNG/SVG from the canvas or a copyable Mermaid/PlantUML representation; later tie to Stage 14 docs.
+
+### 18e. Documentation and data capture
+
+Because exact infrastructure details will arrive later, provide a durable capture path:
+
+- `docs/architecture-inventory-template.md` or a wiki doc template listing every field needed from platform/network teams.
+- Seed placeholders for unknown VPC/account/IP/sizing values as `TBD`, never fake exact technical identifiers.
+- Add a "Known unknowns" panel in the UI so non-technical users can see which details are still pending.
+- Link nodes to docs/runbooks when a `runbook_slug` exists.
+
+### 18f. Verification intent
+
+1. `/architecture` loads with a modern topology layout and no console/runtime errors.
+2. The default non-technical view clearly communicates the high-level system shape in under 30 seconds.
+3. Data-flow overlay shows the full RISK/SNOW → Atlassian → implementation → warehouse/observability → artifact path with numbered steps.
+4. Engineer details expose placeholder-ready technical fields without requiring real IPs/accounts yet.
+5. Existing Stage 12 topology concerns still appear or have an equivalent concerns panel.
+6. Build stays clean: `cd web && npm run build`; backend compiles if a new MCP tool is added.
+
+### Task checklist — Stage 18
+
+- [ ] **S18.discovery.1 — Inventory exact questions for later technical fill-in**
+  - Files: `docs/architecture-inventory-template.md` (or Stage-14 wiki seed later), `IMPLEMENT.md`.
+  - Done when: template asks for environments, AWS accounts/regions/VPCs/subnets/security groups, EC2/Mongo sizing, warehouse/log-retention details, SaaS endpoints, webhook/API paths, owners, data classifications, and open unknowns. No invented IPs/account IDs.
+
+- [ ] **S18.model.1 — Define architecture graph v2 schema**
+  - Files: `mcp/topology.py` or new `mcp/architecture.py`, `web/src/lib/types.ts`.
+  - Done when: typed model supports layers/groups, nodes, edges, flows, concerns, environment/network metadata, integration protocol/auth/frequency, current vs planned/agentic status, and runbook/doc links.
+  - Depends on: S18.discovery.1.
+
+- [ ] **S18.model.2 — Seed v2 graph with placeholder enterprise topology**
+  - Files: `mcp/architecture.py` or `mcp/topology.py`.
+  - Done when: graph includes on-prem, AWS, Azure, GCP, Atlassian, GitHub, ServiceNow/SNOW, Archer/RISK, Snowflake/analytics, EC2 compute, MongoDB NoSQL fork/data warehouse, observability/log-ingest, and artifact generation nodes; unknown exact infra values are represented as `TBD`.
+  - Depends on: S18.model.1.
+
+- [ ] **S18.api.1 — Expose architecture graph endpoint/tool**
+  - Files: `mcp/server.py`, `web/main.py`, `web/src/lib/queries.ts`.
+  - Done when: either `topology_graph` returns v2-compatible data without breaking existing callers, or a new `architecture_graph` MCP tool + `/api/architecture` proxy + `useArchitectureGraph()` hook are added. Errors are surfaced clearly.
+  - Depends on: S18.model.2.
+
+- [ ] **S18.layout.1 — Build environment-aware React Flow layout**
+  - Files: `web/src/routes/architecture.tsx` (or split components under `web/src/components/architecture/`).
+  - Done when: nodes are arranged into visible environment/lane/group boxes (sources, risk/ITSM, Atlassian, implementation, warehouse/observability, artifacts) with deterministic positions and responsive fit; no overlap at common desktop sizes.
+  - Depends on: S18.api.1.
+
+- [ ] **S18.visual.1 — Apply modern AWS/network-diagram visual system**
+  - Files: `web/src/routes/architecture.tsx`, optional architecture components/styles.
+  - Done when: environment group headers, iconography, edge styles, badges, legend, and color semantics read as a modern AWS/network diagram while staying on the Fleet-Dispatch design tokens; current vs planned/agentic integrations are visually distinct.
+  - Depends on: S18.layout.1.
+
+- [ ] **S18.flow.1 — Add RISK/SNOW → artifact data-flow overlay**
+  - Files: `web/src/routes/architecture.tsx`, graph data model.
+  - Done when: user can toggle Topology/Data flow/Both; numbered flow steps and directional edges show RISK/SNOW → Atlassian → implementation → data storage/observability → artifact generation; protocol labels are visible at normal zoom.
+  - Depends on: S18.layout.1.
+
+- [ ] **S18.details.1 — Add stakeholder/engineer modes and details drawer**
+  - Files: `web/src/routes/architecture.tsx` or components.
+  - Done when: stakeholder mode hides noisy metadata and uses plain-English descriptions; engineer mode exposes account/VPC/IP/hostname/sizing/owner/classification/runbook/raw JSON fields in a drawer; `TBD` values are clearly marked as unknown.
+  - Depends on: S18.visual.1.
+
+- [ ] **S18.filter.1 — Add search, filters, and known-unknowns panel**
+  - Files: `web/src/routes/architecture.tsx` or components.
+  - Done when: users can filter by environment, service kind, owner, classification, protocol, and current/planned/agentic status; a panel lists missing technical details grouped by owner/environment.
+  - Depends on: S18.details.1.
+
+- [ ] **S18.export.1 — Add share/export artifact path**
+  - Files: `web/src/routes/architecture.tsx`, optional utility module.
+  - Done when: user can export the current view as SVG/PNG or copy a Mermaid/PlantUML text representation; exported artifact includes title, timestamp, mode, and legend.
+  - Depends on: S18.flow.1.
+
+- [ ] **S18.docs.1 — Link diagram to Stage-14 Docs Wiki**
+  - Files: `web/src/routes/architecture.tsx`, `docs/architecture-inventory-template.md`, optional `scripts/import_docs.py` runbook note.
+  - Done when: architecture page links to relevant wiki docs/runbooks when `runbook_slug` is present and the inventory template is importable into the Docs Wiki.
+  - Depends on: S18.details.1.
+
+- [ ] **S18.verify.1 — Verify build and high-level readability**
+  - Files: `scripts/smoke_web_spa.sh` (optional update), `IMPLEMENT.md`.
+  - Done when: `cd web && npm run build` passes; backend py_compile passes if backend touched; `/architecture` renders; at least one screenshot/manual note confirms the overlay is understandable by non-technical readers and details mode is useful for engineers.
+  - Depends on: S18.flow.1, S18.details.1.
+
+---
+
+## Stage 19 — Web authentication, LDAP-backed RBAC, and auth-specialist workflow
+
+**Goal:** Add an application auth/RBAC layer for the web UI and web `/api/*` proxies that starts POC-friendly but is shaped for the future internal LDAP/SSO scheme. **Production uses SSO** in front of the app; for now, the POC can use Basic Auth logins backed by seeded fake users. Usernames are assumed to be email-style identities in the form `firstname.lastname@lanGarland.com`. A user's network access can still be treated as proof they are in the broad **`sg_all_users`** group when `trusted_network` mode is enabled. The code should model group membership explicitly so the placeholder names can later be swapped for real LDAP groups and lookup code.
+
+Initial placeholder groups:
+
+| LDAP group | Role in app | Intended users | Access shape |
+| --- | --- | --- | --- |
+| `sg_all_users` | `viewer` / base authenticated user | Anyone allowed to reach the app network | Read-only landing pages, architecture/docs read, health/status. For POC this can be assumed from network access. |
+| `sg_sec_admin` | `admin` | Security/admin operators; primary audience for this app | Full admin access: workflow orchestration, connector management, Jira apply gates, docs sync, auth diagnostics, all artifacts. |
+| `sg_app_user` | `app_user` | Application/database owners onboarding their systems | Onboarding flows, architecture inventory updates for owned apps/databases, docs/runbook authoring, limited artifact viewing. |
+| `sg_audit_users` | `audit_user` | Audit team members | Pull artifacts, run reports, update Archer findings, dynamically read context from Jira/Confluence/GitHub/SNOW/Snowflake/Mongo; no infrastructure/admin changes by default. |
+
+### 19a. Security model and assumptions
+
+- **Production mode:** `AUTH_MODE=sso` trusts a production SSO / reverse-proxy integration to authenticate the user and forward an identity + group claims. The app still performs authorization locally from group→role→capability mappings.
+- **POC mode:** `AUTH_MODE=basic` provides a small Basic Auth login surface backed by seeded fake users. Optional `trusted_network` mode remains available when network access alone should imply `sg_all_users`.
+- **Seeded identities:** fake users use Faker-style names and the canonical login format `firstname.lastname@lanGarland.com`. Each placeholder LDAP group/role must have at least one seeded user, plus at least one multi-role user for testing precedence.
+- **Future mode:** `AUTH_MODE=ldap` delegates identity/group lookup to an internal LDAP adapter; placeholder group names are config values, not hardcoded policy literals. SSO can later feed the same adapter or pass signed group claims.
+- **Defense-in-depth:** the web service enforces route/API permissions even if the React UI hides nav items. MCP write tools and connector mutations keep their existing gates (`WORKFLOW_WRITES_ENABLED`, `JIRA_WRITES_ENABLED`, `DOCS_SYNC_ENABLED`, etc.).
+- **Least privilege:** roles should unlock explicit capabilities (`canRunWorkflow`, `canApplyJira`, `canUpdateArcher`, `canManageDocs`, `canEditArchitectureInventory`, `canAdminAuth`) rather than broad route checks only.
+- **Auditability:** every privileged action should carry `actor`, `roles`, and `groups` into audit logs where practical.
+
+### 19b. RBAC capability matrix
+
+Initial capabilities (adjust as routes evolve):
+
+| Capability | `viewer` (`sg_all_users`) | `app_user` (`sg_app_user`) | `audit_user` (`sg_audit_users`) | `admin` (`sg_sec_admin`) |
+| --- | --- | --- | --- | --- |
+| View overview/architecture/docs | yes | yes | yes | yes |
+| Chat/read-only Ask Data | optional read-only | yes for owned app data | yes | yes |
+| Edit sheet/data records | no | owned onboarding records only | no, unless artifact metadata | yes |
+| Wrangler/read analytics | no or read-only | owned datasets | yes | yes |
+| Workflow orchestration | no | request/preview only | report/audit workflows | yes |
+| Jira staged apply | no | no | validate/comment only | yes |
+| Archer finding update | no | no | yes | yes |
+| Docs author/edit | read-only | own app docs/runbooks | audit artifacts/docs | yes |
+| Docs Confluence sync | no | no | request only | yes |
+| Architecture inventory edit | no | own app/db entries | audit annotations | yes |
+| Auth/admin diagnostics | no | no | no | yes |
+
+### 19c. Backend architecture
+
+Add a small auth module to the web service first, because the browser only talks to `web/main.py` for app APIs:
+
+- `web/auth.py` (new): `UserContext`, `Role`, `Capability`, group→role mapping, `get_current_user(request)`, `require_capability(...)` dependencies/decorators.
+- `AUTH_MODE=sso|basic|trusted_network|headers|ldap|disabled`:
+  - `sso`: production path; derive user from trusted SSO/proxy headers (`X-Forwarded-User`, group header, or future signed claims). Never accept spoofable dev headers in this mode.
+  - `basic`: POC path; HTTP Basic Auth against seeded fake users, with password hashes or generated dev-only passwords stored outside committed secrets. Seeded users all use `firstname.lastname@lanGarland.com` usernames.
+  - `trusted_network`: derive user from `X-Forwarded-User`/`REMOTE_USER` if present, otherwise `anonymous-network-user`; groups default to configured all-users group.
+  - `headers`: dev/test mode; `X-SG-User` and `X-SG-Groups` simulate identity and groups. Must be disabled by default in production docs.
+  - `ldap`: future adapter path; calls `auth_ldap_lookup` integration or internal LDAP client.
+  - `disabled`: local-only escape hatch for development.
+- `GET /api/me`: returns `{user, groups, roles, capabilities, auth_mode}` for the topbar/sidebar and troubleshooting.
+- Route guards on web endpoints: reject with `401` if unauthenticated, `403` if authenticated but missing capability.
+- Pass actor context to MCP tools where supported, either as explicit tool arguments (`actor`) or as MCP metadata once supported.
+
+### 19d. Frontend behavior
+
+- Add `useMe()` query and `AuthProvider`/capability helpers.
+- In Basic Auth mode, browser-native login is acceptable for the POC; a custom login screen is optional unless needed for clearer demos.
+- Topbar shows signed-in user, effective roles, and auth mode badge in POC/basic/trusted-network modes.
+- Sidebar hides or badges routes the user cannot access; direct navigation still shows a clear `403` page.
+- Admin-only affordances (apply, sync, workflow run, live connector writes, auth diagnostics) are disabled with explanatory tooltips for non-admins.
+- Add an `/admin/auth` or `/settings/auth` page for admins showing current group mappings, simulated user in POC/header mode, recent auth decisions, and LDAP integration status.
+
+### 19e. Seeded fake users for POC
+
+Create deterministic Faker-style seed users that represent every group and role. Store them in a small seed file/collection or auth fixture, not in code paths that will conflict with future LDAP.
+
+Example seed set (names are placeholders and can change):
+
+| User | Email/login | Groups | Role coverage |
+| --- | --- | --- | --- |
+| Avery Stone | `avery.stone@lanGarland.com` | `sg_all_users` | base viewer |
+| Simone Patel | `simone.patel@lanGarland.com` | `sg_all_users`, `sg_sec_admin` | admin |
+| Marcus Chen | `marcus.chen@lanGarland.com` | `sg_all_users`, `sg_app_user` | application/database owner |
+| Elena Brooks | `elena.brooks@lanGarland.com` | `sg_all_users`, `sg_audit_users` | audit user |
+| Priya Morgan | `priya.morgan@lanGarland.com` | `sg_all_users`, `sg_app_user`, `sg_audit_users` | multi-role non-admin |
+| Jordan Reyes | `jordan.reyes@lanGarland.com` | `sg_all_users`, `sg_sec_admin`, `sg_audit_users` | admin + audit |
+
+Seed requirements:
+
+- Passwords are POC-only and must be generated/configured safely (`AUTH_BASIC_SEED_PASSWORD` for local demos or per-user hashes in a gitignored file). Do not commit real passwords.
+- Seed data should include display name, email, groups, disabled flag, created_at, and notes.
+- The auth diagnostics page should make it easy to switch/test these fake identities in `headers` mode and to document which role each represents.
+
+### 19f. LDAP lookup and auth-specialist agent/MCP direction
+
+The real internal lookup code should be isolated behind a narrow interface so it can later become either a reusable skill, an MCP integration, or a locked-down auth-specific agent:
+
+- **MCP integration option:** `auth_lookup_user`, `auth_lookup_groups`, `auth_check_membership`, `auth_explain_access` tools backed by internal LDAP. Only the web service / auth-agent should call them; ordinary chat agents should not get broad access to identity data.
+- **Auth-specialist agent option:** an agent with only auth lookup/explanation tools, no data write tools, no broad connector access. Its job: answer "why can/can't this user access X?", help onboard group mappings, and produce audit explanations.
+- **Skill option:** create a project skill once the internal LDAP scheme and lookup code are known, documenting exact group names, lookup APIs, failure modes, test fixtures, and safe redaction rules.
+- **Privacy:** never expose full LDAP directory dumps to the model. Return minimal attributes: username, display name, email if needed, group DNs/names, lookup timestamp, source, and errors.
+
+### 19g. Env surface (proposed)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `AUTH_MODE` | `basic` | no | 19 | `sso`, `basic`, `trusted_network`, `headers`, `ldap`, or `disabled` |
+| `AUTH_ALL_USERS_GROUP` | `sg_all_users` | no | 19 | Base authenticated/network group |
+| `AUTH_ADMIN_GROUP` | `sg_sec_admin` | no | 19 | Grants `admin` role |
+| `AUTH_APP_USER_GROUP` | `sg_app_user` | no | 19 | Grants `app_user` role |
+| `AUTH_AUDIT_USER_GROUP` | `sg_audit_users` | no | 19 | Grants `audit_user` role |
+| `AUTH_TRUSTED_HEADER_USER` | `X-Forwarded-User` | no | 19 | Header to read user from behind proxy/SSO |
+| `AUTH_TRUSTED_HEADER_GROUPS` | `X-Forwarded-Groups` | no | 19 | Optional proxy/SSO group header |
+| `AUTH_SSO_REQUIRED` | `false` | no | 19 | Production guardrail; require SSO mode when true |
+| `AUTH_BASIC_USERS_FILE` | `/data/auth/users.json` | no | 19 | POC Basic Auth seeded users/hashes file |
+| `AUTH_BASIC_SEED_PASSWORD` | — | no | 19 | Dev-only password for generated seed users; prefer gitignored secret |
+| `AUTH_DEV_HEADERS_ENABLED` | `false` | no | 19 | Allows `X-SG-User`/`X-SG-Groups` in non-prod testing |
+| `AUTH_LDAP_URL` | — | no | 19 | Future LDAP endpoint / adapter URL |
+| `AUTH_LDAP_BASE_DN` | — | no | 19 | Future LDAP search base |
+| `AUTH_LDAP_BIND_SECRET_FILE` | — | no | 19 | Future mounted secret path, never inline committed |
+| `AUTH_CACHE_TTL_SECONDS` | `300` | no | 19 | Cache user/group lookup results |
+
+### 19h. Verification intent
+
+1. In default POC Basic Auth mode, each seeded `firstname.lastname@lanGarland.com` fake user can log in and `/api/me` shows the expected groups/roles/capabilities.
+2. In production-like SSO mode, trusted SSO headers resolve identity/groups and dev spoof headers are ignored.
+3. Trusted-network mode still works as a POC fallback and shows the user as authenticated with `sg_all_users`/`viewer`.
+4. Header/dev mode can simulate each role and combined roles without code changes.
+5. Non-admin users cannot call admin-only APIs even if they use curl directly.
+6. UI hides/disables unauthorized actions and direct route access shows a useful `403` page.
+7. Audit logs for privileged actions include actor + roles/groups where available.
+8. LDAP mode can be stubbed with deterministic fixtures now, then swapped for internal lookup code later.
+9. Build/checks pass: `python3 -m py_compile web/*.py`; `cd web && npm run build`.
+
+### Task checklist — Stage 19
+
+- [ ] **S19.policy.1 — Finalize placeholder RBAC policy and capability map**
+  - Files: `IMPLEMENT.md`, `docs/auth-rbac.md` (new).
+  - Done when: group→role→capability mapping is documented; SSO-in-prod and Basic-Auth-for-POC assumptions are explicit; route/API capability requirements are listed; unresolved policy questions are captured without blocking POC basic/trusted-network mode.
+
+- [ ] **S19.model.1 — Add web auth model and config**
+  - Files: `web/auth.py` (new), `.env.example`, `compose.yaml` if env passthrough is needed.
+  - Done when: `UserContext`, roles, capabilities, env-configured group names, Basic Auth config, SSO header config, and group→role derivation are implemented with unit-testable pure functions.
+  - Depends on: S19.policy.1.
+
+- [ ] **S19.seed.1 — Seed deterministic Faker-style users per LDAP group/role**
+  - Files: `mongo-seed/15-auth-users.js` or `web/auth_seed.py`/`/data/auth/users.json` generator, `.env.example`, docs.
+  - Done when: at least one seeded `firstname.lastname@lanGarland.com` user exists for `sg_all_users`, `sg_sec_admin`, `sg_app_user`, and `sg_audit_users`, plus multi-role users; passwords are POC-only and provided by generated hashes or a gitignored/dev env secret, never committed as real credentials.
+  - Depends on: S19.model.1.
+
+- [ ] **S19.backend.1 — Add request identity resolution modes**
+  - Files: `web/auth.py`, `web/main.py`.
+  - Done when: `sso`, `basic`, `trusted_network`, `headers`, `disabled`, and stub `ldap` modes resolve a user consistently; Basic Auth validates seeded users; SSO trusts only configured proxy headers; dev headers are ignored unless explicitly enabled; failures produce clear 401/403 responses.
+  - Depends on: S19.model.1, S19.seed.1.
+
+- [ ] **S19.backend.2 — Add `/api/me` and auth diagnostics payload**
+  - Files: `web/main.py`, `web/auth.py`, `web/src/lib/types.ts`, `web/src/lib/queries.ts`.
+  - Done when: `/api/me` returns user, groups, roles, capabilities, auth mode, and lookup source; React Query hook `useMe()` is available.
+  - Depends on: S19.backend.1.
+
+- [ ] **S19.backend.3 — Guard web API endpoints by capability**
+  - Files: `web/main.py`, `docs/auth-rbac.md`.
+  - Done when: each `/api/*` route has an explicit required capability; admin-only mutation endpoints return 403 for non-admin/dev-simulated users; read-only endpoints remain available to `sg_all_users` as intended.
+  - Depends on: S19.backend.2.
+
+- [ ] **S19.audit.1 — Propagate actor context into privileged actions**
+  - Files: `web/main.py`, `mcp/server.py` and relevant MCP tool handlers as needed, `mcp/db.py` audit helpers if actor fields are missing.
+  - Done when: docs writes, sheet writes, Jira apply, Archer/finding updates, workflow runs, and report generation can record actor/roles/groups or a tracked fallback actor.
+  - Depends on: S19.backend.3.
+
+- [ ] **S19.frontend.1 — Add auth provider, route guard, and 403 page**
+  - Files: `web/src/App.tsx`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`, new auth components/hooks.
+  - Done when: app loads `/api/me`, provides capability helpers, protects direct route access, and renders a clear forbidden page with current user/roles.
+  - Depends on: S19.backend.2.
+
+- [ ] **S19.frontend.2 — Gate sidebar and privileged UI actions**
+  - Files: `web/src/components/app-sidebar.tsx`, `web/src/components/topbar.tsx`, routes with mutation controls (`workflow`, `hub`, `docs`, `sheet`, `wrangler`, future `architecture`).
+  - Done when: routes/actions are hidden, disabled, or labelled based on capabilities; admin-only controls cannot be clicked by non-admin roles; topbar shows effective user/role/auth-mode context.
+  - Depends on: S19.frontend.1.
+
+- [ ] **S19.admin.1 — Add auth diagnostics/admin page**
+  - Files: `web/src/routes/auth-admin.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`, `web/main.py` if additional diagnostics endpoint is needed.
+  - Done when: `sg_sec_admin` users can view group mappings, current mode, cache status, simulated identity hints in POC mode, recent deny reasons, and LDAP adapter status; non-admins get 403.
+  - Depends on: S19.frontend.2.
+
+- [ ] **S19.ldap.1 — Define LDAP adapter interface and fixture implementation**
+  - Files: `web/auth_ldap.py` (new) or `mcp/auth_directory.py` (new), `docs/auth-rbac.md`.
+  - Done when: lookup interface is isolated (`lookup_user`, `lookup_groups`, `check_membership`), fixture/stub tests cover all four placeholder groups, and real internal code can be swapped in without changing route guards.
+  - Depends on: S19.backend.1.
+
+- [ ] **S19.agent.1 — Decide skill vs MCP integration vs auth-specialist agent**
+  - Files: `IMPLEMENT.md`, `docs/auth-rbac.md`, optional project skill after decision.
+  - Done when: decision is recorded: (a) create an auth MCP integration, (b) create a locked-down auth-specialist agent, (c) create a project skill for internal LDAP workflow, or (d) staged combination. Include rationale and privacy boundaries.
+  - Depends on: S19.ldap.1.
+
+- [ ] **S19.agent.2 — Implement minimal auth explanation surface**
+  - Files: chosen in S19.agent.1 (`mcp/auth_directory.py`, auth-agent config, or project skill).
+  - Done when: an admin can ask "why does user X have/ lack access to Y?" and receive a minimal, non-sensitive explanation based on group membership and the capability map.
+  - Depends on: S19.agent.1.
+
+- [ ] **S19.tests.1 — Add auth/RBAC smoke tests**
+  - Files: `scripts/smoke_auth.sh` (new), optional frontend test notes.
+  - Done when: smoke covers Basic Auth login for every seeded role, default trusted-network viewer fallback, production-like SSO header resolution, dev-header admin/app_user/audit_user simulation, denied admin endpoint as non-admin, and `/api/me` payload shape.
+  - Depends on: S19.backend.3.
+
+- [ ] **S19.verify.1 — Integrated verification**
+  - Files: `IMPLEMENT.md`, `progress.md` after implementation.
+  - Done when: `python3 -m py_compile web/*.py` and `cd web && npm run build` pass; smoke auth passes; manual UI checks confirm nav/action gating for all four groups; no secrets are committed.
+  - Depends on: S19.frontend.2, S19.tests.1.
+
+---
+
+## Stage 20 — Standup Jira cockpit: explorer-centered teamwork + agentic follow-up capture
+
+**Goal:** Promote the current Jira-focused **Interactive Compliance Proof Explorer** / editable Jira grid into a dedicated **Standup** page. The page is optimized for screen share during standup: the Explorer is the centerpiece, admin-group team members can open the same session, a live websocket chat appears in a compact bubble below/alongside the Explorer, and a scrum-master/product-owner-controlled agent turns noisy meeting chat into structured, dry-run follow-up proposals.
+
+The Jira sprint board is too clunky for this workflow. The Standup view should keep the dynamic Jira Explorer interactions, but make it faster to capture concerns, links, implied follow-ups, missing associations, and new work while the team is talking.
+
+### 20a. Audience, permissions, and workflow
+
+Primary users are **admin group** members (`sg_sec_admin`) from Stage 19. Audit users may observe or contribute if allowed, but approval belongs to a scrum master/product owner capability (initially `admin`, later `canApproveStandupActions`).
+
+Typical workflow:
+
+1. Scrum master opens `/standup` and screen-shares it.
+2. Team members open the same standup session and post notes/links/mentions in websocket chat.
+3. The Explorer remains the bulk of the window for live Jira triage and bulk edits.
+4. The side/bottom "Jira Configuration" / tool-call bubble is minimized by default; it can expand to show connector status, tool calls, and cross-service associations.
+5. The standup agent continuously or on-demand summarizes chat into **important takeaways**, **risks/blockers**, **suggested new Jira work**, **meeting follow-ups**, **service associations**, and **Confluence/doc links**.
+6. Suggested Jira creations/edits/links are staged as dry-run proposals. Nothing writes to production Jira/Confluence/Archer/etc. without HITL approval by the scrum master/product owner.
+7. Approved actions flow through existing Stage-16 Jira staging/validation/apply gates; live writes still respect `JIRA_WRITES_ENABLED` and connector write gates.
+
+### 20b. Standup page layout
+
+Build a new route `/standup` (or `/standup/:sessionId`) rather than overloading the Compliance Hub:
+
+- **Main area (70–80% of viewport):** Jira Explorer / editable Jira grid, with sprint/epic filters, staged-edit badges, validation state, bulk edit toolbar, and quick links to related services.
+- **Live chat bubble/panel:** websocket chat docked below the Explorer or as a right/bottom bubble. It should support quick note entry, pasted links, mentions, and timestamped participant messages.
+- **Agent suggestions panel:** shows extracted takeaways, candidate work items, proposed ticket edits/creates, links to Confluence docs, risk/SNOW/Archer references, and confidence/rationale.
+- **Compact Jira Configuration bubble:** collapsed by default; expands for connector health, tool-call trace, dry-run plans, and cross-service association details.
+- **Approval tray:** scrum master/product owner sees staged proposals with Approve/Reject/Edit/Request more context actions.
+
+### 20c. Websocket collaboration model
+
+Use FastAPI websockets in `web/main.py` first (browser already connects to web). Persist messages and proposals so refreshes do not lose meeting context.
+
+Conceptual objects:
+
+- `standup_sessions`: `{session_id, title, sprint, epic_keys[], status, created_by, started_at, ended_at}`
+- `standup_messages`: `{id, session_id, author, body, kind, links[], mentions[], created_at}`
+- `standup_agent_runs`: `{id, session_id, trigger, summary, proposals[], created_by, created_at}`
+- `standup_proposals`: `{id, session_id, type, target_service, dry_run_payload, status, rationale, source_message_ids[], approval}`
+
+Websocket events:
+
+- client → server: `join`, `chat.message`, `typing`, `agent.summarize`, `proposal.approve`, `proposal.reject`, `proposal.edit`, `explorer.selection`.
+- server → clients: `session.snapshot`, `chat.message`, `presence.update`, `agent.running`, `agent.summary`, `proposal.created`, `proposal.updated`, `jira.stage.updated`, `error`.
+
+### 20d. Standup agent capabilities
+
+The agent available from websocket chat should be narrow but context-rich:
+
+- Inputs: live standup chat, selected Jira rows/epic context, docs/wiki search results, workflow/epic templates, Jira story templates, Confluence links, connector summaries, and optionally Archer/SNOW/Snowflake/GitHub context.
+- Outputs:
+  - standup summary and decisions
+  - likely follow-ups and meeting requests
+  - candidate Jira stories/tasks/bugs with summary, description, acceptance criteria, labels, epic link, related services, priority, story points, due-date hints
+  - candidate bulk edits to existing Jira issues
+  - cross-service associations (Jira ↔ Confluence ↔ GitHub ↔ SNOW/Archer/Snowflake/Mongo evidence)
+  - rationale + source chat messages/links for every suggestion
+- Constraints:
+  - proposals are dry-run by default
+  - all production mutations require HITL approval
+  - approval actor must be recorded
+  - agent should gracefully handle vague chat like "follow up on the RDS thing" by linking to the current Explorer selection and recent pasted links when possible
+
+### 20e. Backend and integration shape
+
+Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventing a second write path:
+
+- New MCP/agent module: `mcp/standup_agent.py` or workflow under `mcp/workflow/standup.py` to turn chat/session context into structured proposals.
+- New MCP tools if useful: `standup_summarize`, `standup_plan_jira_work`, `standup_link_context`, `standup_stage_proposals`.
+- Web proxies/websocket handlers in `web/main.py` call MCP tools and existing Jira tools (`jira_stage_edits`, `jira_validate_staged`, `jira_apply_staged`) for staged edits.
+- Use Stage-14 docs tools (`docs_search`, `docs_get`) for runbooks/templates and Confluence links.
+- Use Stage-9 connectors for cross-service context; keep live writes gated.
+- Persist standup sessions/messages/proposals in Mongo (new seed/helpers in `mcp/db.py` or a web-owned collection helper) so reloads and screenshots retain context.
+
+### 20f. HITL and production-safety rules
+
+- Every proposed new Jira ticket, bulk edit, link operation, Archer update, Confluence update, or meeting/task artifact starts as `dry_run` / `proposed`.
+- Scrum master/product owner approval is required before any external write. For now, require `sg_sec_admin`; after Stage 19 capability map lands, require `canApproveStandupActions`.
+- Approvals record actor, timestamp, original proposal, edited payload, validation result, and final apply result.
+- Live Jira writes still require `JIRA_WRITES_ENABLED=true`; otherwise Apply returns a dry-run plan.
+- If the websocket agent suggests service associations, show them as links/proposals first; do not silently mutate remote services.
+
+### 20g. Env surface (proposed)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `STANDUP_WS_ENABLED` | `true` | no | 20 | Enable websocket endpoint for live standup sessions |
+| `STANDUP_SESSION_TTL_HOURS` | `24` | no | 20 | How long inactive sessions remain active before archival |
+| `STANDUP_MAX_MESSAGES` | `500` | no | 20 | Per-session message cap before archival/summarization |
+| `STANDUP_AGENT_ENABLED` | `true` | no | 20 | Enables agent summarization/proposal generation |
+| `STANDUP_AGENT_INTERVAL_SECONDS` | `0` | no | 20 | `0` means on-demand only; positive enables periodic suggestions |
+| `STANDUP_REQUIRE_ADMIN` | `true` | no | 20 | Require admin/approval capability for session control and approvals |
+| `STANDUP_DRY_RUN_ONLY` | `true` | no | 20 | Extra guardrail: never apply live writes even if connector writes are enabled |
+
+### 20h. Verification intent
+
+1. `/standup` renders with the Jira Explorer as the dominant element and the configuration/tool-call panel collapsed by default.
+2. Two browser sessions can join the same standup session and exchange websocket chat messages live.
+3. Pasted Jira/Confluence/GitHub/SNOW/Archer links are parsed into message metadata and shown as candidate associations.
+4. Agent summarization produces takeaways and candidate Jira work from chat + selected Explorer context.
+5. Candidate Jira ticket creations/edits are staged as dry-run proposals with source-message references and rationale.
+6. Non-approvers cannot approve/apply proposals; scrum master/product owner/admin can approve, and approval is audited.
+7. Existing Stage-16 Jira validation/apply gates are reused; live production writes remain gated by `JIRA_WRITES_ENABLED` and `STANDUP_DRY_RUN_ONLY`.
+8. Build/checks pass: `python3 -m py_compile web/*.py mcp/*.py`; `cd web && npm run build`; websocket smoke passes.
+
+### Task checklist — Stage 20
+
+- [ ] **S20.policy.1 — Define standup permissions and approval rules**
+  - Files: `IMPLEMENT.md`, `docs/standup.md` (new), Stage-19 auth docs if present.
+  - Done when: session owner, participant, observer, scrum-master/product-owner approval, and admin fallback rules are documented; `STANDUP_DRY_RUN_ONLY` and `JIRA_WRITES_ENABLED` interaction is explicit.
+
+- [ ] **S20.model.1 — Add standup session/message/proposal data model**
+  - Files: `mcp/db.py` or new `mcp/standup_store.py`, `web/src/lib/types.ts`, optional `mongo-seed/16-standup.js`.
+  - Done when: sessions, messages, agent runs, and proposals have stable IDs, timestamps, actor fields, status enums, source-message references, dry-run payloads, and approval metadata.
+  - Depends on: S20.policy.1.
+
+- [ ] **S20.ws.1 — Add websocket endpoint and session fanout**
+  - Files: `web/main.py` or `web/standup_ws.py` (new), `scripts/smoke_standup_ws.py`/`.sh` (new).
+  - Done when: multiple clients can join a session, send `chat.message`, receive live fanout, get `session.snapshot` on connect, and reconnect without losing persisted messages.
+  - Depends on: S20.model.1.
+
+- [ ] **S20.ui.1 — Create `/standup` route shell**
+  - Files: `web/src/routes/standup.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`.
+  - Done when: `/standup` appears in navigation for authorized users and lays out Explorer-dominant main area, chat bubble/panel, agent suggestions, approval tray, and collapsed Jira Configuration bubble.
+  - Depends on: S20.policy.1.
+
+- [ ] **S20.explorer.1 — Extract/reuse Jira Explorer as standalone centerpiece**
+  - Files: `web/src/components/jira-editable-grid.tsx`, optional new `web/src/components/jira-explorer/` components, `web/src/routes/standup.tsx`.
+  - Done when: Standup page can render the current Jira Explorer/editable grid independently of Compliance Hub, with sprint/epic filters, selected-row context, bulk edit toolbar, staged badges, validation status, and callbacks for agent context.
+  - Depends on: S20.ui.1.
+
+- [ ] **S20.chat.1 — Build live standup chat UI**
+  - Files: `web/src/routes/standup.tsx`, optional `web/src/components/standup-chat.tsx`.
+  - Done when: chat supports live websocket messages, presence, timestamps, author badges, paste/link display, mention highlighting, reconnect state, and a compact bubble mode below/alongside the Explorer.
+  - Depends on: S20.ws.1, S20.ui.1.
+
+- [ ] **S20.links.1 — Parse links/mentions into service associations**
+  - Files: `web/standup_links.py` or `mcp/standup_agent.py`, frontend display component.
+  - Done when: Jira keys/URLs, Confluence URLs, GitHub PR/commit URLs, ServiceNow/SNOW records, Archer/RISK IDs, Snowflake/Mongo references, and `@mentions` are extracted from chat and attached to messages/proposals.
+  - Depends on: S20.chat.1.
+
+- [ ] **S20.agent.1 — Implement standup summarization/proposal agent**
+  - Files: `mcp/standup_agent.py` or `mcp/workflow/standup.py`, `mcp/server.py`, docs templates.
+  - Done when: agent can summarize chat + selected Jira context into takeaways, blockers, follow-ups, meeting suggestions, Jira story/task/bug proposals, bulk-edit proposals, and cross-service associations with rationale and source-message IDs.
+  - Depends on: S20.model.1, S20.links.1.
+
+- [ ] **S20.agent.2 — Give agent docs/workflow/template context**
+  - Files: `mcp/standup_agent.py`, Stage-14 docs tools/templates, `docs/standup.md`.
+  - Done when: generated Jira work uses story templates, acceptance-criteria format, labels/tags, priority/story-point estimates, epic/workflow docs, and direct Confluence links when relevant.
+  - Depends on: S20.agent.1.
+
+- [ ] **S20.proposals.1 — Stage Jira creates/edits as dry-run proposals**
+  - Files: `mcp/standup_agent.py`, `mcp/server.py`, `web/main.py`, existing Jira staging tools.
+  - Done when: proposed new Jira tickets and bulk edits become `standup_proposals` and/or Stage-16 `jira_staged_changes` without live writes; each has validation state, dry-run payload, source messages, and rationale.
+  - Depends on: S20.agent.1.
+
+- [ ] **S20.approval.1 — Add scrum-master/product-owner HITL approval tray**
+  - Files: `web/src/routes/standup.tsx`, `web/main.py`, auth helpers once Stage 19 exists.
+  - Done when: approvers can edit/approve/reject proposals; non-approvers are read-only; approvals call validate/apply dry-run path, record actor/timestamp, and broadcast updates over websocket.
+  - Depends on: S20.proposals.1.
+
+- [ ] **S20.trace.1 — Add expandable tool-call/configuration bubble**
+  - Files: `web/src/routes/standup.tsx`, existing connector/config components.
+  - Done when: Jira Configuration is minimized by default but can expand to show connector health, dry-run/live-write gates, tool calls, proposal generation traces, and cross-service association details.
+  - Depends on: S20.ui.1, S20.agent.1.
+
+- [ ] **S20.auth.1 — Apply Stage-19 RBAC to standup route/actions**
+  - Files: `web/main.py`, `web/src/routes/standup.tsx`, auth docs.
+  - Done when: only authorized users can join sessions; only approvers/admins can approve proposals; audit users can observe/contribute according to policy; all denials are clear.
+  - Depends on: S20.policy.1; integrate fully after Stage 19 backend exists.
+
+- [ ] **S20.verify.1 — Websocket + agent + dry-run smoke**
+  - Files: `scripts/smoke_standup_ws.sh` or `.py`, `scripts/smoke_jira_edit.sh`, `IMPLEMENT.md`.
+  - Done when: smoke starts/joins a session, sends messages from two users, triggers agent summary, stages a dry-run Jira proposal, validates approval gating, and confirms no live external write occurs.
+  - Depends on: S20.ws.1, S20.agent.1, S20.proposals.1.
+
+- [ ] **S20.verify.2 — UI build and standup screen-share review**
+  - Files: `web/src/routes/standup.tsx`, `IMPLEMENT.md`.
+  - Done when: `cd web && npm run build` passes; manual screen-share review confirms Explorer dominates the view, chat captures noisy context quickly, suggestions are understandable, and configuration/tool traces do not distract.
+  - Depends on: S20.explorer.1, S20.chat.1, S20.approval.1.
+
+---
+
+## Stage 21 — Deep Agent platform: containerized LangGraph agents + HITL deployment runtime
+
+**Goal:** Evolve the current Stage-4 `deep_agent` planner/builder proof into a production-shaped **Deep Agent platform** for this project: containerized LangGraph agents, service-specific tool scopes, durable checkpointing, HITL approval gates, and deployment targets that can run on AWS Bedrock-backed models, Kubernetes, Fargate/ECS, or plain containers. This stage should turn the user's coding-agent orchestration paradigm (subagents, skills, MCPs, commands, workflows) into an enterprise runtime that can safely execute the previous HITL work in this plan.
+
+This is not just "one big agent." The baseline should ship a small set of service-specific agents with strict tool scopes and a supervising orchestrator. The future direction should support more specialized on-rails workflows that are secure, context-efficient, and workflow-guided.
+
+### 21a. Relationship to existing Stage 4
+
+Stage 4 already provides a useful primitive:
+
+- `plan_task`, `run_plan`, `deep_agent` MCP tools.
+- Planner/builder role split.
+- LangGraph state machine execution.
+- Mongo persistence of plans/runs.
+- Sandbox tools for filesystem/shell work.
+
+Stage 21 builds on that by adding:
+
+- named agent definitions and service-specific profiles
+- per-agent tool allowlists and context packs
+- HITL interrupt/resume patterns as first-class features
+- deployment packaging and runtime configuration
+- observability, audit, and security boundaries
+- a migration path to Bedrock/K8S/Fargate/container deployments
+
+### 21b. Basic implementation: service-specific deep agents
+
+Start with a pragmatic set of agents aligned to existing services and stages:
+
+| Agent | Primary scope | Allowed tools/context | Typical tasks |
+| --- | --- | --- | --- |
+| `jira_agent` | Jira issue triage and staged edits | Jira staging tools, Jira templates, selected docs/workflows | Create dry-run stories, bulk edit proposals, sprint/standup follow-ups, validate staged changes. |
+| `docs_agent` | Docs Wiki + Confluence lifecycle | `docs_*`, `docs_sync`, Confluence read/write only when gated | Draft doc revisions, reconcile public docs, suggest stale-doc updates. |
+| `architecture_agent` | Architecture inventory/diagram context | architecture graph, docs/runbooks, connector summaries | Fill TBD metadata, explain topology, propose diagram updates. |
+| `audit_agent` | Evidence/artifact generation | report tools, Archer/RISK/SNOW/Snowflake/Mongo read surfaces, docs search | Pull evidence, draft audit packets, propose Archer updates. |
+| `workflow_agent` | Compliance workflow orchestration | Stage-9 workflow tools, connector registry, HIL gates | Run/check workflows, collect approval questions, summarize outcomes. |
+| `auth_agent` | Auth/RBAC explanation | auth lookup/explain tools only | Explain access, validate group mapping, support onboarding of auth policy. |
+| `standup_agent` | Standup follow-up capture | standup session data, Jira/docs templates, selected explorer context | Summarize chat, generate dry-run Jira proposals, link cross-service context. |
+
+Baseline behavior:
+
+- One orchestrator chooses which service-specific agent(s) to invoke based on task intent and current UI/workflow context.
+- Each agent has a strict tool allowlist, max runtime, max steps, and model budget.
+- All writes are proposed/dry-run unless an explicit HITL approval node resumes execution.
+- Agent outputs use typed Pydantic schemas (proposal, plan, action, evidence, approval_request) rather than free-form text only.
+- Agent traces, tool calls, approvals, and final artifacts are persisted to Mongo.
+
+### 21c. Advanced/future direction: on-rails workflow-guided agents
+
+After the basic multi-agent platform works, evolve toward more constrained workflows:
+
+- **Workflow-specific graphs:** one LangGraph per business workflow (standup follow-up, Jira bulk correction, audit artifact pack, docs reconciliation, architecture inventory intake), not one generic prompt for everything.
+- **Node-level tool scoping:** each node sees only the minimum tools required for that step (already started in Stage 10; apply it consistently to Deep Agents).
+- **Context packs:** prebuilt, versioned bundles of docs/templates/schemas/examples per service; agents request only the pack they need.
+- **Approval contracts:** HIL gates declare exactly what can be approved, who can approve, expiration, rollback/revert path, and audit fields.
+- **Policy engine:** RBAC/capabilities from Stage 19 plus workflow policy (`dry_run_only`, connector write gates, data classification) decide which actions can run.
+- **Memory and learned procedures:** project skills document repeatable internal workflows, while runtime agent memory stores only approved durable facts/summaries with retention rules.
+- **Secure delegation:** subagents cannot escalate tools, cannot read secrets, and cannot call arbitrary MCP tools outside their profile.
+
+### 21d. Deployment architecture
+
+Target containerized deployment first, with a path to managed platforms:
+
+- **Local/compose baseline:** `mcp` continues to host LangGraph code and tools; add `agent-runtime` only if isolation is needed.
+- **Container runtime:** package Deep Agent runtime as a container image with explicit environment, healthcheck, `/healthz`, `/metrics`, and JSON logs.
+- **AWS ECS/Fargate:** run runtime tasks/services with task roles, secrets from Secrets Manager/SSM, CloudWatch logs, and VPC connectivity to Mongo/warehouse and connector endpoints.
+- **Kubernetes:** Helm/Kustomize manifests for runtime deployment, config maps for agent profiles, secrets for model/connectors, HPA around concurrent runs.
+- **AWS Bedrock:** optional model provider path for planner/builder roles; map `PLANNER_*`/`BUILDER_*` to Bedrock model IDs, IAM auth, and Bedrock guardrails where useful.
+- **Durability:** Mongo/checkpointer remains the state store initially; consider external managed Mongo/document DB and S3 artifact storage for larger outputs.
+
+### 21e. Runtime model and APIs
+
+Expose a runtime API that works for web UI, MCP clients, and background jobs:
+
+- `agent_profiles_list` — list available agents, scopes, required capabilities, allowed tools.
+- `agent_run_start` — start a typed run with `{agent, goal, context_refs, mode}`.
+- `agent_run_status` — inspect graph state, current node, tool calls, budget, pending approvals.
+- `agent_run_resume` — resume from HITL interrupt with approval/rejection/edited payload.
+- `agent_run_cancel` — cancel and persist a terminal state.
+- `agent_run_artifacts` — fetch generated proposals, reports, docs, patches, logs.
+
+Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing clients and future UI pages share one runtime.
+
+### 21f. Security, HITL, and audit requirements
+
+- Every run has an actor, source (`web`, `mcp`, `standup`, `workflow`, etc.), agent profile, role/capability snapshot, and correlation ID.
+- Tool calls are recorded with sanitized inputs/outputs; secrets are redacted.
+- Write-capable tools require explicit profile permission and policy approval.
+- HITL interrupts persist typed approval payloads and are resumable after restart.
+- Approvals record actor, groups/roles, timestamp, original proposal, edited proposal, validation result, and apply result.
+- Agent profiles can be marked `dry_run_only`, `read_only`, or `write_capable`.
+- Service-specific agents should never receive unrelated connector credentials or broad tool catalogs.
+
+### 21g. Observability and operations
+
+- Structured logs for graph node start/end, tool call start/end, model request budget, approval events, failures, retries, and cancellations.
+- `/metrics` counters: active runs, completed runs, failed runs, pending approvals, token usage, tool-call counts, average runtime per profile.
+- Admin page for run history, pending approvals, traces, and profile config.
+- Smoke tests for each profile and one end-to-end HITL resume path.
+- Runbooks in Docs Wiki for operating the runtime, adding a new agent profile, and recovering stuck runs.
+
+### 21h. Env surface (proposed)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `DEEP_AGENT_RUNTIME_MODE` | `in_mcp` | no | 21 | `in_mcp`, `sidecar`, `remote` |
+| `DEEP_AGENT_PROFILES_FILE` | `/app/deep_agent_profiles.yaml` | no | 21 | Agent profile/tool-scope config |
+| `DEEP_AGENT_DEFAULT_PROVIDER` | `openai` | no | 21 | `openai`, `bedrock`, future providers |
+| `DEEP_AGENT_BEDROCK_REGION` | — | no | 21 | Region for Bedrock planner/builder models |
+| `DEEP_AGENT_CHECKPOINT_COLLECTION` | `deep_agent_checkpoints` | no | 21 | Durable LangGraph checkpoints |
+| `DEEP_AGENT_RUN_COLLECTION` | `deep_agent_runs` | no | 21 | Run metadata/traces/artifacts |
+| `DEEP_AGENT_ARTIFACT_DIR` | `/sandbox/agent-artifacts` | no | 21 | Local/container artifact output dir |
+| `DEEP_AGENT_REQUIRE_HITL` | `true` | no | 21 | Require HITL for write-capable actions |
+| `DEEP_AGENT_DRY_RUN_ONLY` | `true` | no | 21 | Global guardrail for production writes during POC |
+| `DEEP_AGENT_MAX_PARALLEL_RUNS` | `4` | no | 21 | Runtime concurrency cap |
+| `DEEP_AGENT_PROFILE_TIMEOUT_SECONDS` | `900` | no | 21 | Per-run wall-clock timeout |
+
+### 21i. Verification intent
+
+1. Profile list shows at least Jira, Docs, Audit, Workflow, Auth, Architecture, and Standup agents with non-overlapping tool scopes.
+2. A Jira agent run generates dry-run ticket edits/creates and pauses at HITL approval.
+3. A Docs agent run suggests a doc revision and pauses before applying.
+4. A Standup agent run consumes session/chat context and emits Jira proposals without live writes.
+5. A denied profile/tool call fails closed with a clear policy error.
+6. Checkpoint/resume works across container restart.
+7. Runtime can run in local compose; deployment manifests/docs exist for ECS/Fargate or K8S; Bedrock provider path is documented or stubbed.
+8. Observability exposes logs/metrics and admin trace UI.
+
+### Task checklist — Stage 21
+
+- [ ] **S21.arch.1 — Write Deep Agent platform design doc**
+  - Files: `docs/deep_agent_platform.md` (new), `IMPLEMENT.md`.
+  - Done when: design explains relationship to Stage 4, profile model, service-specific agents, HITL pattern, deployment options (compose/Fargate/K8S/Bedrock), security boundaries, and future on-rails workflow direction.
+
+- [ ] **S21.profile.1 — Define agent profile schema and config**
+  - Files: `mcp/deep_agent/profiles.py` (new) or config loader, `mcp/deep_agent/profiles.yaml`, `.env.example`.
+  - Done when: profiles declare name, description, allowed tools, context packs, model role/provider, budgets, capabilities required, write policy, and dry-run/read-only flags; invalid profiles fail at startup.
+  - Depends on: S21.arch.1.
+
+- [ ] **S21.policy.1 — Enforce per-profile tool allowlists**
+  - Files: `mcp/deep_agent/catalog.py`, `mcp/deep_agent/planner.py`, runtime dispatcher.
+  - Done when: planner and executor can only see/call tools allowed by the selected profile; attempts to call outside profile fail closed and are audited.
+  - Depends on: S21.profile.1.
+
+- [ ] **S21.context.1 — Add context packs for service-specific agents**
+  - Files: `mcp/deep_agent/context.py` (new), Stage-14 Docs queries/templates, profile config.
+  - Done when: Jira, Docs, Audit, Workflow, Auth, Architecture, and Standup profiles can load compact versioned context packs (templates, schemas, examples, runbook links) without dumping unrelated docs into prompt context.
+  - Depends on: S21.profile.1.
+
+- [ ] **S21.runtime.1 — Add typed agent runtime API/tools**
+  - Files: `mcp/server.py`, `mcp/deep_agent/runtime.py` (new), `web/main.py`, `web/src/lib/types.ts`, `web/src/lib/queries.ts`.
+  - Done when: `agent_profiles_list`, `agent_run_start`, `agent_run_status`, `agent_run_resume`, `agent_run_cancel`, and `agent_run_artifacts` exist as MCP tools and web proxies with typed request/response models.
+  - Depends on: S21.policy.1, S21.context.1.
+
+- [ ] **S21.hitl.1 — Implement reusable HITL interrupt/resume contract**
+  - Files: `mcp/deep_agent/runtime.py`, `mcp/checkpointer.py`, workflow nodes that produce approvals.
+  - Done when: write-capable profiles can pause with typed approval payloads, persist pending state, resume after approve/reject/edit, and survive container restarts.
+  - Depends on: S21.runtime.1.
+
+- [ ] **S21.agent.1 — Implement baseline service-specific agents**
+  - Files: `mcp/deep_agent/profiles.yaml`, service-specific prompt/context modules, tests/smokes.
+  - Done when: Jira, Docs, Audit, Workflow, Auth, Architecture, and Standup profiles each run a simple smoke goal using only their allowed tools and produce typed outputs.
+  - Depends on: S21.hitl.1.
+
+- [ ] **S21.ui.1 — Add Deep Agent operations/admin UI**
+  - Files: `web/src/routes/agents.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`.
+  - Done when: admins can list profiles, start a run, inspect status/tool calls/artifacts, see pending approvals, and resume/cancel runs.
+  - Depends on: S21.runtime.1.
+
+- [ ] **S21.deploy.1 — Containerize/runtime deployment path**
+  - Files: `compose.yaml`, optional `agent-runtime/` service, Dockerfiles, deployment docs.
+  - Done when: runtime can run in current compose either in `mcp` or as a sidecar; healthcheck passes; secrets/config are env/secret-driven; no local-only assumptions block container deployment.
+  - Depends on: S21.runtime.1.
+
+- [ ] **S21.deploy.2 — Add ECS/Fargate or K8S deployment blueprint**
+  - Files: `deploy/ecs/` or `deploy/k8s/`, `docs/deep_agent_platform.md`.
+  - Done when: documented manifests/templates cover runtime container, task/service roles, secrets, network access, healthchecks, logs, scaling, and rollback. One target (ECS/Fargate or K8S) may be blueprint-only at this stage.
+  - Depends on: S21.deploy.1.
+
+- [ ] **S21.bedrock.1 — Design/implement Bedrock provider adapter path**
+  - Files: `mcp/llm.py`, `mcp/deep_agent/provider.py` (new), `.env.example`, docs.
+  - Done when: planner/builder roles can be configured for Bedrock model IDs or the Bedrock path is explicitly stubbed with interface + envs + IAM requirements; OpenAI-compatible path remains unchanged.
+  - Depends on: S21.deploy.1.
+
+- [ ] **S21.obs.1 — Add runtime observability and metrics**
+  - Files: `mcp/deep_agent/runtime.py`, `mcp/server.py`, optional metrics endpoint, docs.
+  - Done when: structured logs and metrics cover active/completed/failed runs, pending approvals, token budgets, tool-call counts, retries, cancellations, and per-profile latency.
+  - Depends on: S21.runtime.1.
+
+- [ ] **S21.security.1 — Add redaction and policy audit trail**
+  - Files: runtime dispatcher, audit helpers, docs.
+  - Done when: tool inputs/outputs are redacted for secrets, denied tool calls are persisted as policy events, approvals include actor/roles/groups, and dry-run/write-capable profile flags are enforced.
+  - Depends on: S21.hitl.1.
+
+- [ ] **S21.verify.1 — Deep Agent platform smoke suite**
+  - Files: `scripts/smoke_deep_agent_platform.sh` or `.py`, existing `scripts/smoke_deep_agent.sh` updates.
+  - Done when: smoke lists profiles, runs Jira and Docs profile dry-run goals, validates HITL pause/resume, verifies denied tool-call behavior, checks persistence, and confirms no live external writes occur.
+  - Depends on: S21.agent.1, S21.security.1.
+
+- [ ] **S21.verify.2 — Deployment and restart verification**
+  - Files: deployment docs/scripts.
+  - Done when: runtime restart does not lose pending HITL approvals; compose healthchecks pass; chosen deployment blueprint has a clear verification checklist.
+  - Depends on: S21.deploy.1, S21.hitl.1.
 
 ---
 
@@ -396,6 +1151,17 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `DEEP_AGENT_BUDGET_PER_CALL` | `70000` | no | 4 | token ceiling per LLM call |
 | `DEEP_AGENT_MAX_STEPS` | `25` | no | 4 | hard cap on plan steps |
 | `DEEP_AGENT_MAX_SECONDS` | `600` | no | 4 | hard cap on total run time |
+| `DEEP_AGENT_RUNTIME_MODE` | `in_mcp` | no | 21 | `in_mcp`, `sidecar`, or `remote` runtime mode |
+| `DEEP_AGENT_PROFILES_FILE` | `/app/deep_agent_profiles.yaml` | no | 21 | Agent profile/tool-scope config |
+| `DEEP_AGENT_DEFAULT_PROVIDER` | `openai` | no | 21 | `openai`, `bedrock`, future providers |
+| `DEEP_AGENT_BEDROCK_REGION` | — | no | 21 | Region for Bedrock planner/builder models |
+| `DEEP_AGENT_CHECKPOINT_COLLECTION` | `deep_agent_checkpoints` | no | 21 | Durable LangGraph checkpoints |
+| `DEEP_AGENT_RUN_COLLECTION` | `deep_agent_runs` | no | 21 | Run metadata/traces/artifacts |
+| `DEEP_AGENT_ARTIFACT_DIR` | `/sandbox/agent-artifacts` | no | 21 | Agent artifact output directory |
+| `DEEP_AGENT_REQUIRE_HITL` | `true` | no | 21 | Require HITL for write-capable actions |
+| `DEEP_AGENT_DRY_RUN_ONLY` | `true` | no | 21 | Global POC guardrail for production writes |
+| `DEEP_AGENT_MAX_PARALLEL_RUNS` | `4` | no | 21 | Runtime concurrency cap |
+| `DEEP_AGENT_PROFILE_TIMEOUT_SECONDS` | `900` | no | 21 | Per-run wall-clock timeout |
 | `SHEET_WRITES_ENABLED` | `true` | no | 6 | When `false`, all sheet write helpers fail closed |
 | `SHEET_AUDIT_COLLECTION` | `audit_log` | no | 6 | Audit-log collection for sheet writes |
 | `SHEET_APPLY_MAX_OPS` | `50` | no | 6 | Hard cap on ops per `sheet_apply_nl` run |
@@ -437,6 +1203,28 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `DOCS_CONFLUENCE_SPACE` | `COMP` | no | 14 | Confluence space key public docs sync into |
 | `DOCS_SYNC_ENABLED` | `false` | no | 14 | Master gate for Confluence push |
 | `DOCS_DEFAULT_VISIBILITY` | `internal` | no | 14 | New-doc default visibility |
+| `AUTH_MODE` | `basic` | no | 19 | Web auth mode: `sso`, `basic`, `trusted_network`, `headers`, `ldap`, or `disabled` |
+| `AUTH_ALL_USERS_GROUP` | `sg_all_users` | no | 19 | Base authenticated/network group |
+| `AUTH_ADMIN_GROUP` | `sg_sec_admin` | no | 19 | Grants admin role |
+| `AUTH_APP_USER_GROUP` | `sg_app_user` | no | 19 | Grants app owner/onboarding role |
+| `AUTH_AUDIT_USER_GROUP` | `sg_audit_users` | no | 19 | Grants audit artifact/finding role |
+| `AUTH_TRUSTED_HEADER_USER` | `X-Forwarded-User` | no | 19 | Header for upstream proxy/SSO username |
+| `AUTH_TRUSTED_HEADER_GROUPS` | `X-Forwarded-Groups` | no | 19 | Optional proxy/SSO group header |
+| `AUTH_SSO_REQUIRED` | `false` | no | 19 | Production guardrail; require SSO mode when true |
+| `AUTH_BASIC_USERS_FILE` | `/data/auth/users.json` | no | 19 | POC Basic Auth seeded users/hashes file |
+| `AUTH_BASIC_SEED_PASSWORD` | — | no | 19 | Dev-only password for generated seed users; prefer gitignored secret |
+| `AUTH_DEV_HEADERS_ENABLED` | `false` | no | 19 | Allows `X-SG-User`/`X-SG-Groups` simulation when true |
+| `AUTH_LDAP_URL` | — | no | 19 | Future LDAP endpoint / adapter URL |
+| `AUTH_LDAP_BASE_DN` | — | no | 19 | Future LDAP search base |
+| `AUTH_LDAP_BIND_SECRET_FILE` | — | no | 19 | Future mounted bind secret path |
+| `AUTH_CACHE_TTL_SECONDS` | `300` | no | 19 | User/group lookup cache TTL |
+| `STANDUP_WS_ENABLED` | `true` | no | 20 | Enable websocket endpoint for live standup sessions |
+| `STANDUP_SESSION_TTL_HOURS` | `24` | no | 20 | Inactive-session TTL before archival |
+| `STANDUP_MAX_MESSAGES` | `500` | no | 20 | Per-session message cap before archival/summarization |
+| `STANDUP_AGENT_ENABLED` | `true` | no | 20 | Enables standup summarization/proposal generation |
+| `STANDUP_AGENT_INTERVAL_SECONDS` | `0` | no | 20 | `0` = on-demand only; positive enables periodic suggestions |
+| `STANDUP_REQUIRE_ADMIN` | `true` | no | 20 | Require admin/approval capability for session control and approvals |
+| `STANDUP_DRY_RUN_ONLY` | `true` | no | 20 | Extra guardrail: never apply live writes from Standup even if connector writes are enabled |
 | `JIRA_WRITES_ENABLED` | `false` | no | 16 | When `false`, `jira_apply_staged` produces a dry-run plan |
 | `JIRA_STAGE_MAX_EDITS` | `100` | no | 16 | Hard cap on issues per `jira_stage_edits` call |
 | `UPSTREAM_MAX_TOKENS` | `0` | no | 17 | Default `max_tokens` forwarded to upstream when client omits it |

@@ -470,13 +470,29 @@ export interface DocSuggestion {
   title: string | null;
   rationale: string;
   proposed_body_md: string;
-  applied: false;
+  /** True only after a HIL-approved apply; proposals start false. */
+  applied: boolean;
+}
+
+/** One applied (HIL-approved) suggestion result. */
+export interface DocAgentApplied {
+  slug: string;
+  version?: number;
+  error?: string;
 }
 
 /** Full response from POST /api/docs/agent. */
 export interface DocsAgentResponse {
+  run_id: string;
+  /** "waiting_approval" = paused at the HIL apply gate; "completed" = resumed/applied. */
+  status: "waiting_approval" | "completed";
   reconcile: DocsSyncResponse;
   triage: DocTriageEntry[];
   suggestions: DocSuggestion[];
-  applied_any: false;
+  applied: DocAgentApplied[];
+  applied_any: boolean;
+  approval_preview?: {
+    message: string;
+    proposals: { slug: string; title: string | null; rationale: string }[];
+  } | null;
 }

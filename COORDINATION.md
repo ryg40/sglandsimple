@@ -8,7 +8,7 @@ Update this table when you start/finish. One owner per stage.
 
 | Stage(s) | Owner | Worktree / branch | Status |
 | --- | --- | --- | --- |
-| 6 followups, 14 (frontend + migration) | docs-wiki agent | `stage-14-docs-wiki` (main tree) | landed, building green |
+| 6 followups, 14 (all incl. agent LangGraph apply-gate) | docs-wiki agent | `stage-14-docs-wiki` (main tree) | **COMPLETE** — built green + verified live (mcp/web rebuilt) |
 | 13 (token cleanup), 15 (wrangler/ask_data) | stage13-15 agent | `/opt/stacks/sglandsimple-pi-stage13-15` [`pi-stage13-15`] | in progress |
 | 3 (SSE transport, S3.transport.2/S3.expose.2) | current main-tree agent | main tree | landed; local SSE verified; manual external-client smoke pending |
 

@@ -555,6 +555,10 @@ async def api_docs_agent(request: Request) -> JSONResponse:
     args: dict[str, Any] = {}
     if "limit_suggestions" in body:
         args["limit_suggestions"] = int(body["limit_suggestions"])
+    if body.get("run_id"):
+        args["run_id"] = body["run_id"]
+    if "resume_decision" in body:
+        args["resume_decision"] = body["resume_decision"]
     res = await _mcp_tool("docs_agent_run", args)
     if res.get("isError"):
         return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
