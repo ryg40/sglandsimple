@@ -438,3 +438,35 @@ export function useMe() {
     staleTime: 60_000,
   });
 }
+
+// ---- Stage 19 — logout (clear browser Basic Auth cache) -------------------
+
+/** Log the current user out.
+ *
+ * Calls POST /api/logout, which returns 401 to force the browser to forget
+ * cached Basic Auth credentials.  On success *or* the expected 401, we clear
+ * the React Query cache and hard-reload so the browser prompts for login
+ * again.
+ *
+ * The mutation always "succeeds" — the 401 from the server is the intended
+ * logout signal, not an error.
+ */
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      try {
+        await fetch("/api/logout", { method: "POST" });
+      } catch {
+        // The server returns 401 (intended) which fetch throws on.
+        // Swallow it — the 401 is the logout signal.
+      }
+    },
+    onSettled: () => {
+      // Clear all cached data (identity, capabilities, everything).
+      qc.clear();
+      // Hard-reload forces the browser to re-prompt for Basic Auth.
+      window.location.href = "/";
+    },
+  });
+}

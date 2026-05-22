@@ -193,6 +193,31 @@ def _extract_json_block(result: dict[str, Any]) -> Any:
     return {"raw": "\n".join(blocks)}
 
 
+@app.post("/api/logout")
+async def api_logout(request: Request) -> JSONResponse:
+    """Invalidate the browser's cached Basic Auth credentials.
+
+    For Basic Auth the browser caches credentials per-origin with no JS API
+    to clear them.  The standard trick is to return 401 with a
+    WWW-Authenticate header — this forces the browser to forget the cached
+    credentials so the next request prompts again.
+
+    The SPA calls this endpoint, then on the 401 response clears its React
+    Query cache and reloads to trigger the browser's native login prompt.
+
+    For non-basic modes (sso, trusted_network, headers, ldap, disabled) the
+    endpoint still returns 401 as a no-op signal so the frontend can treat
+    all logout clicks uniformly.
+    """
+    # Returning 401 causes browsers to clear their Basic Auth credential cache
+    # for this origin. The SPA handles this gracefully (it's the intended signal).
+    raise HTTPException(
+        status_code=401,
+        detail="Logged out",
+        headers={"WWW-Authenticate": 'Basic realm="sglandsimple"'} if _auth.CONFIG.auth_mode == "basic" else {},
+    )
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}

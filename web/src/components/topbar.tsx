@@ -1,7 +1,8 @@
 import { useLocation } from "react-router-dom";
-import { Search, LogIn } from "lucide-react";
+import { Search, LogIn, LogOut } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/components/auth-provider";
+import { useLogout } from "@/lib/queries";
 import { Badge } from "@/components/ui/badge";
 
 const TITLES: Record<string, { title: string; subtitle: string }> = {
@@ -24,6 +25,7 @@ const MODE_VARIANT: Record<string, "default" | "outline" | "warning" | "success"
 export function Topbar() {
   const { pathname } = useLocation();
   const { me, isLoading, authenticated, roles, authMode } = useAuth();
+  const logout = useLogout();
 
   const meta = TITLES[pathname] ?? { title: "LanGarland", subtitle: "" };
 
@@ -72,6 +74,15 @@ export function Topbar() {
               <span className="max-w-32 truncate text-xs font-medium text-foreground" title={me?.user?.email ?? displayName}>
                 {displayName}
               </span>
+              {/* Logout button */}
+              <button
+                onClick={() => logout.mutate()}
+                disabled={logout.isPending}
+                className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title="Sign out"
+              >
+                <LogOut className="size-3.5" />
+              </button>
             </>
           ) : (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
