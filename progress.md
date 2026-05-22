@@ -137,3 +137,32 @@ Picked up handoff from previous multi-agent session. All co-mingled changes acro
 4. `S13.cleanup.1` — finish migrating non-semantic color literals to tokens.
 5. `S15.*` — wrangler bulk projection (`S15.wrangler.1`) and ask_data timeout fixes (`S15.askdata.1`), per `IMPLEMENT.md` ownership map. `S15.wrangler.2` is complete.
 6. **Stage 18–22** — architecture diagram v2 (partially done), web auth/RBAC (in progress), Standup Jira cockpit (vertical slice done, needs landing), UX/chat polish + Wrangler derived fields — see `IMPLEMENT.md` and `docs/parallel-agent-diff-audit.md`.
+
+## Session 2026-05-22 (pi agent) — S19 logout button + credential cache fix
+
+User reported that login persisted even in a new incognito browser — no way to sign out.
+
+**Root cause:** HTTP Basic Auth browsers cache credentials per-origin. There is no JavaScript API to clear them. The only reliable way is to force a 401 response with `WWW-Authenticate`, which causes the browser to forget its cached credentials.
+
+**Changes:**
+
+1. **`web/main.py`** — Added `POST /api/logout` endpoint that raises HTTP 401 with `WWW-Authenticate: Basic realm="sglandsimple"` (Basic Auth mode) or plain 401 (other modes). This forces the browser to clear its credential cache for the origin.
+
+2. **`web/src/lib/queries.ts`** — Added `useLogout()` mutation that:
+   - Calls `fetch("/api/logout", { method: "POST" })` (raw fetch, not `api.post`, because the 401 is intentional)
+   - Swallows the expected 401 error
+   - Clears all React Query cache via `qc.clear()`
+   - Hard-navigates to `/` to trigger the browser's native login prompt
+
+3. **`web/src/components/topbar.tsx`** — Added `LogOut` icon button next to the authenticated display name. Calls `logout.mutate()` on click. Disabled while logout is in progress.
+
+**Files changed:**
+- `web/main.py` — `POST /api/logout` endpoint
+- `web/src/lib/queries.ts` — `useLogout()` hook
+- `web/src/components/topbar.tsx` — logout button
+- `IMPLEMENT.md` — S19.logout.1 task added + checked
+- `COORDINATION.md` — S19 status updated
+
+**Verification:**
+- `python3 -m py_compile web/main.py` — passes
+- `cd web && npm run build` — passes (tsc + vite, clean)

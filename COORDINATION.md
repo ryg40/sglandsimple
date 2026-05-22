@@ -13,7 +13,7 @@ Update this table when you start/finish. One owner per stage.
 | 15 (wrangler bulk projection + code view, ask_data deadline) | pi agent | main tree | **COMPLETE** — committed `064af8d` |
 | 3 (SSE transport) | docs-wiki agent | main tree | landed; manual external-client smoke pending |
 | 18 (architecture diagram v2: discovery through filter) | architecture-v2 orchestrator | main tree | **DONE** — Still open: S18.export.1, S18.docs.1, S18.verify.1 |
-| 19 (web auth/RBAC) | Claude agent + pi agent (audit.1 fix) | main tree | **~95% DONE** — committed `98850b3`. Still open: S19.admin.1 (auth diagnostics page) |
+| 19 (web auth/RBAC) | Claude agent + pi agent (audit.1 fix, logout) | main tree | **~97% DONE** — committed `98850b3`. Still open: S19.admin.1 (auth diagnostics page). Logout button added. |
 | 20 (standup Jira cockpit) | pi agent | main tree | **vertical slice DONE** — committed `2a3e853`. Still open: S20.agent.2, proposals.1, approval.1, trace.1, auth.1, verify.2 |
 | 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user |
 

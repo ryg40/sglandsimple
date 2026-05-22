@@ -638,6 +638,16 @@ The real internal lookup code should be isolated behind a narrow interface so it
   - Depends on: S19.frontend.2.
   - **Not yet implemented.** This is the only remaining S19 UI task.
 
+- [x] **S19.logout.1 — Add logout button + /api/logout endpoint** ✅ DONE
+  - Files: `web/main.py`, `web/src/lib/queries.ts`, `web/src/components/topbar.tsx`.
+  - Problem: With HTTP Basic Auth the browser caches credentials per-origin with no JS API to clear them. Sessions persisted even across incognito windows because the browser re-sends the cached Authorization header on every request to the same origin.
+  - Done:
+    1. Backend: `POST /api/logout` returns 401 with `WWW-Authenticate: Basic realm="sglandsimple"` — this forces the browser to forget its cached Basic Auth credentials for the origin.
+    2. Frontend: `useLogout()` mutation in `queries.ts` calls `/api/logout` (swallowing the expected 401), clears the React Query cache via `qc.clear()`, and hard-navigates to `/` to trigger the browser's native login prompt.
+    3. Topbar: `LogOut` icon button next to the display name calls `logout.mutate()`.
+  - For non-basic auth modes (sso, trusted_network, headers, ldap, disabled) the endpoint still returns 401 as a uniform signal — the frontend handles it identically.
+  - Depends on: S19.frontend.2.
+
 - [x] **S19.ldap.1 — Define LDAP adapter interface and fixture implementation** ✅ DONE
   - Files: `web/auth_ldap.py` (new), `docs/auth-rbac.md`.
   - Done: `DirectoryAdapter` ABC with `lookup_user`, `lookup_groups`, `check_membership`; `FixtureAdapter` provides deterministic lookups for all 4 placeholder groups; real internal code can be swapped in without changing route guards. Committed `98850b3`.
