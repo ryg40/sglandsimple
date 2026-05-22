@@ -1,8 +1,8 @@
 # Progress
 
 ## Status
-**Stage 11 COMPLETE & verified live; Stage 12 COMPLETE & verified live; Stage 13 COMPLETE (one follow-up); Stage 14 DOCUMENTED (not built); Stage 17 COMPLETE.**
-Work branch: `stage-11-overview`.
+**Stage 11 COMPLETE & verified live; Stage 12 COMPLETE & verified live (re-verified this session); Stage 3 re-verified live; Stage 13 COMPLETE (one follow-up); Stage 14 BACKEND COMPLETE & verified live (web UI + migrate pending); Stage 17 COMPLETE.**
+Work branch: `stage-14-docs-wiki`.
 
 ## Stage 11 — Compliance command center: Overview page (DONE)
 - **`overview_summary` MCP tool** (`mcp/overview.py`): reads `audit_findings`, `epics`, `work_items`, `pr_records` + the connector registry; evaluates six attention rules server-side (overdue, due_soon, prioritized, high_severity, blocked_pr, stalled); returns `{kpis, attention[], connectors[], tables{}, generated_at}` in one round-trip.
@@ -31,8 +31,14 @@ Work branch: `stage-11-overview`.
 - Font → Roboto, self-hosted via `@fontsource/roboto` (offline-safe), imported in `main.tsx`.
 - **Follow-up `S13.cleanup.1` (partial)**: status-color literals remain in `hub-columns.tsx`/`hub.tsx`/`workflow-stepper.tsx` by design (red/green semantics); fuller token migration of non-semantic blues/purples is open.
 
-## Stage 14 — Docs Wiki + Confluence sync (DOCUMENTED ONLY)
-- Full spec + task checklist in `IMPLEMENT.md`. Not implemented. In-app MkDocs/Docusaurus-style library; MongoDB system of record (`docs`/`doc_revisions`/`doc_sync_log`); per-doc visibility/status/tags; public docs sync to Confluence mirroring the path tree; LangGraph agent for reconcile→triage→suggest. Start at `S14.model.1`.
+## Stage 14 — Docs Wiki + Confluence sync (BACKEND DONE & verified live; web UI + migrate pending)
+- **Data model (S14.model.1, DONE)**: `mongo-seed/14-docs.js` seeds `docs`/`doc_revisions`/`doc_sync_log` (incl. one deliberately-stale doc to exercise lifecycle). `mcp/db.py` gained docs system-of-record helpers — `docs_list/get/upsert/set_flags/search`, `doc_sync_log_append/recent`, `docs_set_confluence_id` — all auditing via `_audit(source="docs_*")`. Flags validated against the 14b enums (`status` ∈ up_to_date/needs_attention/archivable/archived; `visibility` ∈ internal/public).
+- **CRUD tools (S14.api.1, DONE)**: `mcp/docs.py` adds path-grouped tree building + `derive_status` lifecycle (needs_attention when stale > `DOCS_REVIEW_DAYS`; archivable when stale AND unreferenced). `mcp/server.py` registers + dispatches 7 tools (`docs_list/get/upsert/set_flags/search/sync/agent_run`). Verified: upsert v1→v3 with revisions preserved + audit row written.
+- **Confluence sync (S14.sync.1, DONE — dry-run)**: `mcp/docs_sync.py` maps `path`→Confluence ancestor pages, pushes public docs idempotently (stores `confluence_page_id`, updates in place after), `tags[]`→labels, logs every action to `doc_sync_log`. Connector gained `confluence_update_page` + create now returns a deterministic page id. Dry-run by default; live only when `DOCS_SYNC_ENABLED` + `CONN_CONFLUENCE_ENABLED` + `WORKFLOW_WRITES_ENABLED`. Verified plan mirrors `runbooks/` into space `COMP`, no outbound calls.
+- **Agent (S14.agent.1, PARTIAL)**: `mcp/docs_agent.py` runs reconcile→triage→suggest. Triage flags stale/unreferenced (verified legacy doc → archivable). Suggestions are HIL proposals (`proposed_body_md`), **never auto-applied** (`applied_any:false` verified); applying = a separate audited `docs_upsert`. Remaining: wire into a checkpointed LangGraph `StateGraph` for interrupt/resume at the apply gate; add `/api/docs/agent` proxy.
+- **Smoke (S14.verify.1, backend DONE)**: `scripts/smoke_docs.sh` is green — tools registered, CRUD+revision+audit, flag transitions, dry-run sync plan mirrors tree, agent emits proposals without applying.
+- **Env (defaulted, sync off)**: `DOCS_REVIEW_DAYS=90`, `DOCS_CONFLUENCE_SPACE=COMP`, `DOCS_SYNC_ENABLED=false`, `DOCS_DEFAULT_VISIBILITY=internal` — added to `.env.example` + `.env.local`.
+- **PENDING**: S14.migrate.1 (`scripts/import_docs.py` — import the repo `.md` corpus as v1 docs), S14.web.1 (`/api/docs*` proxies + `useDocs*` hooks), S14.web.2 (`/docs` SPA route: tree + Markdown view + editor + flag/tag controls + search + review queue).
 
 ## Stage 17 — Builder model upgrade to APEX + per-role `max_tokens` (COMPLETE)
 - Builder subagent now runs on `Qwen3.6-35B-A3B-APEX-MTP-I-Balanced` (port 9292) with 60k `max_tokens`.
@@ -64,5 +70,7 @@ Work branch: `stage-11-overview`.
 - `IMPLEMENT.md`, `progress.md`
 
 ## Next agent — start here
-1. `S13.cleanup.1` — finish migrating non-semantic color literals to tokens.
-2. Stage 14 — build the docs wiki (`S14.model.1` →).
+1. **Stage 14 web UI** — `S14.web.1` (`/api/docs*` proxies in `web/main.py` + `useDocs*` hooks in `queries.ts`/`types.ts`; the 7 MCP tools are ready to proxy) then `S14.web.2` (`/docs` route + sidebar entry; reuse the `Markdown` component; tree + editor-with-preview + flag/tag controls + search + review queue; loading/empty/error per Stage-8).
+2. **Stage 14 corpus import** — `S14.migrate.1` (`scripts/import_docs.py`): import root + `docs/` `.md` files as v1 wiki docs via `docs_upsert`, path-mapped slugs, idempotent.
+3. **Stage 14 agent** — finish `S14.agent.1`: wrap `mcp/docs_agent.py` in a checkpointed LangGraph `StateGraph` (interrupt at the apply gate) + add `/api/docs/agent` proxy.
+4. `S13.cleanup.1` — finish migrating non-semantic color literals to tokens.

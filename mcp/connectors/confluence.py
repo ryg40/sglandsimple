@@ -107,8 +107,24 @@ class ConfluenceConnector:
                         "title": {"type": "string"},
                         "space": {"type": "string"},
                         "body": {"type": "string"},
+                        "parent_id": {"type": "string", "description": "Optional ancestor page id."},
+                        "labels": {"type": "array", "items": {"type": "string"}},
                     },
                     "required": ["title", "body"],
+                },
+            },
+            {
+                "name": "confluence_update_page",
+                "description": "Update an existing Confluence page in place by id (Stage 14 sync idempotency).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "body": {"type": "string"},
+                        "labels": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["page_id", "body"],
                 },
             },
         ]
@@ -123,6 +139,25 @@ class ConfluenceConnector:
         if name == "confluence_search_pages":
             return {"content": [{"type": "text", "text": "[]"}], "isError": False}
         if name == "confluence_create_page":
-            return {"content": [{"type": "text", "text": f'{{"url": "https://confluence.example.com/pages/{args.get("title", "page")}", "status": "success"}}'}], "isError": False}
+            import json as _json
+            # When live, this is where the real Atlassian MCP create call would go.
+            # The mock mints a deterministic page id from the title so the docs-sync
+            # idempotency path (store confluence_page_id, update next time) can be
+            # exercised end-to-end without a live tenant.
+            b = self.base_url.rstrip("/")
+            pid = "cp-" + str(abs(hash(args.get("title", "page"))) % 1_000_000)
+            payload = {
+                "id": pid,
+                "status": "success",
+                "title": args.get("title"),
+                "url": f"{b}/pages/{pid}",
+            }
+            return {"content": [{"type": "text", "text": _json.dumps(payload)}], "isError": False}
+        if name == "confluence_update_page":
+            import json as _json
+            b = self.base_url.rstrip("/")
+            pid = args.get("page_id", "")
+            payload = {"id": pid, "status": "success", "url": f"{b}/pages/{pid}"}
+            return {"content": [{"type": "text", "text": _json.dumps(payload)}], "isError": False}
 
         return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}], "isError": True}

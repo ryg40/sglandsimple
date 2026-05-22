@@ -53,6 +53,15 @@ WORKFLOW_COLLECTIONS = (
     "workflow_runs",
 )
 
+# Stage 14 — docs wiki collections (system of record for the in-app library).
+# These are NOT in KNOWN_COLLECTIONS (so the generic read-only mongo_query
+# allowlist can't touch them); mcp/docs.py is the only path the UI uses, and
+# all writes go through the dedicated docs_* helpers below, which audit via
+# _audit with source="docs_*".
+DOCS_COLLECTION = "docs"
+DOC_REVISIONS_COLLECTION = "doc_revisions"
+DOC_SYNC_LOG_COLLECTION = "doc_sync_log"
+
 # Stage 6 — write surface.
 SHEET_WRITES_ENABLED = os.environ.get("SHEET_WRITES_ENABLED", "true").lower() == "true"
 SHEET_AUDIT_COLLECTION = os.environ.get("SHEET_AUDIT_COLLECTION", "audit_log")
@@ -700,4 +709,231 @@ async def list_workflow_runs(finding_id: str | None = None, *, limit: int = 50) 
         rows = [d async for d in cursor]
     except Exception as e:  # noqa: BLE001
         raise ExecError(f"list_workflow_runs failed: {e}") from e
+    return [_stringify_ids(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Stage 14 — docs wiki system-of-record (docs / doc_revisions / doc_sync_log)
+#
+# The docs collections carry richer semantics than the sheet/workflow write
+# layers (slug uniqueness, append-only revisions, lifecycle flags), so they get
+# their own helpers here rather than reusing validate_write_spec. Every write
+# still routes through _audit so the Stage-8 activity feed sees it.
+# ---------------------------------------------------------------------------
+
+DOCS_STATUSES = ("up_to_date", "needs_attention", "archivable", "archived")
+DOCS_VISIBILITIES = ("internal", "public")
+
+
+async def docs_list(
+    *,
+    tag: str | None = None,
+    status: str | None = None,
+    visibility: str | None = None,
+    include_archived: bool = False,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """List docs (metadata only; bodies omitted) for the nav tree + review queue."""
+    db = get_db()
+    filt: dict[str, Any] = {}
+    if tag:
+        filt["tags"] = tag
+    if status:
+        filt["status"] = status
+    if visibility:
+        filt["visibility"] = visibility
+    if not include_archived and not status:
+        filt["status"] = {"$ne": "archived"}
+    limit = max(1, min(int(limit), 1000))
+    projection = {"body_md": 0}
+    try:
+        cursor = db[DOCS_COLLECTION].find(filt, projection).sort([("path", 1)]).limit(limit)
+        rows = [d async for d in cursor]
+    except Exception as e:  # noqa: BLE001
+        raise ExecError(f"docs_list failed: {e}") from e
+    return [_stringify_ids(r) for r in rows]
+
+
+async def docs_get(slug: str) -> dict[str, Any] | None:
+    """Read a single doc (full body) by slug."""
+    db = get_db()
+    doc = await db[DOCS_COLLECTION].find_one({"slug": slug})
+    return _stringify_ids(doc) if doc else None
+
+
+async def docs_revisions(doc_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Append-only revision history for a doc, newest first."""
+    db = get_db()
+    limit = max(1, min(int(limit), 200))
+    cursor = db[DOC_REVISIONS_COLLECTION].find({"doc_id": doc_id}).sort([("version", -1)]).limit(limit)
+    rows = [d async for d in cursor]
+    return [_stringify_ids(r) for r in rows]
+
+
+def _slug_to_id(slug: str) -> str:
+    return "doc-" + slug.strip("/").replace("/", "-")
+
+
+async def docs_upsert(
+    *,
+    slug: str,
+    title: str | None = None,
+    body_md: str | None = None,
+    tags: list[str] | None = None,
+    status: str | None = None,
+    visibility: str | None = None,
+    owner: str | None = None,
+    note: str = "",
+    source: str = "docs_upsert",
+    last_reviewed: bool = True,
+) -> dict[str, Any]:
+    """Create or update a doc by slug, writing an append-only revision and
+    bumping the version. Returns {doc, revision, created}. Audited."""
+    _require_writes_enabled()
+    if not isinstance(slug, str) or not slug.strip():
+        raise SpecError("slug must be a non-empty string")
+    slug = slug.strip("/")
+    if status is not None and status not in DOCS_STATUSES:
+        raise SpecError(f"invalid status {status!r}; expected one of {DOCS_STATUSES}")
+    if visibility is not None and visibility not in DOCS_VISIBILITIES:
+        raise SpecError(f"invalid visibility {visibility!r}; expected one of {DOCS_VISIBILITIES}")
+
+    db = get_db()
+    coll = db[DOCS_COLLECTION]
+    now = _dt.datetime.utcnow()
+    before = await coll.find_one({"slug": slug})
+
+    if before is None:
+        version = 1
+        doc = {
+            "_id": _slug_to_id(slug),
+            "slug": slug,
+            "path": slug,
+            "title": title or slug,
+            "body_md": body_md or "",
+            "tags": list(tags or []),
+            "status": status or "up_to_date",
+            "visibility": visibility or os.environ.get("DOCS_DEFAULT_VISIBILITY", "internal"),
+            "owner": owner or "unknown",
+            "version": version,
+            "confluence_page_id": None,
+            "last_reviewed_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await coll.insert_one(doc)
+        created = True
+    else:
+        version = int(before.get("version", 1)) + 1
+        update: dict[str, Any] = {"version": version, "updated_at": now}
+        if title is not None:
+            update["title"] = title
+        if body_md is not None:
+            update["body_md"] = body_md
+        if tags is not None:
+            update["tags"] = list(tags)
+        if status is not None:
+            update["status"] = status
+        if visibility is not None:
+            update["visibility"] = visibility
+        if owner is not None:
+            update["owner"] = owner
+        if last_reviewed:
+            update["last_reviewed_at"] = now
+        await coll.update_one({"slug": slug}, {"$set": update})
+        created = False
+
+    doc = await coll.find_one({"slug": slug})
+    rev = {
+        "_id": f"{doc['_id']}:v{version}",
+        "doc_id": doc["_id"],
+        "version": version,
+        "body_md": doc.get("body_md", ""),
+        "author": owner or (doc.get("owner") if doc else "unknown"),
+        "created_at": now,
+        "note": note or ("created" if created else "updated"),
+    }
+    await db[DOC_REVISIONS_COLLECTION].insert_one(rev)
+
+    before_s = _stringify_ids(before) if before else None
+    after_s = _stringify_ids(doc)
+    await _audit("upsertOne", DOCS_COLLECTION, doc["_id"], before_s, after_s, source)
+    return {"doc": after_s, "revision": _stringify_ids(rev), "created": created}
+
+
+async def docs_set_flags(
+    *,
+    slug: str,
+    status: str | None = None,
+    visibility: str | None = None,
+    tags: list[str] | None = None,
+    source: str = "docs_set_flags",
+) -> dict[str, Any]:
+    """Set lifecycle/visibility/tags on a doc without creating a content
+    revision. Validated against the 14b enums. Audited."""
+    _require_writes_enabled()
+    if status is not None and status not in DOCS_STATUSES:
+        raise SpecError(f"invalid status {status!r}; expected one of {DOCS_STATUSES}")
+    if visibility is not None and visibility not in DOCS_VISIBILITIES:
+        raise SpecError(f"invalid visibility {visibility!r}; expected one of {DOCS_VISIBILITIES}")
+    db = get_db()
+    coll = db[DOCS_COLLECTION]
+    before = await coll.find_one({"slug": slug})
+    if before is None:
+        raise SpecError(f"no doc with slug={slug!r}")
+    update: dict[str, Any] = {"updated_at": _dt.datetime.utcnow()}
+    if status is not None:
+        update["status"] = status
+    if visibility is not None:
+        update["visibility"] = visibility
+    if tags is not None:
+        update["tags"] = list(tags)
+    await coll.update_one({"slug": slug}, {"$set": update})
+    after = await coll.find_one({"slug": slug})
+    before_s = _stringify_ids(before)
+    after_s = _stringify_ids(after)
+    await _audit("updateOne", DOCS_COLLECTION, before["_id"], before_s, after_s, source)
+    return {"doc": after_s}
+
+
+async def docs_set_confluence_id(slug: str, page_id: str, *, source: str = "docs_sync") -> None:
+    """Record the Confluence page id on a doc after a successful push (idempotency)."""
+    db = get_db()
+    await db[DOCS_COLLECTION].update_one(
+        {"slug": slug}, {"$set": {"confluence_page_id": page_id, "updated_at": _dt.datetime.utcnow()}}
+    )
+
+
+async def docs_search(query: str, *, limit: int = 25) -> list[dict[str, Any]]:
+    """Case-insensitive substring search over title / body / tags."""
+    db = get_db()
+    q = (query or "").strip()
+    limit = max(1, min(int(limit), 100))
+    if not q:
+        return []
+    import re as _re
+
+    rx = {"$regex": _re.escape(q), "$options": "i"}
+    filt = {"$or": [{"title": rx}, {"body_md": rx}, {"tags": rx}]}
+    cursor = db[DOCS_COLLECTION].find(filt, {"body_md": 0}).limit(limit)
+    rows = [d async for d in cursor]
+    return [_stringify_ids(r) for r in rows]
+
+
+async def doc_sync_log_append(entry: dict[str, Any]) -> dict[str, Any]:
+    """Append a Confluence reconciliation event to doc_sync_log."""
+    db = get_db()
+    entry = dict(entry)
+    entry.setdefault("_id", str(ObjectId()))
+    entry.setdefault("at", _dt.datetime.utcnow())
+    await db[DOC_SYNC_LOG_COLLECTION].insert_one(entry)
+    return _stringify_ids(entry)
+
+
+async def doc_sync_log_recent(*, doc_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    db = get_db()
+    filt = {"doc_id": doc_id} if doc_id else {}
+    limit = max(1, min(int(limit), 200))
+    cursor = db[DOC_SYNC_LOG_COLLECTION].find(filt).sort([("at", -1)]).limit(limit)
+    rows = [d async for d in cursor]
     return [_stringify_ids(r) for r in rows]

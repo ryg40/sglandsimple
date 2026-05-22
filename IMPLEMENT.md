@@ -2049,42 +2049,40 @@ A LangGraph workflow (reuse the Stage-9 orchestrator pattern + checkpointer), ex
 
 # Task checklist — Stage 14
 
-- [ ] **S14.model.1 — Docs collections + audited writes**
-  - Files: `mongo-seed/` (new seed for `docs`/`doc_revisions`/`doc_sync_log`), `mcp/db.py` (collection registration if needed).
-  - Done when: the three collections exist with the 14b shape; writes route through the Stage-6 audited write-layer (`source="docs_*"`).
+- [x] **S14.model.1 — Docs collections + audited writes** ✅ DONE & verified live
+  - Files: `mongo-seed/14-docs.js` (new seed for `docs`/`doc_revisions`/`doc_sync_log`, incl. one deliberately-stale doc), `mcp/db.py` (docs system-of-record helpers: `docs_list/get/upsert/set_flags/search`, `doc_sync_log_*`, `docs_set_confluence_id`).
+  - Done: three collections exist with the 14b shape; every write routes through `_audit` with `source="docs_*"` (verified: `audit_log` row `upsertOne docs doc-welcome docs_upsert`).
 
-- [ ] **S14.api.1 — `mcp/docs.py` CRUD + search tools**
-  - Files: `mcp/docs.py` (new), `mcp/server.py` (register).
-  - Done when: `docs_list`/`docs_get`/`docs_upsert`/`docs_set_flags`/`docs_search` work; `docs_upsert` writes a `doc_revisions` entry + bumps version; flags validated against the 14b enums.
+- [x] **S14.api.1 — `mcp/docs.py` CRUD + search tools** ✅ DONE & verified live
+  - Files: `mcp/docs.py` (new — tree grouping + `derive_status` lifecycle rules), `mcp/server.py` (7 docs tools registered + dispatched).
+  - Done: `docs_list`/`docs_get`/`docs_upsert`/`docs_set_flags`/`docs_search` all work; `docs_upsert` appends a `doc_revisions` entry + bumps version (verified v1→v2→v3, revisions preserved); flags validated against the 14b enums in `db.py`.
 
-- [ ] **S14.migrate.1 — Import existing Markdown corpus**
+- [ ] **S14.migrate.1 — Import existing Markdown corpus** ⏳ PENDING
   - Files: `scripts/import_docs.py` (new).
-  - Done when: root/`docs/` `.md` files are imported as v1 wiki docs with path-mapped slugs and sensible default tags/status; idempotent re-run.
+  - Done when: root/`docs/` `.md` files are imported as v1 wiki docs with path-mapped slugs and sensible default tags/status; idempotent re-run. (The seed currently provides a 3-doc starter corpus; the full repo import is the remaining piece.)
 
-- [ ] **S14.web.1 — `/api/docs*` proxies + `useDocs*` hooks**
+- [ ] **S14.web.1 — `/api/docs*` proxies + `useDocs*` hooks** ⏳ PENDING
   - Files: `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
   - Done when: tree/get/upsert/flags/search/sync routes proxy the MCP tools; typed hooks exist.
-  - Depends on: S14.api.1.
+  - Depends on: S14.api.1 (done — tools are ready to proxy).
 
-- [ ] **S14.web.2 — Docs Wiki SPA route**
+- [ ] **S14.web.2 — Docs Wiki SPA route** ⏳ PENDING
   - Files: `web/src/routes/docs.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`.
   - Done when: `/docs` renders nav tree + Markdown article (reusing the `Markdown` component) + editor with preview + flag/tag controls + search; status/visibility badges; a `needs_attention`/`archivable` review queue. Loading/empty/error per Stage-8.
   - Depends on: S14.web.1.
 
-- [ ] **S14.sync.1 — Confluence reconciliation (same tree)**
-  - Files: `mcp/docs_sync.py` (new), `mcp/connectors/confluence.py` (add update path), `mcp/server.py`.
-  - Done when: public docs map path→Confluence ancestors+page; push creates/updates idempotently (stores `confluence_page_id`), tags→labels; drift detection marks `needs_attention`; all actions logged to `doc_sync_log`; gated dry-run by default.
-  - Depends on: S14.model.1, S9 Confluence connector.
+- [x] **S14.sync.1 — Confluence reconciliation (same tree)** ✅ DONE & verified live (dry-run)
+  - Files: `mcp/docs_sync.py` (new), `mcp/connectors/confluence.py` (added `confluence_update_page` + create returns a deterministic page id for idempotency), `mcp/server.py` (`docs_sync` tool).
+  - Done: public docs map path→Confluence ancestors+page; create stores `confluence_page_id`, subsequent runs update in place; `tags[]`→labels; all actions logged to `doc_sync_log`; **dry-run by default**, live only when `DOCS_SYNC_ENABLED` + `CONN_CONFLUENCE_ENABLED` + `WORKFLOW_WRITES_ENABLED` all on (verified plan mirrors `runbooks/` ancestor into space `COMP`, no outbound calls). Pull-side drift detection (Confluence-newer → `needs_attention`) is stubbed for the mock connector; wire it when a live tenant is available.
 
-- [ ] **S14.agent.1 — Docs agent workflow (sync + suggestions)**
-  - Files: `mcp/workflow/` (new graph or node set), `mcp/server.py` (`docs_agent_run`), `web/main.py` (`/api/docs/agent`).
-  - Done when: reconcile→triage→suggest runs (LangGraph + checkpointer); suggestions are human-in-the-loop proposals (never auto-applied); approving one is an audited `docs_upsert`.
-  - Depends on: S14.api.1, S14.sync.1.
+- [~] **S14.agent.1 — Docs agent workflow (sync + suggestions)** ◑ PARTIAL — procedural form done & verified
+  - Files: `mcp/docs_agent.py` (new), `mcp/server.py` (`docs_agent_run`).
+  - Done: reconcile→triage→suggest runs; triage flags stale/unreferenced (verified: legacy doc → `archivable`); suggestions are HIL proposals returning a `proposed_body_md`, **never auto-applied** (`applied_any:false` verified); applying one is a separate audited `docs_upsert`.
+  - Remaining: this is the procedural sequence, not yet wired into a checkpointed LangGraph `StateGraph` (so a run can interrupt at the apply gate and resume); `/api/docs/agent` web proxy not added (depends on S14.web.1).
 
-- [ ] **S14.verify.1 — Smoke + intent checks**
+- [x] **S14.verify.1 — Smoke + intent checks (backend)** ✅ DONE — `scripts/smoke_docs.sh` green
   - Files: `scripts/smoke_docs.sh` (new).
-  - Done when: asserts CRUD+revision+audit, flag transitions, dry-run sync plan mirrors the tree, and `docs_agent_run` emits proposals without applying; the 14g checks pass by inspection.
-  - Depends on: S14.web.2, S14.sync.1, S14.agent.1.
+  - Done: asserts tools registered, CRUD+revision+audit, flag transitions, dry-run sync plan mirrors the tree, and `docs_agent_run` emits proposals without applying. The web/UI portion of 14g (renders, in-app edit) is pending S14.web.2.
 
 ---
 

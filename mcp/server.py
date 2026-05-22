@@ -33,6 +33,7 @@ from report.pdf import generate_pdf_report
 from report.ppt import generate_ppt_report
 from topology import build_topology
 from overview import build_overview
+import docs as docsmod
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
 
@@ -523,6 +524,96 @@ TOOLS.append({
     "inputSchema": {"type": "object", "properties": {}},
 })
 
+# Stage 14 — docs wiki CRUD/search/sync/agent tools.
+TOOLS.extend([
+    {
+        "name": "docs_list",
+        "description": "List wiki docs as a path-grouped nav tree plus a review queue (needs_attention/archivable). Filter by tag/status/visibility. Bodies omitted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tag": {"type": "string"},
+                "status": {"type": "string", "enum": ["up_to_date", "needs_attention", "archivable", "archived"]},
+                "visibility": {"type": "string", "enum": ["internal", "public"]},
+                "include_archived": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    {
+        "name": "docs_get",
+        "description": "Get one wiki doc (full Markdown body) by slug, with its revision history and recent Confluence sync events.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"slug": {"type": "string"}},
+            "required": ["slug"],
+        },
+    },
+    {
+        "name": "docs_upsert",
+        "description": "Create or update a wiki doc by slug. Writes an append-only doc_revisions entry and bumps version. Audited (source=docs_upsert).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string"},
+                "title": {"type": "string"},
+                "body_md": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "status": {"type": "string", "enum": ["up_to_date", "needs_attention", "archivable", "archived"]},
+                "visibility": {"type": "string", "enum": ["internal", "public"]},
+                "owner": {"type": "string"},
+                "note": {"type": "string"},
+            },
+            "required": ["slug"],
+        },
+    },
+    {
+        "name": "docs_set_flags",
+        "description": "Set lifecycle status / visibility / tags on a wiki doc (no content revision). Audited (source=docs_set_flags).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string"},
+                "status": {"type": "string", "enum": ["up_to_date", "needs_attention", "archivable", "archived"]},
+                "visibility": {"type": "string", "enum": ["internal", "public"]},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["slug"],
+        },
+    },
+    {
+        "name": "docs_search",
+        "description": "Search wiki docs by title, body, or tag (case-insensitive substring).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 25},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "docs_sync",
+        "description": "Reconcile public wiki docs to Confluence (mirroring the path tree). Dry-run by default; gated by DOCS_SYNC_ENABLED + CONN_CONFLUENCE_ENABLED + WORKFLOW_WRITES_ENABLED. Logs every action to doc_sync_log.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "Optional: sync just one doc. Default: all public docs."},
+            },
+        },
+    },
+    {
+        "name": "docs_agent_run",
+        "description": "Docs agent workflow: reconcile (sync) → triage (flag stale/unreferenced) → suggest (draft improvement proposals for needs_attention docs). Suggestions are human-in-the-loop proposals, never auto-applied.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit_suggestions": {"type": "integer", "minimum": 0, "maximum": 10, "default": 3},
+            },
+        },
+    },
+])
+
 # Stage 9 — append connector tools dynamically after the static list is defined.
 TOOLS.extend(connector_tools())
 
@@ -558,6 +649,119 @@ async def _tool_topology_graph(args: dict[str, Any]) -> dict[str, Any]:
 async def _tool_overview_summary(args: dict[str, Any]) -> dict[str, Any]:
     payload = await build_overview()
     return {"content": [{"type": "text", "text": json.dumps(payload, indent=2)}], "isError": False}
+
+
+# ---------------------------------------------------------------------------
+# Stage 14 — docs wiki tools
+# ---------------------------------------------------------------------------
+
+
+def _docs_envelope(md: str, payload: Any, *, is_error: bool = False) -> dict[str, Any]:
+    return {
+        "content": [
+            {"type": "text", "text": md},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": is_error,
+    }
+
+
+async def _tool_docs_list(args: dict[str, Any]) -> dict[str, Any]:
+    payload = await docsmod.build_tree(
+        tag=args.get("tag"),
+        status=args.get("status"),
+        visibility=args.get("visibility"),
+        include_archived=bool(args.get("include_archived", False)),
+    )
+    lines = [f"# Docs ({payload['count']})", ""]
+    for grp in payload["tree"]:
+        lines.append(f"## {grp['group']}")
+        for d in grp["docs"]:
+            lines.append(f"- **{d.get('title')}** `{d.get('slug')}` — {d.get('derived_status')} · {d.get('visibility')}")
+    if payload["review_queue"]:
+        lines += ["", f"## Review queue ({len(payload['review_queue'])})"]
+        for r in payload["review_queue"]:
+            lines.append(f"- {r['title']} (`{r['slug']}`) → {r['status']}")
+    return _docs_envelope("\n".join(lines), payload)
+
+
+async def _tool_docs_get(args: dict[str, Any]) -> dict[str, Any]:
+    slug = args.get("slug")
+    doc = await docsmod.get_doc(slug)
+    if doc is None:
+        return _docs_envelope(f"No doc with slug `{slug}`.", {"error": "not_found", "slug": slug}, is_error=True)
+    md = f"# {doc.get('title')}\n\n_v{doc.get('version')} · {doc.get('derived_status')} · {doc.get('visibility')}_\n\n{doc.get('body_md','')}"
+    return _docs_envelope(md, doc)
+
+
+async def _tool_docs_upsert(args: dict[str, Any]) -> dict[str, Any]:
+    result = await dbmod.docs_upsert(
+        slug=args["slug"],
+        title=args.get("title"),
+        body_md=args.get("body_md"),
+        tags=args.get("tags"),
+        status=args.get("status"),
+        visibility=args.get("visibility"),
+        owner=args.get("owner"),
+        note=args.get("note", "") or "",
+        source="docs_upsert",
+    )
+    verb = "Created" if result["created"] else "Updated"
+    md = f"{verb} `{result['doc']['slug']}` → v{result['doc']['version']}."
+    return _docs_envelope(md, result)
+
+
+async def _tool_docs_set_flags(args: dict[str, Any]) -> dict[str, Any]:
+    result = await dbmod.docs_set_flags(
+        slug=args["slug"],
+        status=args.get("status"),
+        visibility=args.get("visibility"),
+        tags=args.get("tags"),
+        source="docs_set_flags",
+    )
+    d = result["doc"]
+    md = f"Flags set on `{d['slug']}`: status={d.get('status')} visibility={d.get('visibility')} tags={d.get('tags')}."
+    return _docs_envelope(md, result)
+
+
+async def _tool_docs_search(args: dict[str, Any]) -> dict[str, Any]:
+    rows = await dbmod.docs_search(args["query"], limit=int(args.get("limit", 25) or 25))
+    md = f"# Search: {args['query']} ({len(rows)} hits)\n\n" + "\n".join(
+        f"- **{r.get('title')}** `{r.get('slug')}`" for r in rows
+    )
+    return _docs_envelope(md, {"query": args["query"], "results": rows})
+
+
+async def _tool_docs_sync(args: dict[str, Any]) -> dict[str, Any]:
+    from docs_sync import run_docs_sync
+
+    payload = await run_docs_sync(slug=args.get("slug"))
+    md_lines = [
+        f"# Docs → Confluence sync ({'LIVE' if payload['live'] else 'DRY-RUN'})",
+        f"- space: `{payload['space']}`",
+        f"- considered: {payload['considered']} public doc(s)",
+        "",
+        "## Plan",
+    ]
+    for a in payload["actions"]:
+        md_lines.append(f"- `{a['slug']}` → **{a['action']}** (page `{a.get('confluence_page_id') or '—'}`) {a.get('detail','')}")
+    return _docs_envelope("\n".join(md_lines), payload)
+
+
+async def _tool_docs_agent_run(args: dict[str, Any]) -> dict[str, Any]:
+    from docs_agent import run_docs_agent
+
+    payload = await run_docs_agent(limit_suggestions=int(args.get("limit_suggestions", 3) or 3))
+    md_lines = ["# Docs agent run", ""]
+    md_lines.append(f"**Reconcile:** {payload['reconcile']['considered']} public doc(s), {len(payload['reconcile']['actions'])} action(s).")
+    md_lines.append(f"**Triage:** {len(payload['triage'])} doc(s) flagged.")
+    for t in payload["triage"]:
+        md_lines.append(f"- `{t['slug']}` → {t['suggested_status']} ({t['reason']})")
+    md_lines.append(f"\n**Suggestions (proposals — not applied):** {len(payload['suggestions'])}")
+    for s in payload["suggestions"]:
+        md_lines.append(f"- `{s['slug']}`: {s['rationale']}")
+    md_lines.append("\n_All suggestions are proposals. Approve one via docs_upsert to create an audited revision._")
+    return _docs_envelope("\n".join(md_lines), payload)
 
 
 async def _tool_workflow_run(args: dict[str, Any]) -> dict[str, Any]:
@@ -1123,6 +1327,20 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if name == "ask_data":
         return await _tool_ask_data(args)
+    if name == "docs_list":
+        return await _tool_docs_list(args)
+    if name == "docs_get":
+        return await _tool_docs_get(args)
+    if name == "docs_upsert":
+        return await _tool_docs_upsert(args)
+    if name == "docs_set_flags":
+        return await _tool_docs_set_flags(args)
+    if name == "docs_search":
+        return await _tool_docs_search(args)
+    if name == "docs_sync":
+        return await _tool_docs_sync(args)
+    if name == "docs_agent_run":
+        return await _tool_docs_agent_run(args)
     if name == "workflow_run":
         return await _tool_workflow_run(args)
     if name == "report_pdf":
