@@ -20,6 +20,7 @@ import type {
   Stage,
   SuggestResult,
   TopologyGraph,
+  ArchitectureGraph,
   OverviewResponse,
   WranglerSample,
   JiraIssuesResponse,
@@ -256,6 +257,15 @@ export function useTopology() {
   return useQuery({
     queryKey: ["topology"] as const,
     queryFn: () => api.get<TopologyGraph>("/api/topology"),
+    refetchInterval: 30_000,
+  });
+}
+
+// Stage 18 — architecture graph v2 for the Architecture page.
+export function useArchitecture() {
+  return useQuery({
+    queryKey: ["architecture"] as const,
+    queryFn: () => api.get<ArchitectureGraph>("/api/architecture"),
     refetchInterval: 30_000,
   });
 }

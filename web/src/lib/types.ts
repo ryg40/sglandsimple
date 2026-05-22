@@ -496,3 +496,61 @@ export interface DocsAgentResponse {
     proposals: { slug: string; title: string | null; rationale: string }[];
   } | null;
 }
+
+// Stage 18 — architecture graph v2 (see mcp/architecture.py).
+
+export interface ArchLayer {
+  id: string;
+  label: string;
+  /** "aws_account" | "azure_subscription" | "gcp_project" | "on_prem_zone" | "saas" */
+  kind: string;
+  parent_id: string | null;
+  meta: Record<string, string | number | null>;
+}
+
+export interface ArchNode {
+  id: string;
+  label: string;
+  /** e.g. "ec2_mongodb" | "ec2" | "rds" | "s3" | "saas" | "shield" | "ticket" | "kanban" | "git" | "book" | "cloud" | "database" | "snowflake" | "observability" | "artifact" */
+  kind: string;
+  layer_id: string;
+  status: string;
+  /** Visual column: "sources" | "risk_itsm" | "atlassian" | "implementation" | "warehouse_observability" | "artifacts" */
+  lane: string;
+  meta: Record<string, string | number | null>;
+  concerns: string[];
+}
+
+export interface ArchEdge {
+  from: string;
+  to: string;
+  label: string;
+  /** "REST" | "webhook" | "log shipper" | "MCP tool" | "agent workflow" | "SQL/export" */
+  protocol: string;
+  flow: string | null;
+  planned: boolean;
+  integration: Record<string, string | number | null>;
+}
+
+export interface ArchFlow {
+  id: string;
+  label: string;
+  steps: string[];
+}
+
+export interface ArchConcern {
+  id: string;
+  severity: "critical" | "high" | "medium" | "low";
+  kind: string;
+  title: string;
+  node_id?: string;
+  link?: string;
+}
+
+export interface ArchitectureGraph {
+  layers: ArchLayer[];
+  nodes: ArchNode[];
+  edges: ArchEdge[];
+  flows: ArchFlow[];
+  concerns: ArchConcern[];
+}

@@ -32,6 +32,7 @@ from workflow.graph import run_compliance_workflow
 from report.pdf import generate_pdf_report
 from report.ppt import generate_ppt_report
 from topology import build_topology
+from architecture import build_architecture
 from overview import build_overview
 import docs as docsmod
 from web_research import render_markdown as render_web_research_markdown
@@ -517,6 +518,13 @@ TOOLS.append({
     "inputSchema": {"type": "object", "properties": {}},
 })
 
+# Stage 18 — architecture graph v2 for the Architecture page.
+TOOLS.append({
+    "name": "architecture_graph",
+    "description": "Return the architecture graph v2 (layers, nodes, edges, flows, concerns) for the enterprise topology / data-flow Architecture visualization.",
+    "inputSchema": {"type": "object", "properties": {}},
+})
+
 # Stage 11 — compliance command-center overview roll-up.
 TOOLS.append({
     "name": "overview_summary",
@@ -645,6 +653,11 @@ async def _tool_connector_summary(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _tool_topology_graph(args: dict[str, Any]) -> dict[str, Any]:
     graph = await build_topology()
+    return {"content": [{"type": "text", "text": json.dumps(graph, indent=2)}], "isError": False}
+
+
+async def _tool_architecture_graph(args: dict[str, Any]) -> dict[str, Any]:
+    graph = await build_architecture()
     return {"content": [{"type": "text", "text": json.dumps(graph, indent=2)}], "isError": False}
 
 
@@ -1393,6 +1406,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_connector_summary(args)
     elif name == "topology_graph":
         return await _tool_topology_graph(args)
+    elif name == "architecture_graph":
+        return await _tool_architecture_graph(args)
     elif name == "overview_summary":
         return await _tool_overview_summary(args)
     else:

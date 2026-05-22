@@ -13,6 +13,7 @@ Update this table when you start/finish. One owner per stage.
 | 3 (SSE transport, S3.transport.2/S3.expose.2) | current main-tree agent | main tree | landed; local SSE verified; manual external-client smoke pending |
 | 18 (S18.discovery.1 inventory template), 19 (S19.policy.1 RBAC doc) | docs-wiki agent | `stage-14-docs-wiki` (main tree) | **COMPLETE** — committed `5e7dd06` (doc-only; no code/build touched) |
 | 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user; do not pick up. See IMPLEMENT.md Stage 5 / Out of scope. |
+| 18 (architecture diagram v2: model.1/model.2/api.1/layout.1/visual.1/flow.1/details.1/filter.1) | architecture-v2 orchestrator (main tree) | `stage-14-docs-wiki` (main tree) | **DONE** — integrated build green (py_compile + `npm run build`). New `mcp/architecture.py` (`build_architecture`) + `web/src/components/architecture/*`; additive `mcp/server.py`/`web/main.py`/`queries.ts`/`types.ts`; full rewrite of `web/src/routes/architecture.tsx` (S18-owned). Still open: S18.export.1, S18.docs.1, S18.verify.1 (manual readability screenshot). |
 
 > **⚠️ The two main-tree agents (docs-wiki + stage13-15) are committing into the same branch (`stage-14-docs-wiki`).** stage13-15 works in its own worktree `pi-stage13-15` but its commits land on this branch's history. Both edit `IMPLEMENT.md`. Follow the IMPLEMENT.md protocol below.
 
