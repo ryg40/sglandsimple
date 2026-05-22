@@ -673,7 +673,7 @@ The real internal lookup code should be isolated behind a narrow interface so it
   - Files: `IMPLEMENT.md`, `progress.md` after implementation.
   - Done when: `python3 -m py_compile web/*.py` and `cd web && npm run build` pass; smoke auth passes; manual UI checks confirm nav/action gating for all four groups; no secrets are committed.
   - Depends on: S19.frontend.2, S19.tests.1.
-  - Done (2026-05-22): `python3 -m py_compile web/*.py` and `cd web && npm run build` (tsc -b + vite) both clean. `scripts/smoke_auth.sh` in basic mode: 83 PASS / 0 FAIL / 3 SKIP (skips are non-basic modes — startup env, not per-request). New `/api/auth/diagnostics` verified end-to-end against the rebuilt `web` container: admin (`jordan.reyes`, `canAdminAuth`) → full payload (6 seeded users loaded, group→role map, role→capability matrix, fixture LDAP adapter, recent-deny ring buffer); viewer (`avery.stone`) → 403, and that deny was captured in `recent_denies`. Leak check: no `password`/`pbkdf2`/`hash` substrings in the payload. RBAC gating across all four groups confirmed via the seeded-user capability sets returned by `/api/me` + the route/action guards (`RequireCapability`, `DisabledWithTooltip`). No secrets committed: `perm/auth/` (the only place hashes live) is gitignored. NOTE for operator: verification re-seeded `perm/auth/users.json` with the POC password `verify-poc-pw`; re-run `AUTH_BASIC_SEED_PASSWORD=<your-secret> python3 web/auth_seed.py` (then `docker compose up -d web` with that var exported) to restore your own password.
+  - Done (2026-05-22): `python3 -m py_compile web/*.py` and `cd web && npm run build` (tsc -b + vite) both clean. `scripts/smoke_auth.sh` in basic mode: 83 PASS / 0 FAIL / 3 SKIP (skips are non-basic modes — startup env, not per-request). New `/api/auth/diagnostics` verified end-to-end against the rebuilt `web` container: admin (`jordan.reyes`, `canAdminAuth`) → full payload (6 seeded users loaded, group→role map, role→capability matrix, fixture LDAP adapter, recent-deny ring buffer); viewer (`avery.stone`) → 403, and that deny was captured in `recent_denies`. Leak check: no `password`/`pbkdf2`/`hash` substrings in the payload. RBAC gating across all four groups confirmed via the seeded-user capability sets returned by `/api/me` + the route/action guards (`RequireCapability`, `DisabledWithTooltip`). No secrets committed: `perm/auth/` (the only place hashes live) is gitignored. NOTE for operator: verification re-seeded the gitignored `perm/auth/users.json` with the POC password `changeme-poc`; re-run `AUTH_BASIC_SEED_PASSWORD=<your-secret> python3 web/auth_seed.py` (then `docker compose up -d web` with that var exported) to restore your own password.
 
 ---
 
@@ -824,29 +824,19 @@ Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventin
   - Done: MCP tools `standup_link_context` and `standup_summarize` summarize chat + selected Jira context into takeaways, blockers, follow-ups, Jira proposals, bulk-edit proposals, and cross-service associations with rationale/source IDs. Outputs are normalized to `status="proposed"` and `dry_run=true`; no external writes or Jira staging occur.
   - Depends on: S20.model.1, S20.links.1.
 
-- [ ] **S20.identity.1 — Wire standup chat to S19 auth identity (display name + cross-service user handle)**
-  - Files: `web/standup_ws.py`, `web/main.py`, `web/src/components/standup-chat.tsx`, `web/standup_store.py`.
-  - Problem: standup chat shows "Browser f382" / "Browser a324" as participant names instead of the logged-in user's display name. Two separate gaps:
-    1. **Frontend**: `standup-chat.tsx` hardcodes `authorRef = \`Browser ${clientId.slice(-4)}\`` — it never asks `/api/me` or passes the auth identity when connecting.
-    2. **Backend**: `standup_ws._header_identity()` falls back to raw proxy headers / query-param `?author=` / `"anonymous"`. It never consults the S19 auth system (`auth.resolve_user`), so even if the browser had a valid Basic Auth or SSO session, the websocket handler would ignore it.
-  - Done when:
-    1. Frontend calls `useAuth()` / `useMe()` on mount to get the logged-in user's `display_name` and `email`; sets `authorRef` to `display_name` (falls back to current `Browser {id}` behavior when auth is disabled or no user resolves).
-    2. Frontend sends the resolved identity (display name + email) in the `join` event payload so the server has a trustworthy author.
-    3. Backend websocket connect path resolves the user via `auth.resolve_user(request)` (same S19 identity resolution that `/api/me` uses), falling back to header/query-param only when `auth_mode=disabled` or no user resolves.
-    4. `ClientState` gains an `email` field alongside `author` (display name). Chat messages store both `author` (display name) and `author_email` for cross-service references (MCP tools, Jira staging, audit).
-    5. Presence payloads include `display_name` + `email` so the participant list shows human-readable names.
-    6. Frontend renders the display name in message bubbles and the participant list instead of "Browser xxxx".
-    7. Backwards-compatible: if auth is disabled or no user resolves, gracefully falls back to current behavior (header / query param / "anonymous").
+- [x] **S20.identity.1 — Wire standup chat to S19 auth identity (display name + cross-service user handle)** ✅ DONE
+  - Files: `web/standup_ws.py`, `web/src/components/standup-chat.tsx`, `web/src/routes/standup.tsx`, `web/standup_store.py`.
+  - Done: frontend uses the Stage-19 auth provider to derive display name/email and sends them on websocket join/chat. Backend websocket connect resolves `auth.resolve_user(websocket)` where possible, tracks `ClientState.email`, persists `author_email`, and emits structured presence entries with `display_name` + `email`. Auth-disabled or unresolved sessions keep the previous browser/header/query fallback behavior.
   - Depends on: S20.ws.1, S19.backend.1.
 
-- [ ] **S20.agent.2 — Give agent docs/workflow/template context**
-  - Files: `mcp/standup_agent.py`, Stage-14 docs tools/templates, `docs/standup.md`.
-  - Done when: generated Jira work uses story templates, acceptance-criteria format, labels/tags, priority/story-point estimates, epic/workflow docs, and direct Confluence links when relevant.
+- [x] **S20.agent.2 — Give agent docs/workflow/template context** ✅ DONE
+  - Files: `mcp/standup_agent.py`, Stage-9 workflow Jira template, `docs/standup.md`.
+  - Done: `standup_summarize` now supplies deterministic story-template context to the planner: Jira story shape, acceptance criteria, default standup labels/tags, priority/story-point guidance, selected epic/issue context, and Docs Wiki/Confluence links. `new_jira_work` dry-run payloads are normalized with summary, description, issue type, labels, priority, story points, acceptance criteria, epic link, doc links, related links, and source message IDs when missing.
   - Depends on: S20.agent.1.
 
-- [ ] **S20.proposals.1 — Stage Jira creates/edits as dry-run proposals**
-  - Files: `mcp/standup_agent.py`, `mcp/server.py`, `web/main.py`, existing Jira staging tools.
-  - Done when: proposed new Jira tickets and bulk edits become `standup_proposals` and/or Stage-16 `jira_staged_changes` without live writes; each has validation state, dry-run payload, source messages, and rationale.
+- [x] **S20.proposals.1 — Stage Jira creates/edits as dry-run proposals** ✅ DONE
+  - Files: `web/standup_store.py`, `web/standup_ws.py`, `scripts/smoke_standup_ws.py`, existing Jira staging tools.
+  - Done: websocket `agent.summarize` now calls MCP `standup_summarize`, persists an `agent_run` plus `standup_proposals` with validation state, dry-run payload, source messages, actor, and rationale. `new_jira_work` remains a persisted dry-run standup proposal; `jira_edit` proposals with `issue_key`/`changes` or `edits[]` are staged through Stage-16 `jira_stage_edits` and immediately validated via `jira_validate_staged` without live writes. Unsupported/unavailable agent calls degrade to a persisted dry-run placeholder.
   - Depends on: S20.agent.1.
 
 - [ ] **S20.approval.1 — Add scrum-master/product-owner HITL approval tray**
@@ -854,9 +844,9 @@ Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventin
   - Done when: approvers can edit/approve/reject proposals; non-approvers are read-only; approvals call validate/apply dry-run path, record actor/timestamp, and broadcast updates over websocket.
   - Depends on: S20.proposals.1.
 
-- [ ] **S20.trace.1 — Add expandable tool-call/configuration bubble**
-  - Files: `web/src/routes/standup.tsx`, existing connector/config components.
-  - Done when: Jira Configuration is minimized by default but can expand to show connector health, dry-run/live-write gates, tool calls, proposal generation traces, and cross-service association details.
+- [x] **S20.trace.1 — Add expandable tool-call/configuration bubble** ✅ DONE
+  - Files: `web/src/routes/standup.tsx`, `web/src/components/standup-chat.tsx`, existing connector query hook.
+  - Done: Jira Configuration stays minimized by default and expands into a trace dashboard with connector health, dry-run/live-write gates, websocket state/presence/message counts, proposal/tool trace placeholders, and cross-service association details grouped by detected token/source author.
   - Depends on: S20.ui.1, S20.agent.1.
 
 - [ ] **S20.auth.1 — Apply Stage-19 RBAC to standup route/actions**
@@ -865,8 +855,9 @@ Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventin
   - Depends on: S20.policy.1; integrate fully after Stage 19 backend exists.
 
 - [ ] **S20.verify.1 — Websocket + agent + dry-run smoke**
-  - Files: `scripts/smoke_standup_ws.sh` or `.py`, `scripts/smoke_jira_edit.sh`, `IMPLEMENT.md`.
+  - Files: `scripts/smoke_standup_ws.py`, `scripts/smoke_jira_edit.sh`, `IMPLEMENT.md`.
   - Done when: smoke starts/joins a session, sends messages from two users, triggers agent summary, stages a dry-run Jira proposal, validates approval gating, and confirms no live external write occurs.
+  - Progress: rebuilt-stack websocket smoke passes and verifies two-client join/chat, agent summary trigger, proposed/dry-run proposal shape, validation state, and snapshot persistence. Remaining: approval-gating assertion once S20.approval.1 exists.
   - Depends on: S20.ws.1, S20.agent.1, S20.proposals.1.
 
 - [ ] **S20.verify.2 — UI build and standup screen-share review**

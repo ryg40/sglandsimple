@@ -1,8 +1,8 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–12, 13, 15–17 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 mostly done (export/docs/verify remaining). Stage 19 auth/RBAC ~96% done (admin.1 page remaining, seed hotfix applied). Stage 20 standup initial slice done (6 tasks remaining). Stages 21–22 all TBD. Stage 5 SHELVED.**
-Work branch: `stage-14-docs-wiki`; latest push to `origin/main`: `8ef52e8` (`docs: update COORDINATION.md`).
+**Stages 0–2, 4, 6–12, 13, 15–17 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 mostly done (export/docs/verify remaining). Stage 19 auth/RBAC code complete with Basic-mode integrated verification green. Stage 20 standup substantial slice done (identity/proposals/agent context/trace done; approval/RBAC/full rebuilt-stack verify remaining). Stages 21–22 all TBD. Stage 5 SHELVED.**
+Work branch: `main`; latest observed HEAD before current work: `39816e0` (`docs: add S19.logout.1 task + update progress/coordination for logout feature`).
 
 ## Session 2026-05-22 (pi agent) — S19 auth login hotfix
 
@@ -166,3 +166,32 @@ User reported that login persisted even in a new incognito browser — no way to
 **Verification:**
 - `python3 -m py_compile web/main.py` — passes
 - `cd web && npm run build` — passes (tsc + vite, clean)
+
+## Session 2026-05-22 (S20.agent.2 subagent) — standup agent template/docs context
+- **S20.agent.2 DONE** — `mcp/standup_agent.py` now builds deterministic story template context for `standup_summarize`: Stage-9 Jira story template shape, acceptance-criteria format, default standup labels, priority/story-point guidance, selected epic/issue context, Docs Wiki docs, and Confluence links.
+- New `new_jira_work` proposals remain dry-run/proposed and are normalized with `summary`, `description`, `issue_type`, `acceptance_criteria`, `labels`, `priority`, `story_points`, `epic_link`, `doc_links`, `related_links`, and `source_message_ids` defaults when missing.
+- `docs/standup.md` documents the template/context behavior.
+- Validation: `python3 -m py_compile mcp/standup_agent.py` passed. An optional direct Python import smoke could not run in the host environment because `langchain_openai` is not installed outside the container/venv.
+
+## Session 2026-05-22 (S20.identity.1 subagent) — standup auth identity wiring
+- **S20.identity.1 DONE** — Standup chat now uses Stage-19 `/api/me` identity via `useAuth()` for display name/email, sends `display_name` + `email` on websocket `join` and `chat.message`, and falls back to the existing Browser suffix when no authenticated user is available.
+- Backend websocket identity resolution now calls `auth.resolve_user(websocket)` where possible, tracks `ClientState.email`, keeps legacy header/query/payload fallback for disabled/no-user cases, includes `display_name`/`email` in presence, and persists `author_email` on standup messages.
+- Validation: `python3 -m py_compile web/standup_ws.py web/standup_store.py web/main.py` and `cd web && npm run build` passed.
+
+## Session 2026-05-22 (S20.trace.1 subagent) — standup trace bubble UI
+- **S20.trace.1 UI DONE** — `/standup` Jira Configuration / tool trace stays collapsed by default and expands into dry-run/live-write gates, connector health, websocket/presence/message trace, dry-run agent/tool placeholders, and cross-service association details.
+- `StandupChat` now emits association metadata and trace telemetry to the parent route without backend changes.
+- Validation: `cd web && npm run build` passed (Vite chunk-size warning only).
+
+## Session 2026-05-22 (S20.proposals.1 subagent) — standup proposal persistence + dry-run Jira staging
+- **S20.proposals.1 DONE** — websocket `agent.summarize` now calls MCP `standup_summarize`, persists an `agent_run`, and stores returned proposals as JSON-backed `standup_proposals` with `status=proposed`, `dry_run=true`, `dry_run_payload`, `validation_state`, source message IDs, rationale, actor, and timestamps.
+- `new_jira_work` proposals are retained as dry-run standup proposals pending HITL approval/apply. `jira_edit` proposals with `edits[]` or `issue_key`/`changes` are staged through existing Stage-16 `jira_stage_edits` and immediately validated with `jira_validate_staged`; no `jira_apply_staged` call or live external write occurs.
+- Websocket broadcasts `agent.running`, `agent.summary`, `proposal.created`, and `proposal.updated`; unsupported/unavailable agent calls degrade to a persisted dry-run placeholder instead of losing the request.
+- **S20.verify.1 backend smoke expanded (partial)** — `scripts/smoke_standup_ws.py` now triggers `agent.summarize`, asserts the proposed/dry-run shape including `validation_state`, and verifies proposal persistence through the snapshot endpoint. Full approval/RBAC/live container smoke remains for later.
+- Validation: `python3 -m py_compile web/standup_store.py web/standup_ws.py scripts/smoke_standup_ws.py` passed.
+
+## Session 2026-05-22 (pi orchestrator) — coordination cleanup + integrated verification pass
+- Re-read and updated `COORDINATION.md`; future edits stayed scoped to Stage 19 admin diagnostics and Stage 20 standup sections. No broad staging planned; commit must stage named paths only.
+- **S19.admin.1 DONE** — `/api/auth/diagnostics` is guarded by `canAdminAuth`; `/auth-admin` renders auth mode, group/role/capability mappings, cache status, LDAP adapter status, seeded POC identity hints, and recent denial reasons. Fixed Badge variants to match the project design-system API and updated `web/Dockerfile` so `auth_ldap.py`/`auth_explain.py` are present in the runtime image.
+- Stage 20 docs/checklists reconciled to actual implementation: identity, agent template context, proposal persistence/staging, and trace bubble are complete; approval/RBAC/full rebuilt-stack verification remain open.
+- Validation: `python3 -m py_compile mcp/*.py web/*.py scripts/*.py` passed; `cd web && npm run build` passed after fixing `/auth-admin` badge variants; rebuilt/restarted web with `docker compose up --build -d mcp web`; regenerated POC Basic users with `AUTH_BASIC_SEED_PASSWORD=changeme-poc AUTH_BASIC_USERS_FILE=./perm/auth/users.json python3 web/auth_seed.py`; `bash scripts/smoke_auth.sh` passed (83 pass / 0 fail / 3 skipped mode-specific checks); `scripts/smoke_standup_ws.py` passed; `/api/auth/diagnostics` smoke passed for admin user.
