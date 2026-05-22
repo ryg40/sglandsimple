@@ -8,14 +8,16 @@ Update this table when you start/finish. One owner per stage.
 
 | Stage(s) | Owner | Worktree / branch | Status |
 | --- | --- | --- | --- |
-| 6 followups, 14 (all incl. agent LangGraph apply-gate) | docs-wiki agent | `stage-14-docs-wiki` (main tree) | **COMPLETE** — built green + verified live (mcp/web rebuilt) |
-| 13 (token cleanup), 15 (wrangler/ask_data) | stage13-15 agent | `/opt/stacks/sglandsimple-pi-stage13-15` [`pi-stage13-15`] | in progress |
-| 3 (SSE transport, S3.transport.2/S3.expose.2) | current main-tree agent | main tree | landed; local SSE verified; manual external-client smoke pending |
-| 18 (S18.discovery.1 inventory template), 19 (S19.policy.1 RBAC doc) | docs-wiki agent | `stage-14-docs-wiki` (main tree) | **COMPLETE** — committed `5e7dd06` (doc-only; no code/build touched) |
-| 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user; do not pick up. See IMPLEMENT.md Stage 5 / Out of scope. |
-| 18 (architecture diagram v2: model.1/model.2/api.1/layout.1/visual.1/flow.1/details.1/filter.1) | architecture-v2 orchestrator (main tree) | `stage-14-docs-wiki` (main tree) | **DONE** — integrated build green (py_compile + `npm run build`). New `mcp/architecture.py` (`build_architecture`) + `web/src/components/architecture/*`; additive `mcp/server.py`/`web/main.py`/`queries.ts`/`types.ts`; full rewrite of `web/src/routes/architecture.tsx` (S18-owned). Still open: S18.export.1, S18.docs.1, S18.verify.1 (manual readability screenshot). |
+| 6 followups, 14 (all incl. agent LangGraph apply-gate) | docs-wiki agent | `stage-14-docs-wiki` (main tree) | **COMPLETE** — committed |
+| 13 (token cleanup) | pi agent | main tree | **COMPLETE** — committed `fdd3c02` |
+| 15 (wrangler bulk projection + code view, ask_data deadline) | pi agent | main tree | **COMPLETE** — committed `064af8d` |
+| 3 (SSE transport) | docs-wiki agent | main tree | landed; manual external-client smoke pending |
+| 18 (architecture diagram v2: discovery through filter) | architecture-v2 orchestrator | main tree | **DONE** — Still open: S18.export.1, S18.docs.1, S18.verify.1 |
+| 19 (web auth/RBAC) | Claude agent + pi agent (audit.1 fix) | main tree | **~95% DONE** — committed `98850b3`. Still open: S19.admin.1 (auth diagnostics page) |
+| 20 (standup Jira cockpit) | pi agent | main tree | **vertical slice DONE** — committed `2a3e853`. Still open: S20.agent.2, proposals.1, approval.1, trace.1, auth.1, verify.2 |
+| 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user |
 
-> **⚠️ The two main-tree agents (docs-wiki + stage13-15) are committing into the same branch (`stage-14-docs-wiki`).** stage13-15 works in its own worktree `pi-stage13-15` but its commits land on this branch's history. Both edit `IMPLEMENT.md`. Follow the IMPLEMENT.md protocol below.
+> **Single agent working the main tree.** The parallel agent sessions have completed. All work is committed on `stage-14-docs-wiki`. Follow the IMPLEMENT.md commit protocol below for any new edits.
 
 ## The golden rules
 
