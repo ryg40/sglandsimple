@@ -417,6 +417,29 @@ function FieldSelect({ value, fields, onChange }: { value: string; fields: strin
   );
 }
 
+function addAllProjectFields(existing: EditableStage["projects"], fieldNames: string[]): EditableStage["projects"] {
+  const fields: string[] = [];
+  const seen = new Set<string>();
+  for (const row of existing ?? []) {
+    const field = row.field.trim();
+    if (field && !seen.has(field)) {
+      seen.add(field);
+      fields.push(field);
+    }
+  }
+  for (const field of fieldNames) {
+    if (field && !seen.has(field)) {
+      seen.add(field);
+      fields.push(field);
+    }
+  }
+  return fields.map((field) => ({ field, include: true }));
+}
+
+function excludeAllProjectFields(fieldNames: string[]): EditableStage["projects"] {
+  return fieldNames.filter(Boolean).map((field) => ({ field, include: false }));
+}
+
 function StageCard({
   st, fieldNames, preview, onChange, onRun, onRemove, onDuplicate,
 }: {
@@ -484,16 +507,42 @@ function StageCard({
           </>
         )}
 
-        {st.kind === "project" && (st.projects ?? []).map((c, ci) => (
-          <div key={ci} className="flex items-center gap-2">
-            <FieldSelect value={c.field} fields={fieldNames} onChange={(v) => onChange({ projects: st.projects!.map((x, i) => i === ci ? { ...x, field: v } : x) })} />
-            <select value={c.include ? "1" : "0"} onChange={(e) => onChange({ projects: st.projects!.map((x, i) => i === ci ? { ...x, include: e.target.value === "1" } : x) })} className="rounded-md border border-input bg-card px-2 py-1 text-xs">
-              <option value="1">include</option><option value="0">exclude</option>
-            </select>
-            <button className="text-destructive" onClick={() => onChange({ projects: st.projects!.filter((_, i) => i !== ci) })}>−</button>
-          </div>
-        ))}
-        {st.kind === "project" && <button className="text-xs text-primary" onClick={() => onChange({ projects: [...(st.projects ?? []), { field: "", include: true }] })}>+ field</button>}
+        {st.kind === "project" && (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onChange({ projects: addAllProjectFields(st.projects, fieldNames) })}
+                disabled={fieldNames.length === 0}
+              >
+                Add all fields
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onChange({ projects: excludeAllProjectFields(fieldNames) })}
+                disabled={fieldNames.length === 0}
+              >
+                Exclude all (*:0)
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => onChange({ projects: [] })} disabled={(st.projects ?? []).length === 0}>
+                Clear fields
+              </Button>
+              {fieldNames.length === 0 && <span className="text-[11px] text-muted-foreground">Sample fields are still loading or unavailable.</span>}
+            </div>
+            {(st.projects ?? []).map((c, ci) => (
+              <div key={ci} className="flex items-center gap-2">
+                <FieldSelect value={c.field} fields={fieldNames} onChange={(v) => onChange({ projects: st.projects!.map((x, i) => i === ci ? { ...x, field: v } : x) })} />
+                <select value={c.include ? "1" : "0"} onChange={(e) => onChange({ projects: st.projects!.map((x, i) => i === ci ? { ...x, include: e.target.value === "1" } : x) })} className="rounded-md border border-input bg-card px-2 py-1 text-xs">
+                  <option value="1">include</option><option value="0">exclude</option>
+                </select>
+                <button className="text-destructive" onClick={() => onChange({ projects: st.projects!.filter((_, i) => i !== ci) })}>−</button>
+              </div>
+            ))}
+            <button className="text-xs text-primary" onClick={() => onChange({ projects: [...(st.projects ?? []), { field: "", include: true }] })}>+ field</button>
+          </>
+        )}
 
         {st.kind === "sort" && (st.sorts ?? []).map((c, ci) => (
           <div key={ci} className="flex items-center gap-2">

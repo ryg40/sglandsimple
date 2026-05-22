@@ -23,7 +23,6 @@ import asyncio
 import json
 import os
 import time
-import uuid
 from typing import Any
 
 from langgraph.constants import Send
@@ -31,7 +30,9 @@ from langgraph.graph import END, START, StateGraph
 
 from pydantic import BaseModel
 
+import db as dbmod
 from ask_data_models import AskDataState, DocNote, Evidence, FinalAnswer, QuerySpec
+from llm import structured
 
 
 class _SynthOut(BaseModel):
@@ -40,16 +41,19 @@ class _SynthOut(BaseModel):
 
     answer: str
     evidence: list[Evidence]
-from checkpointer import checkpointer_context
-import db as dbmod
-from llm import structured
 
-ASK_DATA_MAX_DOCS = int(os.environ.get("ASK_DATA_MAX_DOCS", "10"))
+ASK_DATA_MAX_DOCS = int(os.environ.get("ASK_DATA_MAX_DOCS", "4"))
+ASK_DATA_DEADLINE_SECONDS = float(os.environ.get("ASK_DATA_DEADLINE_SECONDS", "240"))
+ASK_DATA_BATCH_NOTES = os.environ.get("ASK_DATA_BATCH_NOTES", "true").lower() in {"1", "true", "yes", "on"}
 # Cap concurrent LLM calls so a parallel fan-out doesn't overrun the
 # upstream's --max-num-seqs budget. Defaults to 2 to match a vLLM
 # configured for a small machine.
 LLM_CONCURRENCY = int(os.environ.get("LLM_CONCURRENCY", "2"))
 _LLM_SEM = asyncio.Semaphore(LLM_CONCURRENCY)
+
+
+class _BatchNotesOut(BaseModel):
+    notes: list[DocNote]
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +210,34 @@ async def interpret_doc(payload: dict[str, Any]) -> dict[str, Any]:
     return {"per_doc_notes": [fixed]}
 
 
+BATCH_NOTES_SYSTEM = """\
+You are a research analyst. Given a question and a small list of database
+rows, write one short note (≤30 words) for each row explaining how it is or
+is not relevant. Do not invent facts beyond the rows. Respond as JSON:
+{"notes":[{"doc_id":"...","note":"..."}]}. doc_id must match each row's _id.
+"""
+
+
+async def interpret_docs_batch(question: str, docs: list[dict[str, Any]]) -> list[DocNote]:
+    """Summarize all selected docs in one LLM call.
+
+    This replaces the previous one-call-per-document hot path for the normal
+    manual runner. The graph nodes remain available, but the API path avoids
+    multiplying slow upstream latency by ASK_DATA_MAX_DOCS.
+    """
+    compact = []
+    for d in docs:
+        compact.append({"_id": str(d.get("_id", "")), "row": d})
+    user = f"Question: {question}\n\nRows:\n{json.dumps(compact, default=str)}"
+    out = await structured(_BatchNotesOut, BATCH_NOTES_SYSTEM, user)
+    by_id = {str(n.doc_id): n.note for n in out.notes}
+    notes: list[DocNote] = []
+    for d in docs:
+        did = str(d.get("_id", ""))
+        notes.append(DocNote(doc_id=did, note=by_id.get(did) or "Row returned by the database query."))
+    return notes
+
+
 # ---------------------------------------------------------------------------
 # synthesize
 # ---------------------------------------------------------------------------
@@ -285,18 +317,118 @@ def build_graph(checkpointer=None):
     return g.compile(checkpointer=checkpointer)
 
 
-async def run_ask_data(question: str) -> AskDataState:
-    """Run the graph end-to-end with a fresh thread id.
+def _remaining(deadline: float) -> float:
+    return max(0.1, deadline - time.monotonic())
 
-    Returns the final state object. If `final` is None, the run failed —
-    `spec_error` carries the diagnostic.
+
+async def _with_budget(coro, deadline: float):
+    return await asyncio.wait_for(coro, timeout=_remaining(deadline))
+
+
+def _quote_from_doc(doc: dict[str, Any]) -> str:
+    for key in ("title", "summary", "description", "name", "status", "priority"):
+        val = doc.get(key)
+        if val not in (None, ""):
+            text = str(val)
+            return text[:220] + ("…" if len(text) > 220 else "")
+    text = json.dumps(doc, default=str, sort_keys=True)
+    return text[:220] + ("…" if len(text) > 220 else "")
+
+
+def _raw_fallback_final(state: AskDataState, reason: str) -> FinalAnswer | None:
+    if state.spec is None or not state.docs:
+        return None
+    evidence: list[Evidence] = []
+    for idx, doc in enumerate(state.docs[: min(len(state.docs), ASK_DATA_MAX_DOCS)], start=1):
+        doc_id = str(doc.get("_id", doc.get("id", idx)))
+        evidence.append(
+            Evidence(
+                index=idx,
+                doc_id=doc_id,
+                collection=state.spec.collection,
+                quote=_quote_from_doc(doc),
+                why="Raw row returned before LLM summarization completed.",
+            )
+        )
+    answer = (
+        f"Ask Data returned raw query results because {reason}. "
+        f"The database query completed and returned {len(state.docs)} row(s); "
+        "showing the available rows as evidence instead of an empty response."
+    )
+    return FinalAnswer(answer=answer, evidence=evidence, query_used=state.spec)
+
+
+async def _run_ask_data_manual(question: str, deadline: float) -> AskDataState:
+    """Run ask_data with explicit checkpoints between expensive LLM calls.
+
+    The compiled graph is still available for development, but this runner is
+    used by the MCP tool so timeout handling can return the latest completed
+    state (especially executed rows) instead of losing everything when the
+    outer request budget expires.
     """
-    async with checkpointer_context() as saver:
-        graph = build_graph(checkpointer=saver)
-        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-        out = await graph.ainvoke({"question": question}, config=config)
-    # `ainvoke` returns a dict-shaped state; coerce back to the model.
-    return AskDataState.model_validate(out)
+    state = AskDataState(question=question)
+    state = state.model_copy(update=await _with_budget(discover_schema(state), deadline))
+
+    while True:
+        state = state.model_copy(update=await _with_budget(plan_query(state), deadline))
+        update = await _with_budget(execute_query(state), deadline)
+        state = state.model_copy(update=update)
+        if state.spec_error and state.retry_count < 2:
+            continue
+        break
+
+    if state.spec_error:
+        return state
+    if not state.docs:
+        return state
+
+    docs = state.docs[:ASK_DATA_MAX_DOCS]
+    try:
+        if ASK_DATA_BATCH_NOTES:
+            notes = await _with_budget(interpret_docs_batch(state.question, docs), deadline)
+        else:
+            note_updates = await _with_budget(
+                asyncio.gather(*(interpret_doc({"doc": d, "question": state.question}) for d in docs)),
+                deadline,
+            )
+            notes = [n for u in note_updates for n in u.get("per_doc_notes", [])]
+        state = state.model_copy(update={"per_doc_notes": notes})
+    except Exception:  # noqa: BLE001 - notes are helpful, not required
+        state = state.model_copy(
+            update={
+                "per_doc_notes": [
+                    DocNote(doc_id=str(d.get("_id", "")), note="Row returned by the database query.")
+                    for d in docs
+                ]
+            }
+        )
+
+    try:
+        state = state.model_copy(update=await _with_budget(synthesize(state), deadline))
+    except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
+        state = state.model_copy(
+            update={
+                "final": _raw_fallback_final(state, "LLM summarization timed out or failed"),
+                "spec_error": f"summarization fallback: {e}",
+            }
+        )
+    return state
+
+
+async def run_ask_data(question: str) -> AskDataState:
+    """Run ask_data within a fixed wall-clock budget.
+
+    Returns the final state object. If the expensive synthesis path times out
+    after rows were fetched, `final` contains a raw-results fallback rather
+    than leaving callers with a silent empty response.
+    """
+    deadline = time.monotonic() + ASK_DATA_DEADLINE_SECONDS
+    try:
+        return await asyncio.wait_for(_run_ask_data_manual(question, deadline), timeout=ASK_DATA_DEADLINE_SECONDS)
+    except asyncio.TimeoutError:
+        state = AskDataState(question=question)
+        state.spec_error = f"ask_data exceeded {ASK_DATA_DEADLINE_SECONDS:.0f}s overall deadline before producing results"
+        return state
 
 
 # ---------------------------------------------------------------------------

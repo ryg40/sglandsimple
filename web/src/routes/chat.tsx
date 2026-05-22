@@ -9,8 +9,11 @@ import type { ChatCompletion, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function reply(data: ChatCompletion): string {
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (content && data.error) return `${content}\n\n---\n\n**error detail:** ${JSON.stringify(data.error)}`;
+  if (content) return content;
   if (data.error) return `**error:** ${JSON.stringify(data.error)}`;
-  return data.choices?.[0]?.message?.content ?? "_(empty reply)_";
+  return "**No response content was returned.** The request completed without an assistant message.";
 }
 
 export default function Chat() {
