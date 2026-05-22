@@ -1,8 +1,21 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–20, and 22 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
-Work branch: `main`; latest observed HEAD before current work: `1ab00d7` (`docs: reconcile S19 and S20 status`).
+**Stages 0–2, 4, 6–20, and 22 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 23 PLANNED (not started). Stage 5 SHELVED.**
+Work branch: `main`; latest observed HEAD before current work: `5032767` (`docs(S19): record finish-up re-verification + branch cleanup`).
+
+## Session 2026-05-22 (pi agent) — Stage 23 PLANNED: Confluence wire-up + cross-system enrichment
+
+Authored the **Stage 23** plan only (no implementation). Stage 23 has two threads: (1) promote the Confluence connector from mock-only to **live-capable** via a `CONFLUENCE_TOKEN` env var, mirroring the proven Stage-16 Jira live-MCP pattern (`mcp/connectors/jira.py`); (2) **cross-system data enrichment** so the POC dashboard looks lively and teachable — denser, internally-consistent seed collections + connector samples whose keys line up to form the full **overlap chain** (`archer finding → Jira epic → commit/PR → ServiceNow change → Snowflake evidence → Confluence page`), plus three process/teaching docs (overlap chain, agentic workflows, MCP-in-this-stack) for coworkers learning deep agents/agentic workflows/MCP.
+
+**Design decisions baked into the plan:**
+- `CONFLUENCE_TOKEN` is the new primary credential (user's wording); it **falls back to the existing `CONFLUENCE_MCP_TOKEN`** — no breaking rename. Live writes stay behind `CONN_CONFLUENCE_ENABLED` + `WORKFLOW_WRITES_ENABLED` + a new `CONFLUENCE_WRITES_ENABLED` guard (mirrors `JIRA_WRITES_ENABLED`). Dry-run by default.
+- Enrichment is **additive only**: more rows with consistent keys, connector `schema:` fields unchanged, so `/overview`, `/architecture`, `/hub` keep rendering with no front-end changes. New `confluence_pages` Mongo collection added to `KNOWN_COLLECTIONS` (read-only traversable by Ask Data/Wrangler); the connector `_sample()` becomes a thin view over that single canonical page set.
+- No orphan keys: every new `epic_key`/`finding_id`/`ticket_ref` must resolve across collections so the chain is traceable end-to-end.
+
+**Tasks added** (`S23.conn.1`–`S23.conn.2`, `S23.data.1`–`S23.data.3`, `S23.docs.1`–`S23.docs.2`, `S23.verify.1`), all `[ ]`. Dependency-ordered; each lists Files / Done-when / Depends-on per house style.
+
+**Docs touched this session (planning only):** `IMPLEMENT.md` (new Stage 23 section + open-stage list bump to include 23), `COORDINATION.md` (owner row: Stage 23 → pi agent, PLANNED), `progress.md` (this entry). **No code, seed, or connector files changed.** Next agent picks up `S23.conn.1` first.
 
 ## Session 2026-05-22 (pi agent) — Stage 19 finish-up: re-verify + branch cleanup
 
