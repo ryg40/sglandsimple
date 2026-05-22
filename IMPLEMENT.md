@@ -70,7 +70,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD), **13** (one cleanup task), **15** (operational fixes), **18** (architecture diagram v2), **19** (web auth/RBAC), **20** (Standup Jira cockpit), **21** (Deep Agent platform). Stages **6** (followups) and **14** (Docs Wiki, incl. the `S14.agent.1` LangGraph apply-gate) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD), **13** (one cleanup task), **18** (architecture diagram v2), **19** (web auth/RBAC), **20** (Standup Jira cockpit), **21** (Deep Agent platform), **22** (UX/chat polish + Wrangler derived fields). Stages **6** (followups), **14** (Docs Wiki, incl. the `S14.agent.1` LangGraph apply-gate), and **15** (operational fixes) are complete but retained here until the next archive pass.
 
 ---
 
@@ -247,9 +247,9 @@ A LangGraph workflow (reuse the Stage-9 orchestrator pattern + checkpointer), ex
 
 Both respect the existing live-rerun/debounce path (`liveRerun(idx)`); a "clear fields" affordance is a nice-to-have.
 
-- [ ] **S15.wrangler.1 — Bulk projection actions on the project stage**
-  - Files: `web/src/routes/wrangler.tsx` (project-stage block + field-chip helpers), the wrangler-stages helper (`compileStage`/`newStage`/`EditableStage` — imported at top of `wrangler.tsx`).
-  - Done when: a `project` stage shows **Add all fields** and **Exclude all (`*:0`)** buttons; "Add all" seeds all sampled fields as includes, "Exclude all" sets all to exclude; both flow through live-rerun and round-trip through save/`compileStage`; no illegal mixed projection (exclude-all is all-`:0`, add-all is all-`:1`).
+- [x] **S15.wrangler.1 — Bulk projection actions on the project stage** ✅ DONE
+  - Files: `web/src/routes/wrangler.tsx` (project-stage block + field-chip helpers).
+  - Done: a `project` stage now shows **Add all fields**, **Exclude all (`*:0`)**, and **Clear fields** actions. Add-all de-dupes sampled/existing fields and normalizes to all includes; exclude-all emits explicit sampled-field excludes; all actions use the existing `onChange` → live-rerun/save/`compileStage` path with no mixed projection.
 
 ### 15b. Wrangler — live MongoDB aggregation pipeline code view
 
@@ -289,9 +289,9 @@ Address (in priority order):
 3. **Graceful failure** — on timeout/partial, return the rows actually fetched (`execute_query` output) with a "summarization timed out, showing raw results" note. Surface a clear error in `chat.tsx` instead of a silent empty bubble.
 4. **Streaming/feedback (optional)** — emit progress so the UI shows it's working.
 
-- [ ] **S15.askdata.1 — Make Ask Data return within budget (no more timeouts)**
-  - Files: `mcp/ask_data.py` (deadline, fan-out tuning, partial-result fallback), `web/main.py` (`/api/ask_data` timeout + error passthrough), `web/src/routes/chat.tsx` (error/empty-state surfacing), env defaults in `.env.example`/compose.
-  - Done when: an Ask Data question over a seeded collection returns a useful answer (or a clear partial/error) within the request budget — never a silent empty response; verified with `scripts/smoke_ask_data.sh`. Capture the root-cause finding (which timeout fired) in the commit/PR.
+- [x] **S15.askdata.1 — Make Ask Data return within budget (no more timeouts)** ✅ DONE
+  - Files: `mcp/ask_data.py`, `web/main.py`, `web/src/routes/chat.tsx`, `.env.example`, `compose.yaml`.
+  - Done: `run_ask_data` now has an explicit overall deadline (`ASK_DATA_DEADLINE_SECONDS`), defaults `ASK_DATA_MAX_DOCS` to 4, batches per-doc notes by default (`ASK_DATA_BATCH_NOTES=true`), and returns raw-result fallback evidence if late-stage summarization times out/fails. `/api/ask_data` now calls the MCP tool directly and returns chat-shaped markdown, avoiding the extra agent final-summary LLM hop; chat UI renders explicit error/empty details. Root cause: slow upstream + serial LLM hops + extra web→agent summary exceeded request budget; compose previously defaulted to 10 docs while `.env.example` said 4. Verified with py_compile, web build, `scripts/smoke_ask_data.sh`.
 
 ---
 
@@ -397,42 +397,42 @@ Because exact infrastructure details will arrive later, provide a durable captur
   - Files: `docs/architecture-inventory-template.md` (new), `IMPLEMENT.md`.
   - Done: template captures environments/accounts (kind, account/subscription/project id, region, owner, classification, criticality), AWS network detail (VPC/subnet/CIDR/security groups/peering), compute & data nodes (hostname/private_ip/instance_type/storage_gb/retention_days/runbook_slug), integrations/edges (protocol/auth_mode/endpoint_ref/frequency/sla/agentic_status), the RISK→artifact flow checklist, and a Known-unknowns table. Field names align with the Stage-18 graph schema's reserved metadata keys; all unknown infra values are `TBD` — no invented IPs/account IDs. Importable into the Stage-14 Docs Wiki via `scripts/import_docs.py`.
 
-- [ ] **S18.model.1 — Define architecture graph v2 schema**
+- [x] **S18.model.1 — Define architecture graph v2 schema** ✅ DONE — `mcp/architecture.py` (new) `build_architecture()` → `{layers,nodes,edges,flows,concerns}`; nested layers via `parent_id`; reserved infra meta keys; matching TS interfaces appended to `types.ts`; unknown infra = `"TBD"`.
   - Files: `mcp/topology.py` or new `mcp/architecture.py`, `web/src/lib/types.ts`.
   - Done when: typed model supports layers/groups, nodes, edges, flows, concerns, environment/network metadata, integration protocol/auth/frequency, current vs planned/agentic status, and runbook/doc links.
   - Depends on: S18.discovery.1.
 
-- [ ] **S18.model.2 — Seed v2 graph with placeholder enterprise topology**
+- [x] **S18.model.2 — Seed v2 graph with placeholder enterprise topology** ✅ DONE — 7 layers (on-prem/AWS prod+VPC/AWS non-prod/Azure/GCP/SaaS), 18 nodes across all 6 lanes incl. EC2 `ec2_mongodb` warehouse, 22 edges encoding `risk_to_artifact` + log-shipper flows, planned/agentic edges marked. All exact infra `"TBD"`.
   - Files: `mcp/architecture.py` or `mcp/topology.py`.
   - Done when: graph includes on-prem, AWS, Azure, GCP, Atlassian, GitHub, ServiceNow/SNOW, Archer/RISK, Snowflake/analytics, EC2 compute, MongoDB NoSQL fork/data warehouse, observability/log-ingest, and artifact generation nodes; unknown exact infra values are represented as `TBD`.
   - Depends on: S18.model.1.
 
-- [ ] **S18.api.1 — Expose architecture graph endpoint/tool**
+- [x] **S18.api.1 — Expose architecture graph endpoint/tool** ✅ DONE — new `architecture_graph` MCP tool (def+handler+dispatch in `mcp/server.py`), `/api/architecture` proxy in `web/main.py`, `useArchitecture()` hook in `queries.ts`. Mirrors Stage-12 topology wiring; py_compile + tsc clean.
   - Files: `mcp/server.py`, `web/main.py`, `web/src/lib/queries.ts`.
   - Done when: either `topology_graph` returns v2-compatible data without breaking existing callers, or a new `architecture_graph` MCP tool + `/api/architecture` proxy + `useArchitectureGraph()` hook are added. Errors are surfaced clearly.
   - Depends on: S18.model.2.
 
-- [ ] **S18.layout.1 — Build environment-aware React Flow layout**
+- [x] **S18.layout.1 — Build environment-aware React Flow layout** ✅ DONE — six labelled vertical lanes (Sources→Artifacts), deterministic column/row positions, per-node layer badge, `fitView`.
   - Files: `web/src/routes/architecture.tsx` (or split components under `web/src/components/architecture/`).
   - Done when: nodes are arranged into visible environment/lane/group boxes (sources, risk/ITSM, Atlassian, implementation, warehouse/observability, artifacts) with deterministic positions and responsive fit; no overlap at common desktop sizes.
   - Depends on: S18.api.1.
 
-- [ ] **S18.visual.1 — Apply modern AWS/network-diagram visual system**
+- [x] **S18.visual.1 — Apply modern AWS/network-diagram visual system** ✅ DONE — lucide icons per kind, cloud-kind colour accents (AWS amber/Azure blue/GCP red/on-prem slate/SaaS violet), solid (current) vs dashed-animated (planned/agentic) vs destructive (concern) edges with protocol labels, legend panel.
   - Files: `web/src/routes/architecture.tsx`, optional architecture components/styles.
   - Done when: environment group headers, iconography, edge styles, badges, legend, and color semantics read as a modern AWS/network diagram while staying on the Fleet-Dispatch design tokens; current vs planned/agentic integrations are visually distinct.
   - Depends on: S18.layout.1.
 
-- [ ] **S18.flow.1 — Add RISK/SNOW → artifact data-flow overlay**
+- [x] **S18.flow.1 — Add RISK/SNOW → artifact data-flow overlay** ✅ DONE — Topology/Data flow/Both segmented control; `risk_to_artifact` highlighted with numbered step badges; protocol labels visible at normal zoom.
   - Files: `web/src/routes/architecture.tsx`, graph data model.
   - Done when: user can toggle Topology/Data flow/Both; numbered flow steps and directional edges show RISK/SNOW → Atlassian → implementation → data storage/observability → artifact generation; protocol labels are visible at normal zoom.
   - Depends on: S18.layout.1.
 
-- [ ] **S18.details.1 — Add stakeholder/engineer modes and details drawer**
+- [x] **S18.details.1 — Add stakeholder/engineer modes and details drawer** ✅ DONE — Stakeholder/Engineer toggle; click-to-open drawer exposing meta + edge integration fields + raw JSON in engineer mode; `"TBD"` rendered as muted "pending" pills; runbook link to `/docs/<runbook_slug>` when set.
   - Files: `web/src/routes/architecture.tsx` or components.
   - Done when: stakeholder mode hides noisy metadata and uses plain-English descriptions; engineer mode exposes account/VPC/IP/hostname/sizing/owner/classification/runbook/raw JSON fields in a drawer; `TBD` values are clearly marked as unknown.
   - Depends on: S18.visual.1.
 
-- [ ] **S18.filter.1 — Add search, filters, and known-unknowns panel**
+- [x] **S18.filter.1 — Add search, filters, and known-unknowns panel** ✅ DONE — free-text search + filters by environment/kind/owner/classification/agentic_status (dims non-matching); Known-unknowns panel listing all `"TBD"` meta fields grouped by node with count badge; concerns list with focus-on-click retained.
   - Files: `web/src/routes/architecture.tsx` or components.
   - Done when: users can filter by environment, service kind, owner, classification, protocol, and current/planned/agentic status; a panel lists missing technical details grouped by owner/environment.
   - Depends on: S18.details.1.
@@ -638,15 +638,17 @@ The real internal lookup code should be isolated behind a narrow interface so it
   - Done when: lookup interface is isolated (`lookup_user`, `lookup_groups`, `check_membership`), fixture/stub tests cover all four placeholder groups, and real internal code can be swapped in without changing route guards.
   - Depends on: S19.backend.1.
 
-- [ ] **S19.agent.1 — Decide skill vs MCP integration vs auth-specialist agent**
+- [x] **S19.agent.1 — Decide skill vs MCP integration vs auth-specialist agent**
   - Files: `IMPLEMENT.md`, `docs/auth-rbac.md`, optional project skill after decision.
   - Done when: decision is recorded: (a) create an auth MCP integration, (b) create a locked-down auth-specialist agent, (c) create a project skill for internal LDAP workflow, or (d) staged combination. Include rationale and privacy boundaries.
   - Depends on: S19.ldap.1.
+  - Done: staged combination chosen — ship `web/auth_explain.py` as a self-contained pure module now; wrap as MCP tool (behind `canAdminAuth`) or auth-specialist agent later. Decision + privacy boundaries recorded in `docs/auth-rbac.md` §Decision (S19.agent.1).
 
-- [ ] **S19.agent.2 — Implement minimal auth explanation surface**
+- [x] **S19.agent.2 — Implement minimal auth explanation surface**
   - Files: chosen in S19.agent.1 (`mcp/auth_directory.py`, auth-agent config, or project skill).
   - Done when: an admin can ask "why does user X have/ lack access to Y?" and receive a minimal, non-sensitive explanation based on group membership and the capability map.
   - Depends on: S19.agent.1.
+  - Done: `web/auth_explain.py` — `explain_access(username, capability_or_route) -> dict` with enforced privacy boundary (8 allowed output keys, no passwords/extra attrs). Route→capability map covers all 34 API endpoints. CLI: `python3 web/auth_explain.py <user> <cap_or_route>`. Verified: admin granted, viewer denied with reason, unknown user → clean not-found, no crash. `py_compile` passes.
 
 - [ ] **S19.tests.1 — Add auth/RBAC smoke tests**
   - Files: `scripts/smoke_auth.sh` (new), optional frontend test notes.
@@ -768,43 +770,43 @@ Reuse existing Stage-16 Jira staging APIs wherever possible rather than inventin
 
 ### Task checklist — Stage 20
 
-- [ ] **S20.policy.1 — Define standup permissions and approval rules**
-  - Files: `IMPLEMENT.md`, `docs/standup.md` (new), Stage-19 auth docs if present.
-  - Done when: session owner, participant, observer, scrum-master/product-owner approval, and admin fallback rules are documented; `STANDUP_DRY_RUN_ONLY` and `JIRA_WRITES_ENABLED` interaction is explicit.
+- [x] **S20.policy.1 — Define standup permissions and approval rules** ✅ DONE
+  - Files: `docs/standup.md`.
+  - Done: documented session owner/scrum-master/product-owner, participant, observer, admin fallback, dry-run-only safety policy, and the `STANDUP_DRY_RUN_ONLY` / `JIRA_WRITES_ENABLED` interaction. Current `/standup` disables Jira apply until approval/RBAC lands.
 
-- [ ] **S20.model.1 — Add standup session/message/proposal data model**
-  - Files: `mcp/db.py` or new `mcp/standup_store.py`, `web/src/lib/types.ts`, optional `mongo-seed/16-standup.js`.
-  - Done when: sessions, messages, agent runs, and proposals have stable IDs, timestamps, actor fields, status enums, source-message references, dry-run payloads, and approval metadata.
+- [x] **S20.model.1 — Add standup session/message/proposal data model** ✅ DONE (web-owned JSON store)
+  - Files: `web/standup_store.py`.
+  - Done: sessions, messages, agent runs, and proposals have stable IDs, timestamps, actor fields, status fields, source-message references, dry-run payloads, and approval metadata. Store path is `STANDUP_STORE_PATH`, `/data/auth/standup_sessions.json` when mounted, or `/tmp/sglandsimple_standup_sessions.json` for local dev.
   - Depends on: S20.policy.1.
 
-- [ ] **S20.ws.1 — Add websocket endpoint and session fanout**
-  - Files: `web/main.py` or `web/standup_ws.py` (new), `scripts/smoke_standup_ws.py`/`.sh` (new).
-  - Done when: multiple clients can join a session, send `chat.message`, receive live fanout, get `session.snapshot` on connect, and reconnect without losing persisted messages.
+- [x] **S20.ws.1 — Add websocket endpoint and session fanout** ✅ DONE
+  - Files: `web/standup_ws.py`, `web/main.py`, `scripts/smoke_standup_ws.py`.
+  - Done: multiple clients can join a session, send `chat.message`, receive live fanout, get `session.snapshot` on connect, and reconnect without losing persisted JSON-store messages. Websocket smoke script added; full live run requires rebuilt web container.
   - Depends on: S20.model.1.
 
-- [ ] **S20.ui.1 — Create `/standup` route shell**
-  - Files: `web/src/routes/standup.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`.
-  - Done when: `/standup` appears in navigation for authorized users and lays out Explorer-dominant main area, chat bubble/panel, agent suggestions, approval tray, and collapsed Jira Configuration bubble.
+- [x] **S20.ui.1 — Create `/standup` route shell** ✅ DONE
+  - Files: `web/src/routes/standup.tsx`, `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`.
+  - Done: `/standup` appears in navigation and lays out Explorer-dominant main area, live/fallback chat panel, agent suggestion previews, safety messaging, and collapsed Jira Configuration/tool-trace bubble.
   - Depends on: S20.policy.1.
 
-- [ ] **S20.explorer.1 — Extract/reuse Jira Explorer as standalone centerpiece**
-  - Files: `web/src/components/jira-editable-grid.tsx`, optional new `web/src/components/jira-explorer/` components, `web/src/routes/standup.tsx`.
-  - Done when: Standup page can render the current Jira Explorer/editable grid independently of Compliance Hub, with sprint/epic filters, selected-row context, bulk edit toolbar, staged badges, validation status, and callbacks for agent context.
+- [x] **S20.explorer.1 — Extract/reuse Jira Explorer as standalone centerpiece** ✅ DONE
+  - Files: `web/src/components/jira-editable-grid.tsx`, `web/src/routes/standup.tsx`.
+  - Done: Standup renders the current Jira editable grid independently of Compliance Hub with the existing bulk edit toolbar, staged badges, and validation status. Added `allowApply` so Standup can disable Apply until approval/RBAC exists while Hub behavior remains unchanged.
   - Depends on: S20.ui.1.
 
-- [ ] **S20.chat.1 — Build live standup chat UI**
-  - Files: `web/src/routes/standup.tsx`, optional `web/src/components/standup-chat.tsx`.
-  - Done when: chat supports live websocket messages, presence, timestamps, author badges, paste/link display, mention highlighting, reconnect state, and a compact bubble mode below/alongside the Explorer.
+- [x] **S20.chat.1 — Build live standup chat UI** ✅ DONE
+  - Files: `web/src/components/standup-chat.tsx`, `web/src/routes/standup.tsx`.
+  - Done: chat supports live websocket messages, presence, timestamps, author badges, paste/link display, mention/Jira-key highlighting, reconnect state, and local fallback alongside the Explorer.
   - Depends on: S20.ws.1, S20.ui.1.
 
-- [ ] **S20.links.1 — Parse links/mentions into service associations**
-  - Files: `web/standup_links.py` or `mcp/standup_agent.py`, frontend display component.
-  - Done when: Jira keys/URLs, Confluence URLs, GitHub PR/commit URLs, ServiceNow/SNOW records, Archer/RISK IDs, Snowflake/Mongo references, and `@mentions` are extracted from chat and attached to messages/proposals.
+- [x] **S20.links.1 — Parse links/mentions into service associations** ✅ DONE
+  - Files: `mcp/standup_agent.py`, `web/standup_store.py`, `web/src/components/standup-chat.tsx`.
+  - Done: Jira keys/URLs, Confluence URLs, GitHub URLs, ServiceNow/SNOW records, Archer references, Snowflake/Mongo references, generic URLs, and `@mentions` are extracted from chat and attached to messages/proposals; frontend displays association tokens.
   - Depends on: S20.chat.1.
 
-- [ ] **S20.agent.1 — Implement standup summarization/proposal agent**
-  - Files: `mcp/standup_agent.py` or `mcp/workflow/standup.py`, `mcp/server.py`, docs templates.
-  - Done when: agent can summarize chat + selected Jira context into takeaways, blockers, follow-ups, meeting suggestions, Jira story/task/bug proposals, bulk-edit proposals, and cross-service associations with rationale and source-message IDs.
+- [x] **S20.agent.1 — Implement standup summarization/proposal agent** ✅ DONE (dry-run helper)
+  - Files: `mcp/standup_agent.py`, `mcp/server.py`.
+  - Done: MCP tools `standup_link_context` and `standup_summarize` summarize chat + selected Jira context into takeaways, blockers, follow-ups, Jira proposals, bulk-edit proposals, and cross-service associations with rationale/source IDs. Outputs are normalized to `status="proposed"` and `dry_run=true`; no external writes or Jira staging occur.
   - Depends on: S20.model.1, S20.links.1.
 
 - [ ] **S20.agent.2 — Give agent docs/workflow/template context**
@@ -1047,6 +1049,55 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
   - Files: deployment docs/scripts.
   - Done when: runtime restart does not lose pending HITL approvals; compose healthchecks pass; chosen deployment blueprint has a clear verification checklist.
   - Depends on: S21.deploy.1, S21.hitl.1.
+
+---
+
+## Stage 22 — UX polish: Dribbble-inspired chat, global assistant, Wrangler derived fields
+
+**Goal:** Bring the app shell and high-use interaction surfaces up to the same visual quality as the LanGarland/Fleet-Dispatch design system. The current chat page is too barren; users should have a compact but accessible assistant available across views, with a full focused chat mode when chat is the primary task.
+
+### 22a. Chat page + universal assistant
+
+Reference design: Dribbble **Barista AI LLM SaaS Dashboard** — https://dribbble.com/shots/26781450-Barista-AI-LLM-SaaS-Dashboard
+
+- Focused `/chat` should become a polished SaaS dashboard/chat experience inspired by the reference: richer hero/header, conversation list or context rail, prompt/action chips, readable message cards, and app-native navy/amber/teal styling.
+- Add a **universal compact chat** at the bottom of the page for all major views unless chat is explicitly the page focus. It should be keyboard-accessible, screen-reader-friendly, and unobtrusive by default.
+- The universal chat should expand into a detailed OpenWebUI/ChatGPT-style panel/drawer while preserving this app's styling and the Dribbble-inspired visual language.
+- Avoid blocking route content, handle mobile/responsive layouts, and preserve existing `useChat` / `useAskData` behaviors unless a better shared hook abstraction is introduced.
+
+### 22b. Wrangler successive-stage derived fields
+
+Wrangler stage editors currently derive selectable fields mostly from the original sample/field summary. This breaks workflows where a prior stage creates derived fields (for example, a `group` stage adds `sum`/`count`, then a later `sort` stage cannot select that derived field).
+
+- Track field names across successive stage previews, including fields introduced by `$group`, accumulator output names, `$project` aliases, and other derived output columns.
+- Later stages should offer derived fields from the latest successful upstream preview, not only the original collection sample.
+- Preserve existing validation and saved pipeline round-tripping; do not allow stale derived fields to silently compile if the upstream stage changes and the field disappears.
+
+### 22c. Brand/banner image update
+
+Update the top-left app banner/logo image to use:
+
+`/opt/stacks/sglandsimple/web/dist/assets/d6057657-40c7-4112-85fa-06322881a692.png`
+
+The image should be sized as a modern banner mark (not tiny, stretched, or pixelated), fit the sidebar/top-left chrome, and include appropriate alt text. If the source image should live under `web/src/assets` instead of committed `dist`, copy it into the source tree and reference it through the Vite asset pipeline.
+
+### Task checklist — Stage 22
+
+- [ ] **S22.chat.1 — Redesign focused `/chat` page from Dribbble reference**
+  - Files: `web/src/routes/chat.tsx`, shared UI components as needed, possibly `web/src/components/*`.
+  - Done when: `/chat` is no longer barren; it has a polished dashboard/chat layout inspired by the Barista AI reference, fits the existing navy/amber/teal design system, supports normal chat + Ask Data, and passes responsive/accessibility basics.
+
+- [ ] **S22.chat.2 — Add universal compact bottom chat across app views**
+  - Files: `web/src/App.tsx`, app shell/sidebar/layout components, `web/src/routes/chat.tsx` or shared chat components/hooks.
+  - Done when: every non-focused major view has a compact bottom assistant entry point; it is keyboard-accessible, does not cover critical controls, expands into a fuller OpenWebUI/ChatGPT-style panel, and is hidden or transformed appropriately on `/chat` where chat is the primary focus.
+
+- [ ] **S22.wrangler.1 — Offer derived fields in successive Wrangler stages**
+  - Files: `web/src/routes/wrangler.tsx`, wrangler stage helper/types if needed, backend only if preview payload needs more metadata.
+  - Done when: fields created by earlier stages (e.g. `$group` accumulator outputs such as `sum`, `count`, aliases from project stages) are available for later stage editors like sort/project; options update after successful upstream previews and stale derived fields are surfaced rather than silently accepted.
+
+- [ ] **S22.brand.1 — Replace top-left banner image and modernize sizing**
+  - Files: app shell/sidebar/logo component and asset location (`web/src/assets` preferred if using Vite-managed assets).
+  - Done when: the top-left banner uses `d6057657-40c7-4112-85fa-06322881a692.png`, is sized/cropped as a modern banner image, includes useful alt text, and builds without relying on an ephemeral `dist`-only asset path.
 
 ---
 
