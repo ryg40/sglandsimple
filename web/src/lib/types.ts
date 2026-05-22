@@ -130,6 +130,58 @@ export interface AuditRecentResponse {
   rows: AuditRow[];
 }
 
+// Stage 11 — Compliance command-center overview
+export type AttentionReason =
+  | "overdue"
+  | "due_soon"
+  | "prioritized"
+  | "high_severity"
+  | "blocked_pr"
+  | "stalled";
+
+export interface AttentionItem {
+  id: string;
+  kind: "finding" | "epic" | "work_item" | "pr";
+  title: string;
+  reason: AttentionReason;
+  severity?: string | null;
+  priority?: string | null;
+  due_date?: string | null;
+  days_until_due?: number | null;
+  link: string;
+}
+
+export interface OverviewConnector {
+  name: string;
+  status: string;
+  enabled: boolean;
+  summary: string;
+  link: string;
+}
+
+export interface OverviewKpis {
+  open_findings: number;
+  active_epics: number;
+  inflight_work_items: number;
+  open_prs: number;
+  connectors_healthy: number;
+  connectors_total: number;
+  attention: number;
+}
+
+export interface OverviewResponse {
+  kpis: OverviewKpis;
+  attention: AttentionItem[];
+  connectors: OverviewConnector[];
+  tables: {
+    findings: Row[];
+    epics: Row[];
+    work_items: Row[];
+    pr_records: Row[];
+  };
+  generated_at: string;
+}
+
 // Stage 9 — Compliance Connector & Workflow types
 export interface ConnectorBubble {
   name: string;

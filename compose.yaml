@@ -56,6 +56,11 @@ services:
       # API when JIRA_WRITES_ENABLED=true; otherwise it returns a dry-run plan.
       JIRA_WRITES_ENABLED: ${JIRA_WRITES_ENABLED:-false}
       JIRA_STAGE_MAX_EDITS: ${JIRA_STAGE_MAX_EDITS:-100}
+      # Stage 11 — compliance command-center attention tunables.
+      OVERVIEW_DUE_SOON_DAYS: ${OVERVIEW_DUE_SOON_DAYS:-14}
+      OVERVIEW_STALE_DAYS: ${OVERVIEW_STALE_DAYS:-7}
+      OVERVIEW_ATTENTION_LIMIT: ${OVERVIEW_ATTENTION_LIMIT:-10}
+      OVERVIEW_TABLE_ROWS: ${OVERVIEW_TABLE_ROWS:-5}
     volumes:
       # Stage 4: filesystem sandbox for deep-agent file & shell tools.
       # Created on the host (`./sandbox/`); owned by uid 1000 inside the

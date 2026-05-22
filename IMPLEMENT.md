@@ -1680,45 +1680,39 @@ Items are ranked: overdue > due-soon > prioritized > high-severity > stalled, wi
 
 # Task checklist — Stage 11
 
-- [ ] **S11.api.1 — `overview_summary` aggregation tool (MCP)**
-  - Files: `mcp/server.py` (register tool), `mcp/` aggregation module (new, e.g. `mcp/overview.py`).
-  - Done when: a single MCP tool returns `{ kpis, attention[], connectors[], tables{} }` computed from existing `mongo_*` reads + the connector registry, with the 11c attention rules applied server-side. No new external calls.
-  - Depends on: S9.model.1, S9.connect (connector registry).
+> **Status: COMPLETE & verified live.** `scripts/smoke_overview.sh` is green against the running stack: `/api/overview` returns all four sections, KPIs `{open_findings:4, active_epics:4, inflight_work_items:4, open_prs:2, connectors_healthy:1/8, attention:10}`, a correctly-ranked 10-item attention list (overdue → due_soon → blocked_pr), and web-proxy parity. `tools/list` shows 32 tools incl. `overview_summary`; the SPA was rebuilt and serves the new Overview.
 
-- [ ] **S11.api.2 — `GET /api/overview` proxy (web)**
+- [x] **S11.api.1 — `overview_summary` aggregation tool (MCP)**
+  - Files: `mcp/overview.py` (new), `mcp/server.py` (import + TOOLS entry + dispatch).
+  - Note: `build_overview()` reads the four compliance collections via the raw motor db (read-only), evaluates the 11c rules per row (keeping each row's highest-ranked reason), ranks `overdue > due_soon > prioritized > high_severity > blocked_pr > stalled`, and rolls up connector health from the registry. Returns `{kpis, attention[], connectors[], tables{}, generated_at}` as one JSON content block. No new external calls.
+
+- [x] **S11.api.2 — `GET /api/overview` proxy (web)**
   - Files: `web/main.py`.
-  - Done when: the route proxies `overview_summary` and returns the payload unchanged; documented in the route list at the top of `main.py`.
-  - Depends on: S11.api.1.
+  - Note: proxies `overview_summary` via `_mcp_tool` + `_extract_json_block`; documented in the route-list docstring.
 
-- [ ] **S11.data.1 — Seed due dates + staleness/check fixtures**
-  - Files: `mongo-seed/04-epics.js`, `05-audit_findings.js`, `06-work_items.js`, `07-pr_records.js`, `12-scale-data.js`.
-  - Done when: findings/epics/work-items carry a realistic spread of `due_date` (some overdue, some due-soon, most future), work-items have varied `updated_at`, and at least one `pr_record` has a failing check — so every 11c rule has data to fire on.
-  - Depends on: none (data only).
+- [x] **S11.data.1 — Seed due dates + staleness/check fixtures**
+  - Files: `mongo-seed/06-work_items.js` (rewritten with 5 real rows: due-soon/overdue/stalled/done spread), `07-pr_records.js` (rewritten with 3 rows incl. a `security-scan: failure` check + a stalled PR), `13-due-dates.js` (new — idempotent `due_date` backfill on `epics`/`audit_findings`).
+  - Note: applied via `scripts/reseed.sh` (Mongo is on a host bind mount, so initdb seeds only run on first init).
 
-- [ ] **S11.web.1 — `useOverview()` query hook**
+- [x] **S11.web.1 — `useOverview()` query hook**
   - Files: `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
-  - Done when: a polled (`OVERVIEW_POLL_MS`) `useOverview()` hook + typed response exist, stale-while-revalidate.
-  - Depends on: S11.api.2.
+  - Note: `useOverview()` polls every 30s with `placeholderData: (prev) => prev` (SWR — never blanks on refetch). Typed `OverviewResponse`/`AttentionItem`/`OverviewConnector`/`OverviewKpis` added.
 
-- [ ] **S11.web.2 — KPI row + connector strip**
+- [x] **S11.web.2 — KPI row + connector strip**
   - Files: `web/src/routes/overview.tsx`.
-  - Done when: the KPI row (reusing `StatCard`) shows the compliance counts + attention count with sub-labels, and a condensed connector-health strip click-throughs to the Hub. Loading/empty/error per region.
-  - Depends on: S11.web.1.
+  - Note: 6 `StatCard`s (open findings, active epics, in-flight work, open PRs, connectors healthy/total, needs-attention) + a pill-style connector-health strip (status-dot colors from theme tokens) that links to `/hub?connector=`. Loading/empty/error per region.
 
-- [ ] **S11.web.3 — Attention panel (points of concern)**
-  - Files: `web/src/routes/overview.tsx`, `web/src/components/` (attention table component).
-  - Done when: the ranked attention list renders with reason chips + due/overdue badges, severity/overdue color cues from theme tokens, an "all clear" empty state, and row click-through. Sits directly under the KPI row, full-width.
-  - Depends on: S11.web.1.
+- [x] **S11.web.3 — Attention panel (points of concern)**
+  - Files: `web/src/routes/overview.tsx`, `web/src/components/attention-panel.tsx` (new).
+  - Note: ranked table with reason `Badge`s (destructive/warning/default by reason), "Xd overdue / Xd to due" badges (overdue in `--destructive`), "Nothing needs attention — all clear" empty state, row click-through. Full-width directly under the KPI row.
 
-- [ ] **S11.web.4 — Multi-table region + retained trend**
+- [x] **S11.web.4 — Multi-table region + retained trend**
   - Files: `web/src/routes/overview.tsx`, `web/src/components/mini-table.tsx` (new).
-  - Done when: a responsive grid of `MiniTable`s (findings/epics/work-items/PRs, capped at `OVERVIEW_TABLE_ROWS`) renders with per-table "view all in Hub" links, and the existing audit trend is retained as a secondary panel below.
-  - Depends on: S11.web.1.
+  - Note: 2×2 responsive grid of `MiniTable`s (findings/epics/work-items/PRs) with per-table "View all in Hub →" links; the audit-log activity trend + recent-activity table retained, demoted to the bottom.
 
-- [ ] **S11.verify.1 — Smoke + intent checks**
+- [x] **S11.verify.1 — Smoke + intent checks**
   - Files: `scripts/smoke_overview.sh` (new).
-  - Done when: the script asserts `/api/overview` returns all four payload sections and that the attention list is non-empty against the seeded data; the 11g intent checks pass by inspection in the running app.
-  - Depends on: S11.api.2, S11.data.1, S11.web.2–4.
+  - Note: green against the running stack — asserts all four payload sections, KPI shape, non-empty ranked attention (10 items: overdue/due_soon/blocked_pr seen), populated tables, and web `/api/overview` parity. `tools/list` shows 32 tools incl. `overview_summary`; SPA rebuilt (`docker compose build mcp web`) and served live.
 
 ---
 

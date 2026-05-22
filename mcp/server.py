@@ -32,6 +32,7 @@ from workflow.graph import run_compliance_workflow
 from report.pdf import generate_pdf_report
 from report.ppt import generate_ppt_report
 from topology import build_topology
+from overview import build_overview
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
 
@@ -515,6 +516,13 @@ TOOLS.append({
     "inputSchema": {"type": "object", "properties": {}},
 })
 
+# Stage 11 — compliance command-center overview roll-up.
+TOOLS.append({
+    "name": "overview_summary",
+    "description": "Return the compliance command-center roll-up: KPIs, the ranked attention list (points of concern), connector health, and recent rows of the key compliance collections.",
+    "inputSchema": {"type": "object", "properties": {}},
+})
+
 # Stage 9 — append connector tools dynamically after the static list is defined.
 TOOLS.extend(connector_tools())
 
@@ -545,6 +553,11 @@ async def _tool_connector_summary(args: dict[str, Any]) -> dict[str, Any]:
 async def _tool_topology_graph(args: dict[str, Any]) -> dict[str, Any]:
     graph = await build_topology()
     return {"content": [{"type": "text", "text": json.dumps(graph, indent=2)}], "isError": False}
+
+
+async def _tool_overview_summary(args: dict[str, Any]) -> dict[str, Any]:
+    payload = await build_overview()
+    return {"content": [{"type": "text", "text": json.dumps(payload, indent=2)}], "isError": False}
 
 
 async def _tool_workflow_run(args: dict[str, Any]) -> dict[str, Any]:
@@ -1139,6 +1152,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_connector_summary(args)
     elif name == "topology_graph":
         return await _tool_topology_graph(args)
+    elif name == "overview_summary":
+        return await _tool_overview_summary(args)
     else:
         # Route to registered connectors dynamically
         for conn in list_connectors():

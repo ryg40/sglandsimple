@@ -26,6 +26,7 @@ API surface (all JSON):
 - GET  /api/connectors         → MCP connector_health + connector_summary (per bubble)
 - GET  /api/connectors/{name}  → MCP connector_health + connector_summary (one)
 - GET  /api/topology           → MCP topology_graph (Architecture page)
+- GET  /api/overview           → MCP overview_summary (compliance command center)
 - GET  /api/jira/issues        → MCP jira_list_issues (sample + staged overlay)
 - POST /api/jira/stage         → MCP jira_stage_edits (HIL drafts)
 - POST /api/jira/validate      → MCP jira_validate_staged
@@ -399,6 +400,16 @@ async def api_get_topology() -> JSONResponse:
         return JSONResponse(_extract_json_block(res))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch topology: {e}")
+
+
+@app.get("/api/overview")
+async def api_get_overview() -> JSONResponse:
+    """Stage 11: compliance command-center roll-up (KPIs, attention, connectors, tables)."""
+    try:
+        res = await _mcp_tool("overview_summary", {})
+        return JSONResponse(_extract_json_block(res))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch overview: {e}")
 
 
 # ---------------------------------------------------------------------------

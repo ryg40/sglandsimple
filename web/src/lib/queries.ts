@@ -20,6 +20,7 @@ import type {
   Stage,
   SuggestResult,
   TopologyGraph,
+  OverviewResponse,
   WranglerSample,
   JiraIssuesResponse,
   JiraStageEdit,
@@ -230,6 +231,16 @@ export function useWorkflowRun() {
   return useMutation({
     mutationFn: (a: { finding_id: string; resume_decision?: string; checkpoint_id?: string }) =>
       api.post<any>("/api/workflow/run", a),
+  });
+}
+
+// Stage 11 — compliance command-center overview (one polled call, SWR).
+export function useOverview() {
+  return useQuery({
+    queryKey: ["overview"] as const,
+    queryFn: () => api.get<OverviewResponse>("/api/overview"),
+    refetchInterval: 30_000,
+    placeholderData: (prev) => prev, // stale-while-revalidate: never blank on refetch
   });
 }
 
