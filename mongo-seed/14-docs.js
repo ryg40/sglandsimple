@@ -78,5 +78,58 @@ seedDoc({
   updated_at: longAgo,
 });
 
+// Stage 23 teaching docs are also stored in the wiki seed so a fresh stack has
+// the training corpus before the optional Markdown importer runs.
+seedDoc({
+  _id: "doc-overlap-chain",
+  slug: "overlap-chain",
+  path: "teaching/overlap-chain",
+  title: "How the overlap chain works",
+  body_md: "# How the overlap chain works\n\nThe POC traceability chain links Archer risk findings to Jira epics/work items, GitHub commits/PRs, ServiceNow changes, Snowflake evidence, and Confluence pages. The shared keys are `finding_id`, `epic_key`, and `ticket_refs`. Example: `finding-smoke-001` → `RDS-LOG-1` → `RDS-LOG-3` → `CHG0042042` → `SFQ-RDS-AUDIT-COVERAGE` → Confluence pages `100401`/`100433`.\n\nSee `docs/overlap-chain.md` in the repo for the full walkthrough.\n",
+  tags: ["stage-23", "training", "overlap-chain", "mcp"],
+  status: "up_to_date",
+  visibility: "public",
+  owner: "platform",
+  version: 1,
+  confluence_page_id: null,
+  last_reviewed_at: now,
+  created_at: now,
+  updated_at: now,
+});
+
+seedDoc({
+  _id: "doc-agentic-workflows",
+  slug: "agentic-workflows",
+  path: "teaching/agentic-workflows",
+  title: "Agentic workflows in this stack",
+  body_md: "# Agentic workflows in this stack\n\nLangGraph workflows live server-side in the MCP service. Key examples are the docs-agent HITL apply gate, standup follow-up proposal flow, compliance workflow orchestrator, Ask Data graph, and the planned Deep Agent platform. Every production mutation stays dry-run/proposed until the relevant HITL gate and write flags allow it.\n\nSee `docs/agentic-workflows.md` for the full guide.\n",
+  tags: ["stage-23", "training", "agentic-workflows", "langgraph"],
+  status: "up_to_date",
+  visibility: "public",
+  owner: "platform",
+  version: 1,
+  confluence_page_id: null,
+  last_reviewed_at: now,
+  created_at: now,
+  updated_at: now,
+});
+
+seedDoc({
+  _id: "doc-mcp-in-this-stack",
+  slug: "mcp-in-this-stack",
+  path: "teaching/mcp-in-this-stack",
+  title: "MCP in this stack",
+  body_md: "# MCP in this stack\n\nThe browser calls web `/api/*` routes; web proxies to MCP JSON-RPC tools; the OpenAI-compatible agent also uses MCP for tool dispatch. Connectors are live-or-mock by flag and token. Confluence is the Stage 23 worked example: set `CONN_CONFLUENCE_ENABLED=true`, `CONFLUENCE_MCP_URL`, and `CONFLUENCE_TOKEN`; live writes additionally require `WORKFLOW_WRITES_ENABLED=true`, `CONFLUENCE_WRITES_ENABLED=true`, and the docs sync gate.\n\nSee `docs/mcp-in-this-stack.md` for the full guide.\n",
+  tags: ["stage-23", "training", "mcp", "confluence"],
+  status: "up_to_date",
+  visibility: "public",
+  owner: "platform",
+  version: 1,
+  confluence_page_id: null,
+  last_reviewed_at: now,
+  created_at: now,
+  updated_at: now,
+});
+
 print("Initialized docs / doc_revisions / doc_sync_log collections (" +
   db.docs.countDocuments({}) + " docs).");

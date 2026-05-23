@@ -5,9 +5,10 @@ Confluence ancestor-page chain. Idempotent: a doc's `confluence_page_id` is
 stored after the first create and updated in place thereafter. `tags[]` map to
 Confluence labels; `title` → page title; `body_md` → page body.
 
-Safety: this only performs live writes when all three gates are on —
-`DOCS_SYNC_ENABLED`, `CONN_CONFLUENCE_ENABLED` (the connector is enabled), and
-`WORKFLOW_WRITES_ENABLED` (the audited write-layer is open). Otherwise it
+Safety: this only performs live writes when all four gates are on —
+`DOCS_SYNC_ENABLED`, `CONN_CONFLUENCE_ENABLED` (the connector is enabled),
+`WORKFLOW_WRITES_ENABLED` (the audited write-layer is open), and
+`CONFLUENCE_WRITES_ENABLED` (the connector-specific write gate). Otherwise it
 produces the would-create/update plan (dry-run) without any outbound call, and
 still records the planned actions to `doc_sync_log`.
 """
@@ -22,14 +23,24 @@ import db as dbmod
 from connectors import get_connector
 
 DOCS_CONFLUENCE_SPACE = os.environ.get("DOCS_CONFLUENCE_SPACE", "COMP")
-DOCS_SYNC_ENABLED = os.environ.get("DOCS_SYNC_ENABLED", "false").lower() == "true"
+
+
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "false").lower() == "true"
 
 
 def _live() -> bool:
-    """All three gates must be on for outbound writes."""
+    """All four gates plus live connector creds must be on for outbound writes."""
     conf = get_connector("confluence")
-    conn_enabled = bool(conf and getattr(conf, "enabled", False))
-    return DOCS_SYNC_ENABLED and conn_enabled and dbmod.WORKFLOW_WRITES_ENABLED
+    return bool(
+        _flag("DOCS_SYNC_ENABLED")
+        and conf
+        and getattr(conf, "enabled", False)
+        and getattr(conf, "mcp_url", "")
+        and getattr(conf, "mcp_token", "")
+        and dbmod.WORKFLOW_WRITES_ENABLED
+        and _flag("CONFLUENCE_WRITES_ENABLED")
+    )
 
 
 def _ancestor_paths(path: str) -> list[str]:

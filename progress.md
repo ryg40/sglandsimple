@@ -1,8 +1,31 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–20, and 22 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 23 PLANNED (not started). Stage 5 SHELVED.**
-Work branch: `main`; latest observed HEAD before current work: `5032767` (`docs(S19): record finish-up re-verification + branch cleanup`).
+**Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
+Work branch: `main`; latest observed HEAD before current work: `d8bd928` (`docs(S20): add task to dedupe optimistic + echoed standup messages`).
+
+## Session 2026-05-23 (pi orchestrator + gpt-5.4 workers) — Stage 23 completion
+
+Executed the full Stage-23 Confluence wire-up + cross-system enrichment stage using isolated gpt-5.4 worker subagents and integrated their diffs in main.
+
+**Completed:**
+- `S23.conn.1/S23.conn.2` — `mcp/connectors/confluence.py` now reads `CONFLUENCE_TOKEN` first (fallback `CONFLUENCE_MCP_TOKEN`), discovers hosted Atlassian MCP tools via `tools/list`, handles SSE-framed JSON-RPC/session ids, reports disabled/degraded/healthy accurately, and only performs live page create/update when `CONN_CONFLUENCE_ENABLED` + `WORKFLOW_WRITES_ENABLED` + `CONFLUENCE_WRITES_ENABLED` are true. `mcp/docs_sync.py` mirrors the same four-gate safety model; dry-run/mock idempotency remains intact.
+- `S23.data.1/S23.data.2` — added `mongo-seed/15-confluence-pages.js`, added `confluence_pages` to the read-only Mongo allowlist, enriched tickets/epics/work_items/due dates across COMP/ARCH/SRE/SEC/DATA, and kept overview attention balanced so overdue/due-soon/blocked signals all appear.
+- `S23.data.3` — enriched GitHub, ServiceNow, Snowflake, Archer, and AWS connector samples with shared `finding_id` / `epic_key` / `ticket_refs` overlap-chain keys while keeping existing schemas stable.
+- `S23.docs.1/S23.docs.2` — added `docs/overlap-chain.md`, `docs/agentic-workflows.md`, and `docs/mcp-in-this-stack.md`; seeded concise public wiki copies in `mongo-seed/14-docs.js`; linked the teaching guides from `/architecture` and `/docs`.
+- `S23.verify.1` — added `scripts/smoke_confluence.sh` for disabled/dry-run Confluence + overlap-chain verification.
+
+**Verification:**
+- `python3 -m py_compile mcp/*.py mcp/connectors/*.py web/*.py scripts/*.py` — clean.
+- `node --check mongo-seed/*.js` — clean.
+- `cd web && npm run build` — clean (pre-existing chunk-size warning only).
+- `docker compose up --build -d mcp web` — rebuilt/restarted live services.
+- `scripts/reseed.sh` — applied new seeds (note: pre-existing `12-scale-data.js` duplicate-employee warning still appears on persistent DB reseeds, but the script continues and Stage-23 seeds apply).
+- `WEB_URL='http://simone.patel%40lanGarland.com:changeme-poc@localhost:5452' scripts/smoke_overview.sh` — green; KPI now shows 5 active epics and attention includes `blocked_pr`.
+- `scripts/smoke_confluence.sh` — green; connector disabled path returns 6 pages, `mongo_query` finds RDS Confluence pages, teaching docs are present in the wiki, and docs sync stays dry-run without all live gates.
+- `WEB_URL='http://simone.patel%40lanGarland.com:changeme-poc@localhost:5452' scripts/smoke_web_spa.sh` — green.
+
+**Live-token note:** hosted Confluence live health/write smoke still requires operator-provided `CONFLUENCE_TOKEN` + `CONFLUENCE_MCP_URL`; no secrets were committed.
 
 ## Session 2026-05-22 (pi agent) — S22 chat layout: flip columns + compact prompt list
 

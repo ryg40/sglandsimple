@@ -26,36 +26,54 @@ class AWSConnector:
         return {"status": "healthy", "url": self.mcp_url}
 
     # Mock cloud inventory spanning multiple services so the Hub pane reads like
-    # an AWS console. One prod RDS row deliberately has audit logging disabled —
-    # the topology surfaces it as a weak-spot.
+    # an AWS console. Rows now carry the same finding/epic/ticket join keys as
+    # the rest of the teaching dataset. One prod RDS row deliberately has audit
+    # logging disabled — the topology still surfaces it as a weak-spot.
     _SAMPLE = [
         {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
          "resource_id": "rds-mysql-prod-01", "service": "RDS", "resource_type": "db.r6g.xlarge",
-         "status": "available", "env": "prod", "audit_logging": "enabled"},
+         "status": "available", "env": "prod", "audit_logging": "enabled",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-2", "RDS-LOG-4"]},
         {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
          "resource_id": "rds-postgres-prod-02", "service": "RDS", "resource_type": "db.r6g.large",
-         "status": "available", "env": "prod", "audit_logging": "disabled"},
+         "status": "available", "env": "prod", "audit_logging": "disabled",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-3"]},
         {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "eu-west-1",
          "resource_id": "rds-mariadb-prod-03", "service": "RDS", "resource_type": "db.r6g.large",
-         "status": "available", "env": "prod", "audit_logging": "enabled"},
+         "status": "available", "env": "prod", "audit_logging": "enabled",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-4"]},
         {"account_id": "771045820013", "account_alias": "compliance-stage", "region": "us-west-2",
          "resource_id": "rds-postgres-stg-01", "service": "RDS", "resource_type": "db.t4g.medium",
-         "status": "available", "env": "staging", "audit_logging": "enabled"},
+         "status": "available", "env": "staging", "audit_logging": "enabled",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-3"]},
         {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
          "resource_id": "audit-logs-archive-prod", "service": "S3", "resource_type": "bucket (object-lock)",
-         "status": "active", "env": "prod", "audit_logging": "enabled"},
+         "status": "active", "env": "prod", "audit_logging": "enabled",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-1", "RDS-LOG-2"]},
         {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
          "resource_id": "compliance-org-trail", "service": "CloudTrail", "resource_type": "multi-region trail",
-         "status": "logging", "env": "prod", "audit_logging": "enabled"},
+         "status": "logging", "env": "prod", "audit_logging": "enabled",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-1"]},
         {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
          "resource_id": "alias/rds-audit-cmk", "service": "KMS", "resource_type": "symmetric CMK",
-         "status": "enabled", "env": "prod", "audit_logging": "n/a"},
+         "status": "enabled", "env": "prod", "audit_logging": "n/a",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-2"]},
         {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
          "resource_id": "alb-compliance-edge", "service": "ELB", "resource_type": "application LB",
-         "status": "active", "env": "prod", "audit_logging": "enabled"},
+         "status": "active", "env": "prod", "audit_logging": "enabled",
+         "finding_id": "finding-stale-certs-02", "epic_key": "ALB-ROT", "ticket_refs": ["ALB-ROT-202", "OPS-CERT-202"]},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
+         "resource_id": "arn:aws:acm:us-east-1:418274916532:certificate/alb-edge-2026-05", "service": "ACM", "resource_type": "public certificate",
+         "status": "issued", "env": "prod", "audit_logging": "enabled",
+         "finding_id": "finding-stale-certs-02", "epic_key": "ALB-ROT", "ticket_refs": ["ALB-ROT-202"]},
+        {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "us-east-1",
+         "resource_id": "codebuild/sec-gates-branch-policy", "service": "CodeBuild", "resource_type": "build project",
+         "status": "active", "env": "prod", "audit_logging": "enabled",
+         "finding_id": "finding-compliance-jira-01", "epic_key": "SEC-SCAN", "ticket_refs": ["SEC-SCAN-101", "SEC-SCAN-104"]},
         {"account_id": "418274916532", "account_alias": "compliance-prod", "region": "global",
          "resource_id": "role/RDSAuditPublisher", "service": "IAM", "resource_type": "service role",
-         "status": "active", "env": "prod", "audit_logging": "n/a"},
+         "status": "active", "env": "prod", "audit_logging": "n/a",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-1"]},
     ]
 
     async def summary(self) -> dict:

@@ -40,6 +40,7 @@ KNOWN_COLLECTIONS = (
     "doc_records",
     "log_samples",
     "workflow_runs",
+    "confluence_pages",
 )
 
 # Stage 9 — workflow collections

@@ -1,4 +1,5 @@
 import { useMemo, useCallback, useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import {
   ReactFlow,
   Background,
@@ -10,7 +11,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  AlertTriangle, RefreshCw, Network, ServerCrash, Download, Copy, Check, ChevronDown,
+  AlertTriangle, RefreshCw, Network, ServerCrash, Download, Copy, Check, ChevronDown, BookText,
 } from "lucide-react";
 import { useArchitecture } from "@/lib/queries";
 import type { ArchitectureGraph, ArchNode, ArchEdge, ArchLayer, ArchConcern } from "@/lib/types";
@@ -61,6 +62,12 @@ const LANE_LABELS: Record<string, string> = {
 const COL_W = 240;
 const ROW_H = 135;
 const Y_OFFSET = 80;
+
+const TEACHING_DOCS = [
+  { slug: "overlap-chain", label: "Overlap chain" },
+  { slug: "agentic-workflows", label: "Agentic workflows" },
+  { slug: "mcp-in-this-stack", label: "MCP in this stack" },
+] as const;
 
 // ---- layout -----------------------------------------------------------------
 
@@ -331,6 +338,19 @@ export default function Architecture() {
           <p className="text-sm text-muted-foreground">
             Enterprise topology, data flows, and integration status across all environments.
           </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Teaching docs:</span>
+            {TEACHING_DOCS.map((doc) => (
+              <Link
+                key={doc.slug}
+                to={`/docs?doc=${doc.slug}`}
+                className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2.5 py-1 font-medium text-foreground transition-colors hover:bg-accent"
+              >
+                <BookText className="size-3.5 text-primary" />
+                {doc.label}
+              </Link>
+            ))}
+          </div>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">

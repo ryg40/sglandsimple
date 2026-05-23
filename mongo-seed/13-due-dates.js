@@ -12,7 +12,8 @@ const epicDue = {
   "epic-rds-001": 6,      // due soon
   "epic-control-01": -5,  // overdue (critical priority)
   "epic-certs-02": 10,    // due soon
-  "epic-access-03": 45    // future
+  "epic-access-03": 45,   // future
+  "epic-data-01": 28      // future Stage-23 data-governance epic
 };
 for (const [id, off] of Object.entries(epicDue)) {
   db.epics.updateOne({ _id: id }, { $set: { due_date: at(off) } });

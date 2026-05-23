@@ -37,9 +37,9 @@ class ServiceNowConnector:
             return {"status": "error", "detail": str(e)}
 
     # GRC queue modeled on the real ServiceNow tables: `incident` and
-    # `change_request`, using canonical field names. `priority` derives from
-    # impact x urgency. The P1 incident and the high-risk/high-impact change
-    # are weak-spots the topology highlights (potential outage / business impact).
+    # `change_request`, using canonical field names. Rows now carry the same
+    # finding/epic/ticket join keys as the other mock systems. The P1 incident
+    # and the high-risk/high-impact change remain topology weak-spots.
     _SAMPLE = [
         {"record_type": "incident", "number": "INC0048213", "sys_id": "9c1f0a2b48213",
          "short_description": "RDS PostgreSQL prod audit pipeline not shipping logs",
@@ -47,6 +47,7 @@ class ServiceNowConnector:
          "impact": "1 - High", "urgency": "1 - High", "priority": "1 - Critical", "state": "In Progress",
          "assignment_group": "Database Reliability", "assigned_to": "Sultan DevOps",
          "cmdb_ci": "rds-postgres-prod-02", "control": "SOX-404-SEC3",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-3"],
          "opened_at": "2026-05-21 06:14", "sla_due": "2026-05-21 10:14", "sla_breach": True},
         {"record_type": "incident", "number": "INC0048190", "sys_id": "a72d5e9c48190",
          "short_description": "CloudTrail digest delivery delayed in eu-west-1",
@@ -54,6 +55,7 @@ class ServiceNowConnector:
          "impact": "2 - Medium", "urgency": "2 - Medium", "priority": "3 - Moderate", "state": "On Hold",
          "assignment_group": "Cloud Platform", "assigned_to": "Sarah SRE",
          "cmdb_ci": "compliance-org-trail", "control": "PCI-DSS-10.5",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-1"],
          "opened_at": "2026-05-20 13:02", "sla_due": "2026-05-22 13:02", "sla_breach": False},
         {"record_type": "incident", "number": "INC0048155", "sys_id": "b03c7f1148155",
          "short_description": "Confluence runbook link rot on SOX-404 page",
@@ -61,19 +63,37 @@ class ServiceNowConnector:
          "impact": "3 - Low", "urgency": "3 - Low", "priority": "5 - Planning", "state": "New",
          "assignment_group": "Compliance Ops", "assigned_to": "Alex SecOps",
          "cmdb_ci": "Compliance-Runbooks", "control": "SOX-404-DOC",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-2"],
          "opened_at": "2026-05-19 09:41", "sla_due": "2026-05-26 09:41", "sla_breach": False},
+        {"record_type": "incident", "number": "INC0048231", "sys_id": "e88f6dc148231",
+         "short_description": "Protected branch policy drift in sec-gates repository",
+         "description": "Required status checks were removed from the main branch policy; PCI branch-control evidence is stale.",
+         "impact": "2 - Medium", "urgency": "1 - High", "priority": "2 - High", "state": "In Progress",
+         "assignment_group": "Security Engineering", "assigned_to": "Alex SecOps",
+         "cmdb_ci": "sec-gates", "control": "PCI-DSS-v4-6.3",
+         "finding_id": "finding-compliance-jira-01", "epic_key": "SEC-SCAN", "ticket_refs": ["SEC-SCAN-101", "SEC-SCAN-104"],
+         "opened_at": "2026-05-22 08:12", "sla_due": "2026-05-23 08:12", "sla_breach": False},
         {"record_type": "change", "number": "CHG0012004", "sys_id": "c41a8b2212004",
          "short_description": "Cut over RDS MySQL prod to audit-enabled parameter group",
          "type": "normal", "risk": "High", "impact": "1 - High", "state": "Scheduled",
          "cab_required": True, "assignment_group": "Database Reliability",
          "cmdb_ci": "rds-mysql-prod-01", "control": "SOX-404-SEC3",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-2", "RDS-LOG-3", "RDS-LOG-4"],
          "start_date": "2026-05-24 02:00", "end_date": "2026-05-24 04:00"},
         {"record_type": "change", "number": "CHG0012011", "sys_id": "d59e3c7712011",
          "short_description": "Rotate ALB TLS certificate (edge)",
          "type": "standard", "risk": "Moderate", "impact": "3 - Low", "state": "Scheduled",
          "cab_required": False, "assignment_group": "Cloud Platform",
          "cmdb_ci": "alb-compliance-edge", "control": "PCI-DSS-4.1",
+         "finding_id": "finding-stale-certs-02", "epic_key": "ALB-ROT", "ticket_refs": ["ALB-ROT-202", "OPS-CERT-202"],
          "start_date": "2026-05-26 23:00", "end_date": "2026-05-26 23:30"},
+        {"record_type": "change", "number": "CHG0012022", "sys_id": "f61aa7ea12022",
+         "short_description": "Enable org-wide push protection on infrastructure repos",
+         "type": "normal", "risk": "High", "impact": "2 - Medium", "state": "Assess",
+         "cab_required": True, "assignment_group": "Security Engineering",
+         "cmdb_ci": "sec-gates", "control": "PCI-DSS-v4-6.3",
+         "finding_id": "finding-compliance-jira-01", "epic_key": "SEC-SCAN", "ticket_refs": ["SEC-SCAN-104"],
+         "start_date": "2026-05-25 18:00", "end_date": "2026-05-25 19:00"},
     ]
 
     def _summary_payload(self, status: str) -> dict:

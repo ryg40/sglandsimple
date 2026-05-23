@@ -35,10 +35,24 @@ class SnowflakeConnector:
             return {"status": "error", "detail": str(e)}
 
     _SAMPLE = [
-        {"timestamp": "2026-05-21 02:11:03", "user_name": "admin_db", "event_type": "login", "sql_text": "—", "status": "SUCCESS"},
-        {"timestamp": "2026-05-21 02:11:05", "user_name": "app_user_stage", "event_type": "query", "sql_text": "SELECT * FROM employees", "status": "SUCCESS"},
-        {"timestamp": "2026-05-21 02:11:48", "user_name": "rds_audit_publisher", "event_type": "query", "sql_text": "SELECT COUNT(*) FROM audit_events WHERE ts > ...", "status": "SUCCESS"},
-        {"timestamp": "2026-05-21 02:12:12", "user_name": "unknown_net", "event_type": "sql-error", "sql_text": "INSERT INTO admin_tbl VALUES (...)", "status": "DENIED"},
+        {"timestamp": "2026-05-21 02:11:03", "user_name": "admin_db", "event_type": "login",
+         "sql_text": "—", "status": "SUCCESS",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-1"]},
+        {"timestamp": "2026-05-21 02:11:05", "user_name": "rds_audit_publisher", "event_type": "query",
+         "sql_text": "SELECT COUNT(*) FROM audit_events WHERE finding_id = 'finding-smoke-001'", "status": "SUCCESS",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-2"]},
+        {"timestamp": "2026-05-21 02:11:41", "user_name": "evidence_exporter", "event_type": "query",
+         "sql_text": "SELECT * FROM confluence_evidence_links WHERE ticket_ref IN ('RDS-LOG-1','RDS-LOG-2')", "status": "SUCCESS",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-1", "RDS-LOG-2"]},
+        {"timestamp": "2026-05-21 02:11:48", "user_name": "branch_scan_bot", "event_type": "query",
+         "sql_text": "SELECT repo, failing_checks FROM branch_gate_findings WHERE finding_id = 'finding-compliance-jira-01'", "status": "SUCCESS",
+         "finding_id": "finding-compliance-jira-01", "epic_key": "SEC-SCAN", "ticket_refs": ["SEC-SCAN-101", "SEC-SCAN-104"]},
+        {"timestamp": "2026-05-21 02:12:04", "user_name": "cert_rotation_auditor", "event_type": "query",
+         "sql_text": "SELECT cert_arn, expires_at FROM alb_cert_inventory WHERE finding_id = 'finding-stale-certs-02'", "status": "SUCCESS",
+         "finding_id": "finding-stale-certs-02", "epic_key": "ALB-ROT", "ticket_refs": ["ALB-ROT-202", "OPS-CERT-202"]},
+        {"timestamp": "2026-05-21 02:12:12", "user_name": "unknown_net", "event_type": "sql-error",
+         "sql_text": "INSERT INTO evidence_export_control VALUES ('finding-smoke-001', 'override')", "status": "DENIED",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-4"]},
     ]
 
     def _summary_payload(self, status: str, rows: int) -> dict:

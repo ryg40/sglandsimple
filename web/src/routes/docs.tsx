@@ -65,6 +65,24 @@ const VISIBILITY_ICON: Record<DocVisibility, typeof Globe> = {
   internal: Lock,
 };
 
+const TEACHING_DOCS = [
+  {
+    slug: "overlap-chain",
+    title: "Overlap chain",
+    description: "Follow one compliance finding across Mongo, GitHub, and Confluence joins.",
+  },
+  {
+    slug: "agentic-workflows",
+    title: "Agentic workflows",
+    description: "See where the server-side graphs live and which collections they touch.",
+  },
+  {
+    slug: "mcp-in-this-stack",
+    title: "MCP in this stack",
+    description: "Learn the transport, tool bus, and Confluence live-enable path.",
+  },
+] as const;
+
 function StatusBadge({ status }: { status: DocStatus }) {
   return (
     <Badge variant={STATUS_VARIANT[status] ?? "default"}>
@@ -169,6 +187,38 @@ function ReviewQueue({ items, onSelect }: { items: DocReviewItem[]; onSelect: (s
             <StatusBadge status={item.status as DocStatus} />
           </button>
         ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TeachingDocsCard({ onSelect }: { onSelect: (slug: string) => void }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Teaching guides</CardTitle>
+        <CardDescription className="text-xs">
+          Draft Stage 23 docs that explain the traceability chain, workflow model, and MCP surface.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {TEACHING_DOCS.map((doc) => (
+          <button
+            key={doc.slug}
+            onClick={() => onSelect(doc.slug)}
+            className="flex w-full items-start gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-left transition-colors hover:bg-muted/60"
+          >
+            <BookText className="mt-0.5 size-4 shrink-0 text-primary" />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{doc.title}</span>
+              <span className="block text-xs text-muted-foreground">{doc.description}</span>
+            </span>
+            <ChevronRight className="ml-auto mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          </button>
+        ))}
+        <p className="text-[11px] text-muted-foreground">
+          Fresh stacks seed these guides into the wiki; `scripts/import_docs.py` can refresh them from Markdown.
+        </p>
       </CardContent>
     </Card>
   );
@@ -559,6 +609,16 @@ export default function DocsWiki() {
     doc.refetch();
   }, [doc]);
 
+  const selectDoc = useCallback((slug: string) => {
+    setSelectedSlug(slug);
+    setEditing(false);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("doc", slug);
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, []);
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Left nav */}
@@ -611,7 +671,7 @@ export default function DocsWiki() {
                 <button
                   key={r.slug}
                   onClick={() => {
-                    setSelectedSlug(r.slug);
+                    selectDoc(r.slug);
                     setSearchQuery("");
                   }}
                   className="flex w-full flex-col rounded-md px-2 py-2 text-left hover:bg-sidebar-accent/50"
@@ -628,10 +688,7 @@ export default function DocsWiki() {
           <NavTree
             groups={tree.data?.tree ?? []}
             selected={selectedSlug}
-            onSelect={(slug) => {
-              setSelectedSlug(slug);
-              setEditing(false);
-            }}
+            onSelect={selectDoc}
           />
         )}
 
@@ -662,14 +719,13 @@ export default function DocsWiki() {
           {/* Agent panel (toggleable) */}
           {showAgent && <AgentPanel />}
 
+          {!isSearching && <TeachingDocsCard onSelect={selectDoc} />}
+
           {/* Review queue */}
           {!isSearching && (tree.data?.review_queue.length ?? 0) > 0 && (
             <ReviewQueue
               items={tree.data!.review_queue}
-              onSelect={(slug) => {
-                setSelectedSlug(slug);
-                setEditing(false);
-              }}
+              onSelect={selectDoc}
             />
           )}
 

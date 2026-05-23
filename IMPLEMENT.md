@@ -67,12 +67,13 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 | **17** | Builder model → APEX + per-role max_tokens | Builder on `Qwen3.6-35B-A3B-APEX-MTP-I-Balanced` w/ 60k budget; `llm_max_tokens(role)`; agent omits empty `tools` field; `UPSTREAM_MAX_TOKENS`/`BUILDER_MAX_TOKENS`. |
 | **13** | Fleet-Dispatch design system | Navy/amber/teal tokens + Roboto + token-migration cleanup (6 components). Complete — eligible for archive. |
 | **15** | Operational fixes & UX quick-wins | ask_data deadline + batch notes + wrangler bulk projection + pipeline code view. Complete — eligible for archive. |
+| **23** | Confluence wire-up + cross-system enrichment | Live-capable Confluence MCP connector (dry-run/live-gated), `confluence_pages` canonical seed, cross-system overlap-chain enrichment, teaching docs, and smoke verification. Complete — eligible for archive. |
 
 ---
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), and **21** (Deep Agent platform — all TBD). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **20** (Standup Jira cockpit), and **22** (UX/chat polish + Wrangler derived fields) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), and **21** (Deep Agent platform — all TBD). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **20** (Standup Jira cockpit), **22** (UX/chat polish + Wrangler derived fields), and **23** (Confluence wire-up + cross-system enrichment) are complete but retained here until the next archive pass.
 
 ---
 
@@ -1156,6 +1157,8 @@ Follow-up polish on the focused `/chat` workspace after the column flip (S22.cha
 
 ## Stage 23 — Confluence wire-up + cross-system data enrichment ("make the POC lively")
 
+> **Status: COMPLETE & verified live (disabled/dry-run mode).** All `S23.*` tasks are done. Live Confluence tenant smoke still requires operator-supplied `CONFLUENCE_TOKEN`/`CONFLUENCE_MCP_URL`, but the connector gates and dry-run docs-sync path are implemented and verified.
+
 **Goal:** Turn the dashboard from a thin demo into a *teachable, lively enterprise simulation*. Two threads:
 
 1. **Confluence wire-up** via a single `CONFLUENCE_TOKEN` env var, following the same live-MCP pattern Stage 16 established for Jira (`mcp/connectors/jira.py`). When the token is present the connector talks to the hosted Atlassian MCP server; otherwise it stays on its (now-expanded) in-memory sample.
@@ -1220,42 +1223,42 @@ Author docs that explain the *processes the dashboard executes*, aimed at cowork
 
 ### Task checklist — Stage 23
 
-- [ ] **S23.conn.1 — Promote Confluence connector to live-capable (Stage-16 parity)**
+- [x] **S23.conn.1 — Promote Confluence connector to live-capable (Stage-16 parity)**
   - Files: `mcp/connectors/confluence.py`, `.env.example`, `.env.local`.
   - Done when: connector reads `CONFLUENCE_TOKEN` (fallback `CONFLUENCE_MCP_TOKEN`) + `CONFLUENCE_MCP_URL`; drives the hosted Atlassian MCP over SSE-framed JSON-RPC with session handling when `CONN_CONFLUENCE_ENABLED=true` + creds present; `tools/list`-based tool-name discovery with a candidate list; `health()` reports healthy/degraded/disabled correctly; disabled/dry-run path never raises and still mints deterministic mock page ids; `python3 -m py_compile mcp/connectors/confluence.py` clean.
   - Depends on: nothing (mirrors `mcp/connectors/jira.py`).
 
-- [ ] **S23.conn.2 — Live writes behind explicit gates**
+- [x] **S23.conn.2 — Live writes behind explicit gates**
   - Files: `mcp/connectors/confluence.py`, `mcp/docs_sync.py`.
   - Done when: live `confluence_create_page`/`confluence_update_page` fire only when `CONN_CONFLUENCE_ENABLED` + `WORKFLOW_WRITES_ENABLED` + `CONFLUENCE_WRITES_ENABLED`; otherwise a dry-run plan is returned and logged to `doc_sync_log`; Stage-14 docs-sync idempotency (store `confluence_page_id`, update next time) still works against the mock.
   - Depends on: S23.conn.1.
 
-- [ ] **S23.data.1 — `confluence_pages` collection + canonical page set**
+- [x] **S23.data.1 — `confluence_pages` collection + canonical page set**
   - Files: `mongo-seed/15-confluence-pages.js` (new), `mcp/db.py` (`KNOWN_COLLECTIONS`), `mcp/connectors/confluence.py`.
   - Done when: a `confluence_pages` seed defines multi-page spaces (`COMP`/`ARCH`/`SRE`/`SEC`/`DATA`), each page's `matched_on` references real `epics`/`audit_findings`/`work_items` keys; `confluence_pages` is added to `KNOWN_COLLECTIONS` (read-only traversable by Ask Data/Wrangler); the connector `_sample()` reads from the same canonical set (no divergent copies).
   - Depends on: S23.conn.1.
 
-- [ ] **S23.data.2 — Jira/Mongo enrichment (more tickets, consistent keys, lit-up attention)**
+- [x] **S23.data.2 — Jira/Mongo enrichment (more tickets, consistent keys, lit-up attention)**
   - Files: `mongo-seed/12-scale-data.js` (or a new `16-enrichment.js`), `mongo-seed/02-tickets.js`, `mongo-seed/04-epics.js`, `mongo-seed/06-work_items.js`, `mongo-seed/13-due-dates.js`.
   - Done when: more epics/stories/sub-tasks across 5 program areas with spread statuses + realistic due dates; `/overview` attention rules (overdue/due-soon/blocked) actually populate; no orphan keys (every `epic_key`/`ticket_ref`/`finding_id` resolves).
   - Depends on: nothing (additive seed rows).
 
-- [ ] **S23.data.3 — Connector-sample enrichment with cross-system overlap**
+- [x] **S23.data.3 — Connector-sample enrichment with cross-system overlap**
   - Files: `mcp/connectors/{github,servicenow,snowflake,archer,aws}.py`.
   - Done when: each connector's sample gains rows referencing the same `epic_key`/`finding_id`/`ticket_refs` as the Jira/Confluence/Mongo data, forming the full chain `archer finding → epic → commit/PR → servicenow change → snowflake evidence → confluence page`; schemas (`schema:` field) unchanged so `/overview`,`/architecture`,`/hub` render unchanged; checks-state mix retained for topology signal; `python3 -m py_compile` clean on each.
   - Depends on: S23.data.1, S23.data.2.
 
-- [ ] **S23.docs.1 — Process documentation: overlap chain + agentic workflows + MCP**
+- [x] **S23.docs.1 — Process documentation: overlap chain + agentic workflows + MCP**
   - Files: `docs/overlap-chain.md` (new), `docs/agentic-workflows.md` (new), `docs/mcp-in-this-stack.md` (new), `mongo-seed/14-docs.js` (or `scripts/import_docs.py`).
   - Done when: three teaching docs exist under `docs/` and are imported into the in-app `docs` wiki collection; each names the exact collection/connector + join key for every hop; the MCP doc uses the Confluence live-enable as its worked example; docs are tagged `public` where appropriate so dry-run sync mirrors them.
   - Depends on: S23.data.1, S23.data.3 (so docs reference the real keys).
 
-- [ ] **S23.docs.2 — Cross-link teaching docs from Architecture + Docs surfaces**
+- [x] **S23.docs.2 — Cross-link teaching docs from Architecture + Docs surfaces**
   - Files: `web/src/routes/architecture.tsx`, `web/src/routes/docs.tsx` (or shared nav/data only — additive).
   - Done when: `/architecture` and `/docs` link to the new teaching docs; no regression to existing routes; `cd web && npm run build` clean.
   - Depends on: S23.docs.1.
 
-- [ ] **S23.verify.1 — End-to-end verification (disabled + live-gated)**
+- [x] **S23.verify.1 — End-to-end verification (disabled + live-gated)**
   - Files: `scripts/` (extend an existing smoke or add `scripts/smoke_confluence.sh`), `progress.md`.
   - Done when: with Confluence disabled, `/overview` + `/architecture` + Ask Data over `confluence_pages` render and the connector reports `disabled` without raising; the overlap chain is traceable by querying one `epic_key` across `audit_findings`/`epics`/`work_items`/`pr_records`/`confluence_pages` + connector samples and getting consistent hits; with `CONN_CONFLUENCE_ENABLED` + creds (operator-supplied), `health()` reports `healthy` and a dry-run page plan is produced; results logged in `progress.md`. `python3 -m py_compile mcp/*.py mcp/connectors/*.py` + `cd web && npm run build` clean.
   - Depends on: S23.conn.2, S23.data.3, S23.docs.2.
@@ -1421,7 +1424,9 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `JIRA_MCP_TOKEN` | — | no | 9 | Auth for Jira MCP |
 | `CONN_CONFLUENCE_ENABLED` | `false` | no | 9 | Enable Confluence MCP connector |
 | `CONFLUENCE_MCP_URL` | — | no | 9 | Upstream Confluence MCP server URL |
-| `CONFLUENCE_MCP_TOKEN` | — | no | 9 |  |
+| `CONFLUENCE_TOKEN` | — | no | 23 | Primary Confluence/Atlassian MCP bearer token; falls back to `CONFLUENCE_MCP_TOKEN` |
+| `CONFLUENCE_MCP_TOKEN` | — | no | 9 | Legacy/fallback Confluence MCP bearer token |
+| `CONFLUENCE_WRITES_ENABLED` | `false` | no | 23 | Extra live Confluence write gate; also requires connector + workflow/docs gates |
 | `CONN_GITHUB_ENABLED` | `false` | no | 9 | Enable GitHub MCP connector |
 | `GITHUB_MCP_URL` | — | no | 9 | Upstream GitHub MCP server URL |
 | `GITHUB_MCP_TOKEN` | — | no | 9 |  |
