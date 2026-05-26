@@ -15,6 +15,8 @@ Started Stage 21 implementation on a new branch. **S21.upgrade.1 DONE.**
 
 Branch `stage-21-langchain-upgrade`; not yet merged to main. Next: `S21.profile.1`.
 
+**Stage-24 validation against the architecture change (same session, user request):** reviewed all six S24 tasks against the deepagents adoption + LangChain 1.x upgrade. Finding: the epics-read tasks (S24.api.1/epics.1/verify.1) are unaffected (plain `epics` reads + UI; no langchain imports). The one intersection is the templates prompt library — under deepagents the `atlassian_agent` generates the same Jira/Confluence artifacts these prompts describe, and agents load prompts as context packs (`S21.context.1`). Resolution (no tasks added/removed): the Stage-24 `standup_templates` backend store is now the **shared source of truth** consumed by both the panel preview and the Stage-21 agent context packs; added a convergence constraint to `S24.templates.api.1` (keep it a plain data store, don't duplicate into agent code), a bidirectional note on `S21.context.1`, an architecture note in §24b/§24c, and a validation banner atop Stage 24. The LangChain bump itself doesn't touch Stage 24.
+
 ## Session 2026-05-26 (pi agent) — S21 design revised to deepagents SDK + roster + contributor guide
 
 Revisited S21.arch.1 against the LangChain `deepagents` overview (fetched the overview + subagents pages) and our current deps. User decisions: **adopt `deepagents`** as the runtime, and **one agent per external system** (read/write gated per-tool via `interrupt_on` + `write_policy`, not separate reader/writer agents).
