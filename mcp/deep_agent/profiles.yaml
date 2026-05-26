@@ -1,0 +1,168 @@
+# Deep Agent platform — agent profiles (Stage 21, S21.profile.1).
+#
+# One profile per external system. Each compiles into a `deepagents` subagent:
+#   tools        <- resolved MCP callables for allowed_tools
+#   interrupt_on <- {t: True for t in write_tools}      (per-tool HITL)
+#   model        <- model override (smallest viable tier)
+#   system_prompt <- prompt + the agent's context pack (S21.context.1)
+# Agents whose `graph:` is set compile to a CompiledSubAgent wrapping an
+# existing LangGraph (e.g. ask_data, docs_agent) instead of a prompt agent.
+#
+# write_policy: read_only | dry_run_only | write_capable
+# required_capability: a Stage-19 capability (web/auth.py Capability.*) or null.
+# model "" means "inherit the orchestrator/default model".
+#
+# Adding a new environment (WAF/Splunk/Datadog) = add a row here + wire its MCP
+# read tools. No change to other agents or the orchestrator. See
+# docs/deep_agent_platform.md §14.
+
+orchestrator:
+  description: >
+    Thin router. Reads the goal and delegates to exactly one system agent via
+    the built-in `task` tool. Holds no system tools of its own.
+  model: ""            # small router model; inherits default unless overridden
+  allowed_tools: []    # task + write_todos are injected by the runtime, not here
+  write_tools: []
+  write_policy: read_only
+  required_capability: null
+  context_packs: []
+  budget_tokens: 20000
+  max_steps: 8
+
+agents:
+  - name: atlassian_agent
+    description: >
+      Jira issue triage + staged edits and Confluence doc reads/updates. Use for
+      creating dry-run stories, bulk-edit proposals, sprint/standup follow-ups,
+      and reading/updating Confluence pages.
+    model: ""
+    allowed_tools:
+      - jira_get_epic
+      - jira_list_issues
+      - jira_search_issues
+      - jira_stage_edits
+      - jira_validate_staged
+      - jira_revert_staged
+      - jira_apply_staged
+      - confluence_search_pages
+      - confluence_update_page
+      - docs_search
+    write_tools:
+      - jira_apply_staged
+      - confluence_update_page
+    write_policy: dry_run_only
+    required_capability: canApplyJira
+    context_packs: [jira_story_template, standup_labels]
+    budget_tokens: 60000
+    max_steps: 20
+
+  - name: mongo_agent
+    description: >
+      Answer read-only questions over the Mongo evidence store. Wraps the
+      ask_data LangGraph; cannot write.
+    graph: ask_data
+    model: ""
+    allowed_tools: []          # graph-backed; tools live inside the graph
+    write_tools: []
+    write_policy: read_only
+    required_capability: null
+    context_packs: []
+    budget_tokens: 40000
+    max_steps: 12
+
+  - name: github_agent
+    description: >
+      GitHub code-review context (repos/PRs/checks) and deploy/branch actions.
+      Reads are free; branch/PR creation pauses for approval.
+    model: ""
+    allowed_tools:
+      - github_search_repos
+      - github_list_checks
+      - github_open_pr
+      - github_create_branch
+    write_tools:
+      - github_open_pr
+      - github_create_branch
+    write_policy: dry_run_only
+    required_capability: canRunWorkflow
+    context_packs: []
+    budget_tokens: 40000
+    max_steps: 15
+
+  - name: servicenow_agent
+    description: >
+      Read ServiceNow findings/change requests; stage record writes (HITL).
+    model: ""
+    allowed_tools:
+      - servicenow_search_findings
+      - servicenow_get_change_request
+    write_tools: []            # writer tool added when the connector exposes one
+    write_policy: read_only
+    required_capability: null
+    context_packs: []
+    budget_tokens: 30000
+    max_steps: 12
+
+  - name: aws_agent
+    description: >
+      Describe/read the live AWS environment via the AWS connector. No mutation.
+    model: ""
+    allowed_tools:
+      - aws_list_rds_instances
+      - aws_describe_instance
+    write_tools: []
+    write_policy: read_only
+    required_capability: null
+    context_packs: []
+    budget_tokens: 30000
+    max_steps: 12
+
+  - name: audit_agent
+    description: >
+      Assemble audit evidence and generate report artifacts from cross-system
+      reads. Only Archer updates write (HITL).
+    model: ""
+    allowed_tools:
+      - archer_search_findings
+      - servicenow_search_findings
+      - snowflake_query
+      - mongo_query
+      - docs_search
+      - report_pdf
+      - report_ppt
+    write_tools: []            # archer_update added when the connector exposes it
+    write_policy: dry_run_only
+    required_capability: canUpdateArcher
+    context_packs: []
+    budget_tokens: 60000
+    max_steps: 20
+
+  - name: docs_agent
+    description: >
+      Docs Wiki + Confluence lifecycle: reconcile public docs, draft revisions,
+      suggest stale-doc updates. Wraps the Stage-14 docs agent (HITL apply gate).
+    graph: docs_agent
+    model: ""
+    allowed_tools: []
+    write_tools: []            # the wrapped graph owns its own apply gate
+    write_policy: dry_run_only
+    required_capability: canManageDocs
+    context_packs: []
+    budget_tokens: 50000
+    max_steps: 15
+
+  - name: standup_agent
+    description: >
+      Turn standup chat + selected Jira context into dry-run follow-up proposals.
+      Reuses the Stage-20 standup summarizer.
+    model: ""
+    allowed_tools:
+      - standup_summarize
+      - standup_link_context
+      - docs_search
+    write_tools: []
+    write_policy: dry_run_only
+    required_capability: canApproveStandupActions
+    context_packs: [jira_story_template, standup_labels]
+    budget_tokens: 50000
+    max_steps: 15
