@@ -36,6 +36,7 @@ from architecture import build_architecture
 from overview import build_overview
 import docs as docsmod
 import standup_agent as standupmod
+import standup_templates as standuptemplatesmod
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
 
@@ -575,6 +576,11 @@ TOOLS.extend([
             "required": ["messages"],
         },
     },
+    {
+        "name": "standup_templates",
+        "description": "List backend-owned Standup Jira/Confluence prompt templates shared by the Templates panel and Deep Agent context packs. Read-only.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ])
 
 # Stage 14 — docs wiki CRUD/search/sync/agent tools.
@@ -672,6 +678,74 @@ TOOLS.extend([
 # Stage 9 — append connector tools dynamically after the static list is defined.
 TOOLS.extend(connector_tools())
 
+# Stage 21 — Deep Agent platform runtime API.
+TOOLS.extend([
+    {
+        "name": "agent_profiles_list",
+        "description": "List Deep Agent platform agents: scopes, write policy, required capability, allowed/write tools.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "agent_run_start",
+        "description": (
+            "Start a Deep Agent run. Routes the goal to one system agent (or the "
+            "named `agent`) and runs to the first HITL pause or completion. "
+            "Dry-run by default."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "goal": {"type": "string", "description": "What to accomplish."},
+                "agent": {"type": "string", "description": "Optional agent name; omit to let the orchestrator route."},
+                "context_refs": {"type": "array", "items": {"type": "string"}, "default": []},
+                "mode": {"type": "string", "enum": ["dry_run", "live"], "default": "dry_run"},
+                "actor": {"type": "string", "description": "Caller identity for audit.", "default": ""},
+            },
+            "required": ["goal"],
+        },
+    },
+    {
+        "name": "agent_run_status",
+        "description": "Inspect a Deep Agent run: status, result text, pending approval, artifacts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"run_id": {"type": "string"}},
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "agent_run_resume",
+        "description": "Resume a waiting_approval run with approve / reject / edited payload.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string"},
+                "decision": {"description": "true/'approve', false/'reject', or an edited payload object."},
+                "actor": {"type": "string", "default": ""},
+            },
+            "required": ["run_id", "decision"],
+        },
+    },
+    {
+        "name": "agent_run_cancel",
+        "description": "Cancel a Deep Agent run and persist a terminal state.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"run_id": {"type": "string"}},
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "agent_run_artifacts",
+        "description": "Fetch generated artifacts (proposals/reports/docs/patches) for a run.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"run_id": {"type": "string"}},
+            "required": ["run_id"],
+        },
+    },
+])
+
 
 # ---------------------------------------------------------------------------
 # Connector tools (proxied through registry)
@@ -759,6 +833,17 @@ async def _tool_standup_summarize(args: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         return _standup_envelope({"error": f"{type(e).__name__}: {e}"}, is_error=True)
     return _standup_envelope(payload)
+
+
+async def _tool_standup_templates(args: dict[str, Any]) -> dict[str, Any]:
+    payload = standuptemplatesmod.payload()
+    return {
+        "content": [
+            {"type": "text", "text": standuptemplatesmod.render_markdown(payload)},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": not payload.get("enabled", False),
+    }
 
 
 async def _tool_docs_list(args: dict[str, Any]) -> dict[str, Any]:
@@ -1240,6 +1325,89 @@ async def _tool_deep_agent(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Stage 21 — Deep Agent platform runtime tools
+# ---------------------------------------------------------------------------
+
+
+def _agent_envelope(payload: dict[str, Any], md: str, is_error: bool = False) -> dict[str, Any]:
+    return {
+        "content": [
+            {"type": "text", "text": md},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": is_error,
+    }
+
+
+async def _tool_agent_profiles_list(args: dict[str, Any]) -> dict[str, Any]:
+    from deep_agent.runtime import agent_profiles_list
+
+    profiles = agent_profiles_list()
+    lines = ["# Deep Agent profiles", ""]
+    for p in profiles:
+        wp = p["write_policy"]
+        cap = p["required_capability"] or "—"
+        lines.append(f"- **{p['name']}** ({wp}, cap: {cap}) — {p['description']}")
+    return _agent_envelope({"agents": profiles}, "\n".join(lines))
+
+
+async def _tool_agent_run_start(args: dict[str, Any]) -> dict[str, Any]:
+    from deep_agent.runtime import AgentRunStartRequest, agent_run_start
+
+    try:
+        req = AgentRunStartRequest(
+            goal=args.get("goal", ""),
+            agent=args.get("agent") or None,
+            context_refs=args.get("context_refs", []) or [],
+            mode=args.get("mode", "dry_run"),
+            actor=args.get("actor") or None,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _agent_envelope({"error": str(e)}, f"[agent_run_start] invalid request: {e}", True)
+    rec = await agent_run_start(req)
+    md = f"# Agent run `{rec.run_id}` · **{rec.status}**\n\n{rec.result_text[:1200]}"
+    if rec.approval:
+        md += f"\n\n_Paused for approval (tool: {rec.approval.tool or '—'}). Resume with agent_run_resume._"
+    return _agent_envelope(rec.model_dump(), md, rec.status == "error")
+
+
+async def _tool_agent_run_status(args: dict[str, Any]) -> dict[str, Any]:
+    from deep_agent.runtime import agent_run_status
+
+    rec = await agent_run_status(args.get("run_id", ""))
+    if rec is None:
+        return _agent_envelope({"error": "not found"}, "[agent_run_status] run not found", True)
+    return _agent_envelope(rec.model_dump(), f"# Agent run `{rec.run_id}` · **{rec.status}**")
+
+
+async def _tool_agent_run_resume(args: dict[str, Any]) -> dict[str, Any]:
+    from deep_agent.runtime import agent_run_resume
+
+    try:
+        rec = await agent_run_resume(args.get("run_id", ""), args.get("decision"), actor=args.get("actor") or None)
+    except ValueError as e:
+        return _agent_envelope({"error": str(e)}, f"[agent_run_resume] {e}", True)
+    return _agent_envelope(rec.model_dump(), f"# Agent run `{rec.run_id}` · **{rec.status}**")
+
+
+async def _tool_agent_run_cancel(args: dict[str, Any]) -> dict[str, Any]:
+    from deep_agent.runtime import agent_run_cancel
+
+    try:
+        rec = await agent_run_cancel(args.get("run_id", ""))
+    except ValueError as e:
+        return _agent_envelope({"error": str(e)}, f"[agent_run_cancel] {e}", True)
+    return _agent_envelope(rec.model_dump(), f"# Agent run `{rec.run_id}` · **{rec.status}**")
+
+
+async def _tool_agent_run_artifacts(args: dict[str, Any]) -> dict[str, Any]:
+    from deep_agent.runtime import agent_run_artifacts
+
+    arts = await agent_run_artifacts(args.get("run_id", ""))
+    return _agent_envelope({"artifacts": arts}, f"# Artifacts ({len(arts)})")
+
+
+# ---------------------------------------------------------------------------
 # Stage 6 — sheet tools (write surface + NL editor)
 # ---------------------------------------------------------------------------
 
@@ -1452,6 +1620,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_standup_link_context(args)
     if name == "standup_summarize":
         return await _tool_standup_summarize(args)
+    if name == "standup_templates":
+        return await _tool_standup_templates(args)
     if name == "docs_list":
         return await _tool_docs_list(args)
     if name == "docs_get":
@@ -1478,6 +1648,18 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_run_plan(args)
     if name == "deep_agent":
         return await _tool_deep_agent(args)
+    if name == "agent_profiles_list":
+        return await _tool_agent_profiles_list(args)
+    if name == "agent_run_start":
+        return await _tool_agent_run_start(args)
+    if name == "agent_run_status":
+        return await _tool_agent_run_status(args)
+    if name == "agent_run_resume":
+        return await _tool_agent_run_resume(args)
+    if name == "agent_run_cancel":
+        return await _tool_agent_run_cancel(args)
+    if name == "agent_run_artifacts":
+        return await _tool_agent_run_artifacts(args)
     if name == "sheet_apply_nl":
         return await _tool_sheet_apply_nl(args)
     if name == "wrangler_suggest":

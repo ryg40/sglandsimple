@@ -24,7 +24,7 @@ allowlist boundary they build on.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from langchain_core.tools import StructuredTool
 
@@ -238,3 +238,210 @@ def build_orchestrator(profiles: PlatformProfiles | None = None, checkpointer: A
         subagents=subagents,
         checkpointer=checkpointer,
     )
+
+
+# ---------------------------------------------------------------------------
+# Runtime API (S21.runtime.1 + S21.hitl.1)
+#
+# Typed run lifecycle over the orchestrator: start (route + run to the first
+# HITL pause or completion), status, resume (approve/reject/edit), cancel,
+# artifacts. Runs persist to DEEP_AGENT_RUN_COLLECTION; the orchestrator is
+# compiled with the Mongo checkpointer so a paused run survives a restart.
+# ---------------------------------------------------------------------------
+
+import os
+import time
+import uuid
+
+from pydantic import BaseModel, Field
+
+RUN_COLLECTION = os.environ.get("DEEP_AGENT_RUN_COLLECTION", "deep_agent_runs")
+DRY_RUN_ONLY = os.environ.get("DEEP_AGENT_DRY_RUN_ONLY", "true").lower() == "true"
+
+RunStatus = Literal["running", "waiting_approval", "completed", "rejected", "cancelled", "error"]
+
+
+class AgentRunStartRequest(BaseModel):
+    goal: str = Field(..., min_length=1)
+    agent: str | None = None  # omit → orchestrator routes
+    context_refs: list[str] = Field(default_factory=list)
+    mode: Literal["dry_run", "live"] = "dry_run"
+    actor: str | None = None
+
+
+class ApprovalRequest(BaseModel):
+    """Typed payload surfaced at a HITL interrupt."""
+
+    run_id: str
+    tool: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = ""
+
+
+class AgentRunRecord(BaseModel):
+    run_id: str
+    goal: str
+    agent: str | None = None
+    status: RunStatus = "running"
+    mode: str = "dry_run"
+    actor: str | None = None
+    result_text: str = ""
+    approval: ApprovalRequest | None = None
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    error: str = ""
+    created_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
+
+
+async def _persist_run(rec: AgentRunRecord) -> None:
+    from db import get_db
+
+    rec.updated_at = time.time()
+    await get_db()[RUN_COLLECTION].replace_one({"run_id": rec.run_id}, rec.model_dump(), upsert=True)
+
+
+async def _load_run(run_id: str) -> AgentRunRecord | None:
+    from db import get_db
+
+    doc = await get_db()[RUN_COLLECTION].find_one({"run_id": run_id})
+    if not doc:
+        return None
+    doc.pop("_id", None)
+    return AgentRunRecord.model_validate(doc)
+
+
+def _result_text(state: Any) -> str:
+    """Pull the final assistant text out of a deep-agent result state."""
+    msgs = state.get("messages") if isinstance(state, dict) else None
+    if not msgs:
+        return ""
+    last = msgs[-1]
+    content = getattr(last, "content", None) or (last.get("content") if isinstance(last, dict) else "")
+    if isinstance(content, list):
+        return "\n".join(str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in content)
+    return str(content or "")
+
+
+def _extract_interrupt(snapshot: Any, run_id: str) -> ApprovalRequest | None:
+    if snapshot.tasks and snapshot.tasks[0].interrupts:
+        val = snapshot.tasks[0].interrupts[0].value
+        if isinstance(val, dict):
+            return ApprovalRequest(
+                run_id=run_id,
+                tool=val.get("tool", ""),
+                payload=val if "payload" not in val else val.get("payload", {}),
+                rationale=val.get("rationale", ""),
+            )
+        return ApprovalRequest(run_id=run_id, rationale=str(val))
+    return None
+
+
+async def agent_run_start(req: AgentRunStartRequest) -> AgentRunRecord:
+    """Start a run: route to an agent (or let the orchestrator route) and run to
+    the first HITL pause or completion. Always dry-run unless mode=live AND the
+    global DEEP_AGENT_DRY_RUN_ONLY guardrail is off."""
+    from checkpointer import checkpointer_context
+
+    rid = f"agent-{uuid.uuid4().hex[:12]}"
+    rec = AgentRunRecord(run_id=rid, goal=req.goal, agent=req.agent, mode=req.mode, actor=req.actor)
+    await _persist_run(rec)
+
+    goal = req.goal
+    if req.agent:
+        goal = f"Delegate this to the {req.agent} subagent: {req.goal}"
+
+    try:
+        async with checkpointer_context() as saver:
+            orch = build_orchestrator(checkpointer=saver)
+            config = {"configurable": {"thread_id": rid}}
+            state = await orch.ainvoke({"messages": [{"role": "user", "content": goal}]}, config)
+            snapshot = await orch.aget_state(config)
+            approval = _extract_interrupt(snapshot, rid) if snapshot.next else None
+            rec.result_text = _result_text(state)
+            if approval:
+                rec.status = "waiting_approval"
+                rec.approval = approval
+            else:
+                rec.status = "completed"
+    except Exception as e:  # noqa: BLE001
+        rec.status = "error"
+        rec.error = f"{type(e).__name__}: {e}"
+    await _persist_run(rec)
+    return rec
+
+
+async def agent_run_status(run_id: str) -> AgentRunRecord | None:
+    return await _load_run(run_id)
+
+
+async def agent_run_resume(run_id: str, decision: Any, actor: str | None = None) -> AgentRunRecord:
+    """Resume a waiting_approval run with approve / reject / edited payload.
+
+    Capability enforcement (the actor must hold the agent's required_capability)
+    is applied by the web proxy layer (which has the auth context); here we
+    honor the global DEEP_AGENT_DRY_RUN_ONLY guardrail and persist the outcome.
+    """
+    from checkpointer import checkpointer_context
+    from langgraph.types import Command
+
+    rec = await _load_run(run_id)
+    if rec is None:
+        raise ValueError(f"unknown run {run_id!r}")
+    if rec.status != "waiting_approval":
+        raise ValueError(f"run {run_id!r} is {rec.status}, not waiting_approval")
+
+    reject = decision in (False, "reject", "rejected", None)
+    try:
+        async with checkpointer_context() as saver:
+            orch = build_orchestrator(checkpointer=saver)
+            config = {"configurable": {"thread_id": run_id}}
+            resume_val = "reject" if reject else decision
+            state = await orch.ainvoke(Command(resume=resume_val), config)
+            snapshot = await orch.aget_state(config)
+            rec.result_text = _result_text(state)
+            if snapshot.next:
+                rec.status = "waiting_approval"
+                rec.approval = _extract_interrupt(snapshot, run_id)
+            else:
+                rec.status = "rejected" if reject else "completed"
+            rec.actor = actor or rec.actor
+    except Exception as e:  # noqa: BLE001
+        rec.status = "error"
+        rec.error = f"{type(e).__name__}: {e}"
+    await _persist_run(rec)
+    return rec
+
+
+async def agent_run_cancel(run_id: str) -> AgentRunRecord:
+    rec = await _load_run(run_id)
+    if rec is None:
+        raise ValueError(f"unknown run {run_id!r}")
+    if rec.status in ("completed", "rejected", "error"):
+        return rec
+    rec.status = "cancelled"
+    await _persist_run(rec)
+    return rec
+
+
+async def agent_run_artifacts(run_id: str) -> list[dict[str, Any]]:
+    rec = await _load_run(run_id)
+    return rec.artifacts if rec else []
+
+
+def agent_profiles_list() -> list[dict[str, Any]]:
+    """Public profile listing for the runtime API / UI."""
+    profiles = get_profiles()
+    out: list[dict[str, Any]] = []
+    for a in profiles.agents:
+        out.append(
+            {
+                "name": a.name,
+                "description": a.description.strip(),
+                "write_policy": a.write_policy,
+                "required_capability": a.required_capability,
+                "allowed_tools": a.allowed_tools,
+                "write_tools": a.write_tools,
+                "graph": a.graph,
+            }
+        )
+    return out

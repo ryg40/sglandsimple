@@ -18,7 +18,7 @@ Update this table when you start/finish. One owner per stage.
 | 22 (UX/chat polish + Wrangler derived fields) | pi orchestrator | main tree | **COMPLETE** — chat, global assistant, Wrangler derived fields, banner |
 | 23 (Confluence wire-up + cross-system enrichment + teaching docs) | pi orchestrator + gpt-5.4 workers | main tree + isolated subagent worktrees | **COMPLETE** — Confluence live gate, overlap data, teaching docs, smoke verified |
 | 24 (standup Epics + Templates reference rail) | pi agent | main tree | **PLANNED** — tasks added to IMPLEMENT.md; no code yet |
-| 21 (Deep Agent platform) | pi agent | main tree | **IN PROGRESS** — S21.arch.1 + S21.upgrade.1 **merged to main** (`6c8b9d7`): LangChain 1.x + deepagents, checkpointer fix, opt-in `sandbox` service; all existing graph smokes green; stack healthy on main. Next: S21.profile.1. |
+| 21 (Deep Agent platform) | pi agent | main tree | **IN PROGRESS** — DONE & on main: arch.1, upgrade.1 (LangChain 1.x), profile.1 (`profiles.yaml`+loader), context.1, orch.1 (`build_orchestrator`+allowlist). **runtime.1 PARTIAL** — 6 `agent_*` MCP tools live (`agent_profiles_list` verified; runs persist to Mongo) but `agent_run_start` hangs at `running` (orchestrator→`ask_data` CompiledSubAgent input contract + request timeout; needs background exec) and web `/api/agents/*` proxies not added. Next: finish runtime.1, then hitl.1. |
 | 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user |
 
 > **Single agent working the main tree.** The parallel agent sessions have completed. All work is committed on `stage-14-docs-wiki`. Follow the IMPLEMENT.md commit protocol below for any new edits.

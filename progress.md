@@ -1,12 +1,41 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 25 standup production approvals PLANNED. Stage 5 SHELVED.**
-Work branch: `main`; latest observed HEAD before current work: `d8bd928` (`docs(S20): add task to dedupe optimistic + echoed standup messages`).
+**Stages 0–2, 4, 6–20, 22, 23, and 24 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 25 standup production approvals PLANNED. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
+Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
+
+## Session 2026-05-26 (pi agent, yolo) — S21.runtime.1 PARTIAL + handoff
+
+**S21.runtime.1 PARTIAL (MCP side landed).** Added the 6 `agent_*` MCP tools (defs + registration in `TOOLS` + dispatch in `_dispatch_tool`) and the typed runtime in `mcp/deep_agent/runtime.py` (`AgentRunStartRequest`/`ApprovalRequest`/`AgentRunRecord`; `agent_run_start/status/resume/cancel/artifacts`; `agent_profiles_list`). Runs persist to `DEEP_AGENT_RUN_COLLECTION`; orchestrator compiled with the Mongo checkpointer for resume/restart. **Verified live:** `tools/list` shows all six; `agent_profiles_list` returns the 8-agent roster; `agent_run_start` **creates a Mongo run record**.
+
+**Known issue / handoff:** `agent_run_start` left the run at `status="running"` — the orchestrator `ainvoke` didn't finish in the request window. Likely (a) real LLM routing + subagent hops exceed the curl/proxy timeout, and/or (b) the `CompiledSubAgent`-wrapped `ask_data` graph expects `{question}`/`AskDataState`, not the deep-agent `{messages:[...]}` input — the orchestrator→subagent input contract needs validating (that's `S21.agent.1`). Fix forward: give `agent_run_start` a deadline + background execution (return run_id immediately, poll status), and reconcile the graph-subagent input shape. **Web `/api/agents/*` proxies + TS types/hooks not yet added.** Marked S21.runtime.1 `[~]` in IMPLEMENT.md with full remaining notes.
+
+**Stage-21 status:** arch.1, upgrade.1, profile.1, context.1, orch.1 DONE & on main; runtime.1 PARTIAL; hitl.1/agent.1/extend.1/ui.1/deploy.*/bedrock/obs/security/verify.* OPEN. Next picker: finish runtime.1 (input contract + background exec + web proxies), then hitl.1.
 
 ## Session 2026-05-26 (pi agent, yolo) — S21.orch.1 (orchestrator + allowlist)
 
 **S21.orch.1 DONE.** Added `build_orchestrator()` to `mcp/deep_agent/runtime.py`: compiles validated profiles into a `create_deep_agent` thin router (tools=[], delegates via the built-in `task`). Non-graph profiles → subagent dicts with `StructuredTool`s wrapping `server._dispatch_tool`; graph profiles → `CompiledSubAgent` over `ask_data.build_graph()`/`docs_agent.build_docs_agent_graph()`. Per-tool allowlist enforced in the wrapper (out-of-allowlist call fails closed + records a `policy_events()` entry). Model = configured `chat_model(role=)` (our upstream, not a provider string). `_live_tool_names()` includes connector *classes* so disabled-connector tools are valid config; unknown tools fail fast. Verified in-container: orchestrator builds to CompiledStateGraph over all 8 agents; denied tool call fails closed + logs policy event. Next: S21.runtime.1.
+
+## Session 2026-05-26 (pi agent) — Stage 26 planned (chat runtime visibility)
+
+Planning/docs-only task added per user request. Added **Stage 26 — Chat runtime visibility and admin-selectable model routing (planned)** to `IMPLEMENT.md` with task `S26.chat-runtime.1`.
+
+Task captures: focused `/chat` should show the active agent endpoint/provider/model plus Deep-Agent/subagent routing details (orchestrator and system agents), with secrets redacted and values sourced from a server-side runtime-info API/MCP tool. Normal users get read-only visibility; admins get a clearly marked future-control affordance for provider/model selection, but no mutation endpoint in the first slice. Also documented the future admin override path: validated allowlist, audit log, rollback, and no secrets in JSON payloads.
+
+Git handoff is documented directly in the task following `COORDINATION.md`: pull first, stage named paths only (never `git add -A`/`.`/`commit -a`), inspect `git status --short` and `git diff --cached --stat`, commit with a focused `feat(S26): ...` message, push feature branch, and merge by PR or fast-forward only after review/smokes. No build run for this docs-only task addition.
+
+## Session 2026-05-26 (pi agent, yolo) — Stage 24 completed (standup reference rail + shared templates)
+
+**Stage 24 DONE.** Pulled first (`git pull --ff-only origin main`, already up to date) and preserved pre-existing dirty files. Implemented the `/standup` reference rail:
+
+- `GET /api/standup/epics` returns read-only active epics from the `epics` collection via MCP `mongo_query`, honoring `STANDUP_EPICS_ACTIVE_ONLY`/`STANDUP_EPICS_LIMIT` and normalizing the Stage-24 fields (`epic_key`, `jira_key`, title, program area, status, priority, tags, regulation refs, DB/platform combos, ticket refs, finding ids).
+- Added `mcp/standup_templates.py` plus the `standup_templates` MCP tool and `/api/standup/templates` proxy. This is the Stage-24/Stage-21 convergence point: a plain backend-owned store consumed by both the UI prompt preview and the Stage-21 Deep Agent context-pack seam, with no duplicated prompts in frontend or agent code.
+- Added typed React Query hooks/types (`useStandupEpics`, `useStandupTemplates`, `StandupEpic`, `StandupTemplate*`).
+- Updated `/standup` with two collapsed-by-default cards: **Epics** (active epic rows, Jira deep links, classification chips, per-row details, selected-epic context seam) and **Templates** (read-only field-spec table + backend-sourced prompt dropdown rendered through the existing `Markdown` component). No new Markdown dependency.
+- Documented deferred editability in `docs/standup.md`: future inline epic-field editors and audited template upsert can replace the presentational cells/store without rewriting the page.
+- Added Stage-20/Stage-24 env defaults to `.env.example`, updated `CHANGELOG.md`, and flipped all `S24.*` tasks to done in `IMPLEMENT.md`.
+
+**Verification:** `python3 -m py_compile mcp/*.py web/*.py scripts/*.py` passed. `cd web && npm run build` passed (pre-existing chunk-size warning only). No live external writes or reseed run.
 
 ## Session 2026-05-26 (pi agent) — Stage 25 planned (standup production approvals viewport)
 

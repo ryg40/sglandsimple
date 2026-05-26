@@ -73,7 +73,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — all TBD), **24** (standup Epics + Templates reference rail — all TBD), and **25** (standup production approvals — planned). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), and **23** (Confluence wire-up + cross-system enrichment) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — all TBD), **25** (standup production approvals — planned), and **26** (chat runtime visibility — planned). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), **23** (Confluence wire-up + cross-system enrichment), and **24** (standup Epics + Templates reference rail) are complete but retained here until the next archive pass.
 
 ---
 
@@ -1031,9 +1031,11 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
   - Done: `build_orchestrator()` compiles the validated profiles into a `deepagents` `create_deep_agent(...)` thin router — `tools=[]`, no system tools (deepagents injects `task`/`write_todos`), `system_prompt` says delegate to exactly one subagent via `task`. Each non-graph profile compiles to a subagent dict whose `tools` are LangChain `StructuredTool`s wrapping the single MCP seam `server._dispatch_tool`; graph profiles (`ask_data`/`docs_agent`) compile to `CompiledSubAgent` via `ask_data.build_graph()` / `docs_agent.build_docs_agent_graph()`. **Per-tool allowlist enforcement:** the wrapper re-checks membership at call time — a tool invoked outside its agent's allowlist returns a `[policy]` message and records a policy event (`policy_events()`), failing closed (defense in depth on top of the toolset already being scoped). Model selection hands deepagents a **configured `chat_model(role=...)`** (our upstream), not a provider string, so it never resolves to real OpenAI/Bedrock. `_live_tool_names()` builds the known-tool universe from static `TOOLS` + connector *classes* (so a real-but-disabled connector tool like `jira_apply_staged` is valid config); `validate_against_catalog` fails fast on genuinely unknown tools. Reserved-tool recursion guard holds (rejected at profile load). Verified in-container: orchestrator builds to a `CompiledStateGraph` over all 8 agents; out-of-allowlist call fails closed + records a policy event.
   - Depends on: S21.profile.1, S21.context.1.
 
-- [ ] **S21.runtime.1 — Typed agent runtime API/tools**
+- [~] **S21.runtime.1 — Typed agent runtime API/tools** — PARTIAL (MCP side landed; web proxies + e2e run pending)
   - Files: `mcp/server.py`, `mcp/deep_agent/runtime.py`, `web/main.py`, `web/src/lib/types.ts`, `web/src/lib/queries.ts`.
   - Done when: `agent_profiles_list`, `agent_run_start` (`{agent?, goal, context_refs, mode}` — omit `agent` to let the orchestrator route), `agent_run_status`, `agent_run_resume`, `agent_run_cancel`, and `agent_run_artifacts` exist as MCP tools + `/api/agents/*` proxies with typed request/response models (no `any`); runs persisted to `DEEP_AGENT_RUN_COLLECTION`.
+  - **Done so far:** all 6 `agent_*` MCP tools are defined, registered in `TOOLS`, dispatched in `_dispatch_tool`, and verified live (`tools/list` shows all six; `agent_profiles_list` returns the 8-agent roster). `mcp/deep_agent/runtime.py` has the typed models (`AgentRunStartRequest`/`ApprovalRequest`/`AgentRunRecord`) and the full lifecycle (`agent_run_start/status/resume/cancel/artifacts`) persisting to `DEEP_AGENT_RUN_COLLECTION` (verified: a run record is created in Mongo). The orchestrator is compiled with the Mongo checkpointer so resume/restart is wired.
+  - **Remaining (handoff):** (1) `agent_run_start` returned with the run stuck at `status="running"` — the orchestrator `ainvoke` didn't complete within the request window. Likely cause: real LLM routing + subagent hops exceed the curl/proxy timeout, **and/or** the `CompiledSubAgent`-wrapped `ask_data` graph expects a different input than the deep-agent `{messages:[...]}` shape (it takes `{question}`/`AskDataState`). Validate the orchestrator→subagent input contract (this is what `S21.agent.1` covers) and give `agent_run_start` a deadline + run in the background so the API returns a `running` run_id immediately and status is polled. (2) The `web/main.py` `/api/agents/*` proxies + typed TS hooks/types are **not yet added**.
   - Depends on: S21.orch.1.
 
 - [ ] **S21.hitl.1 — `interrupt_on` HITL interrupt/resume contract**
@@ -1339,36 +1341,50 @@ Reuse existing infrastructure; add only thin read tools/proxies:
 
 ### Task checklist — Stage 24
 
-- [ ] **S24.api.1 — Active-epics read proxy for the standup panels**
+- [x] **S24.api.1 — Active-epics read proxy for the standup panels** ✅ DONE
   - Files: `mcp/server.py` (or reuse `overview_summary`/`get_rows`), `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
   - Done when: a `/api/standup/epics` proxy returns active epics (gated by `STANDUP_EPICS_ACTIVE_ONLY`/`STANDUP_EPICS_LIMIT`) with `epic_key`/`jira_key`/`title`/`program_area`/`status`/`priority`/`tags`/`regulation_refs`/`db_platform_combos`/`ticket_refs`/`finding_ids`; a typed `StandupEpic` interface + `useStandupEpics()` hook exist (no `any`); errors surfaced; read-only (no write tool added). `python3 -m py_compile` + `cd web && npm run build` clean.
   - Depends on: S20.ui.1.
 
-- [ ] **S24.epics.1 — Foldable Epics reference card**
+- [x] **S24.epics.1 — Foldable Epics reference card** ✅ DONE
   - Files: `web/src/routes/standup.tsx`, optional `web/src/components/standup-epics.tsx`.
   - Done when: a collapsible **Epics** card (reusing the existing `configOpen`/Chevron collapse idiom — no new dep) sits in the standup `aside`; collapsed header shows active count; expanded shows scannable rows with key/title/program_area/status+priority badges and classification chips (tags/regulation_refs/db_platform_combos), Jira deep links via `JIRA_BASE_URL`, and per-row expand for the full field set; selecting a row sets local selected-epic context (wired to existing selection plumbing if cheap, else a marked seam). Read-only. Build clean.
   - Depends on: S24.api.1.
 
-- [ ] **S24.templates.api.1 — `standup_templates` MCP tool + proxy (ticket/doc prompt library)**
+- [x] **S24.templates.api.1 — `standup_templates` MCP tool + proxy (ticket/doc prompt library)** ✅ DONE
   - Files: `mcp/standup_templates.py` (new) or extend `mcp/standup_agent.py`, `mcp/server.py`, `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
   - Done when: a `standup_templates` MCP tool lists `{name, kind: "jira"|"confluence", body_md, description?}` from a backend-owned source (seed/collection or templates module) — the *same* source that `tool_calls` use to generate Jira tickets/Confluence docs; a `/api/standup/templates` proxy + typed `useStandupTemplates()` hook expose it; gated by `STANDUP_TEMPLATES_ENABLED`. Bodies are not inlined in the frontend. **Future-edit seam:** structure leaves room for an upsert tool later (note it in code/comments); no edit endpoint added now. Build/compile clean.
   - **Stage-21 convergence (architecture note):** make this store the shared source of truth the deepagents `atlassian_agent`/`standup_agent` context packs (`S21.context.1`) will read — keep it a plain data store (collection/module) decoupled from any specific agent runtime (neither the old hand-rolled deep-agent nor deepagents), so both the panel and the agents consume one copy. Do **not** duplicate the prompts into agent code.
   - Depends on: S20.agent.1.
 
-- [ ] **S24.templates.ui.1 — Templates card: customized-fields table + prompt-library viewport**
+- [x] **S24.templates.ui.1 — Templates card: customized-fields table + prompt-library viewport** ✅ DONE
   - Files: `web/src/routes/standup.tsx`, optional `web/src/components/standup-templates.tsx`.
   - Done when: a collapsible **Templates** card holds two sub-sections — (1) a per-epic **customized-fields table** rendered from a typed field-spec list through a presentational cell component (read-only, with an "editing coming soon" affordance, structured so a future editor drops in), and (2) a **prompt library** with a dropdown of template names (from `useStandupTemplates`) and a Markdown viewport rendering the selected template via the existing `Markdown` component (no new Markdown dep); switching selection re-renders; editor seam noted for a future stage. Build clean.
   - Depends on: S24.api.1, S24.templates.api.1.
 
-- [ ] **S24.future.1 — Document the deferred editability path (feature improvement)**
+- [x] **S24.future.1 — Document the deferred editability path (feature improvement)** ✅ DONE
   - Files: `docs/standup.md`, `IMPLEMENT.md`.
   - Done when: `docs/standup.md` records that the Epics fields table and the template prompt library are **read-only in Stage 24** and captures the planned future feature — inline-editable epic fields and editable Markdown templates (textarea-editor like `/docs`, backed by an upsert MCP tool + audited write-layer) — including the component/data seams left in place so the editor can be added without a rewrite.
   - Depends on: S24.epics.1, S24.templates.ui.1.
 
-- [ ] **S24.verify.1 — Build + standup reference-rail review**
+- [x] **S24.verify.1 — Build + standup reference-rail review** ✅ DONE
   - Files: `IMPLEMENT.md`, `progress.md`.
   - Done when: `python3 -m py_compile mcp/*.py web/*.py` and `cd web && npm run build` pass; manual review confirms both cards are collapsed by default, expand without displacing the Explorer, the Epics panel lists active epics with the 24a fields + Jira links, the fields table is read-only with the future-edit affordance, and the prompt library dropdown renders each template as Markdown; results logged in `progress.md`.
   - Depends on: S24.epics.1, S24.templates.ui.1.
+
+---
+
+## Stage 26 — Chat runtime visibility and admin-selectable model routing (planned)
+
+**Goal:** Make the focused `/chat` page transparent about which runtime is answering: the public agent endpoint, upstream provider, model, and any active Deep-Agent/subagent model assignments. This is initially read-only runtime visibility for every authenticated user. Later, admins should be able to select/modify provider/model routing safely through the auth system rather than editing env vars or code.
+
+### Task checklist — Stage 26
+
+- [ ] **S26.chat-runtime.1 — Show active endpoint/provider/model for agent and subagents**
+  - Files: `agent/main.py`, `mcp/llm.py`, `mcp/deep_agent/profiles.py`, `mcp/deep_agent/runtime.py`, `mcp/server.py`, `web/main.py`, `web/src/components/chat-assistant.tsx`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`, `docs/clients.md`, `IMPLEMENT.md`, `progress.md`.
+  - Done when: `/chat` displays a compact runtime panel/banner showing the active OpenAI-compatible endpoint (redacted host/path only; no keys), provider, and model used by the main agent; the same panel lists Deep-Agent/subagent roles/profiles that may be delegated to (orchestrator, atlassian, mongo, github, servicenow, aws, audit, docs, standup) with each role's configured provider/model/endpoint and whether it inherits the upstream default; secrets/API keys are never exposed; values come from a server-side `/api/chat/runtime` proxy backed by an MCP/runtime-info tool, not from frontend env constants; unauthenticated users cannot read it; normal authenticated users get read-only visibility; admins with `canAdminAuth` (or a future narrower capability) see a clearly-marked future-control affordance for selecting/modifying provider/model, but no mutation endpoint is added in this first task; the design notes how a later task can persist admin overrides safely (validated allowlist, audit log, rollback, no secrets in JSON payloads); `python3 -m py_compile agent/*.py mcp/*.py web/*.py` and `cd web && npm run build` pass.
+  - Git handoff: before coding, `git pull --ff-only origin main`; stage by explicit path only (`git add agent/main.py mcp/llm.py mcp/deep_agent/profiles.py mcp/deep_agent/runtime.py mcp/server.py web/main.py web/src/components/chat-assistant.tsx web/src/lib/queries.ts web/src/lib/types.ts docs/clients.md IMPLEMENT.md progress.md` as applicable — never `git add -A`/`.`/`commit -a`); inspect `git status --short` and `git diff --cached --stat`; commit with a focused message such as `feat(S26): show chat runtime model routing`; push the feature branch; merge via PR or fast-forward only after review/smokes pass.
+  - Depends on: S21.profile.1, S21.orch.1, S22.chat.3.
 
 ---
 
