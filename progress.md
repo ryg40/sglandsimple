@@ -4,6 +4,16 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-26 (pi agent) — Standup layout follow-up: chat top, templates bottom
+
+Adjusted `/standup` layout for screen-share ergonomics:
+- `web/src/routes/standup.tsx`: moved `StandupChat` to the **top of the right-hand column** so live note capture and Summarize stay first in the vertical flow.
+- Moved `StandupTemplatesCard` out of the right-hand column and into the **bottom of the main viewport**, directly below the Jira Explorer and Jira Configuration/tool trace section.
+- Left `StandupEpicsCard` in the right-hand column below chat so selected-epic context still sits near the live conversation.
+- Updated `docs/standup.md` and `CHANGELOG.md` to describe the new layout.
+
+**Verification:** `cd web && npm run build` passed; `python3 -m py_compile web/*.py` passed.
+
 ## Session 2026-05-26 (pi agent, yolo) — S21.runtime.1 PARTIAL + handoff
 
 **S21.runtime.1 PARTIAL (MCP side landed).** Added the 6 `agent_*` MCP tools (defs + registration in `TOOLS` + dispatch in `_dispatch_tool`) and the typed runtime in `mcp/deep_agent/runtime.py` (`AgentRunStartRequest`/`ApprovalRequest`/`AgentRunRecord`; `agent_run_start/status/resume/cancel/artifacts`; `agent_profiles_list`). Runs persist to `DEEP_AGENT_RUN_COLLECTION`; orchestrator compiled with the Mongo checkpointer for resume/restart. **Verified live:** `tools/list` shows all six; `agent_profiles_list` returns the 8-agent roster; `agent_run_start` **creates a Mongo run record**.

@@ -501,11 +501,11 @@ export default function Standup() {
               </CardContent>
             )}
           </Card>
+
+          <StandupTemplatesCard />
         </section>
 
         <aside className="flex min-h-0 flex-col gap-4">
-          <StandupEpicsCard selectedEpicKey={selectedEpic?.epic_key ?? null} onSelectEpic={setSelectedEpic} />
-          <StandupTemplatesCard />
           <StandupChat
             sessionId="daily-standup"
             onAssociationCountChange={setLinkCount}
@@ -513,6 +513,7 @@ export default function Standup() {
             onTraceChange={setTrace}
             onControlsChange={setControls}
           />
+          <StandupEpicsCard selectedEpicKey={selectedEpic?.epic_key ?? null} onSelectEpic={setSelectedEpic} />
 
           <Card>
             <CardHeader className="pb-3">
