@@ -15,7 +15,7 @@ Update this table when you start/finish. One owner per stage.
 | 18 (architecture diagram v2) | pi orchestrator | main tree | **COMPLETE** — export/docs/verify closed |
 | 19 (web auth/RBAC) | pi agent | main tree | **COMPLETE** — auth/RBAC + admin diagnostics verified |
 | 20 (standup Jira cockpit) | pi agent | main tree | **COMPLETE** — RBAC + HITL approval tray + websocket smoke verified |
-| 22 (UX/chat polish + Wrangler derived fields) | pi orchestrator | main tree | **COMPLETE** — chat, global assistant, Wrangler derived fields, banner |
+| 22 (UX/chat polish + Wrangler derived fields) | pi agent | main tree | **COMPLETE** — chat.4 (newest-first feed), chat.5 (collapsed Ask Data query with <details>), chat.6 (slim dynamic banner) verified; py_compile + web build clean |
 | 23 (Confluence wire-up + cross-system enrichment + teaching docs) | pi orchestrator + gpt-5.4 workers | main tree + isolated subagent worktrees | **COMPLETE** — Confluence live gate, overlap data, teaching docs, smoke verified |
 | 24 (standup Epics + Templates reference rail) | pi agent | main tree | **COMPLETE** — `/standup` Epics/Templates cards landed, `standup_templates` MCP tool added, build/py-compile verified |
 | 25 (standup production approvals viewport) | pi agent | main tree | **COMPLETE** — approver email gate, editable approvals viewport, Save/Submit flow, gated production apply path verified locally |

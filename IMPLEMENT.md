@@ -1154,19 +1154,19 @@ Follow-up polish on the focused `/chat` workspace after the column flip (S22.cha
   - Files: `web/src/components/chat-assistant.tsx`.
   - Done: conversation feed + composer moved to the main wide right column (`xl:order-2`); suggested prompts moved to the narrow 18rem left rail (`xl:order-1`). Added a `variant: "chips" | "list"` prop to `PromptChips`; the rail renders Starter + Direct-data prompts as compact vertical lists. Dropped the redundant hero starter chips.
 
-- [ ] **S22.chat.4 — Newest-first live conversation feed**
+- [x] **S22.chat.4 — Newest-first live conversation feed** ✅ DONE
   - Files: `web/src/components/chat-assistant.tsx`.
-  - Done when: new turns appear at the **top** of `ConversationFeed`, pushing older turns down (no manual scroll needed); request/response pairs stay visually adjacent; the "thinking…" indicator and `aria-live` behavior are preserved; `cd web && npm run build` clean.
+  - Done: `ConversationFeed` reverses messages (newest at top, push older down); removed scroll-to-bottom `endRef`; "thinking…" indicator and `aria-live` preserved at top; `cd web && npm run build` clean.
   - Depends on: S22.chat.3.
 
-- [ ] **S22.chat.5 — Collapse Ask Data Mongo query unless requested**
-  - Files: `mcp/ask_data.py`, `web/src/components/chat-assistant.tsx` (and/or `web/src/components/markdown.tsx`).
-  - Done when: the `## Query used` spec is no longer always shown inline — it is shown expanded only when the user explicitly asks for the query (keyword heuristic or explicit toggle), otherwise rendered as a single **collapsed, expandable** ```json snippet (e.g. `<details>` disclosure) one click from the prose+evidence answer; default Ask Data view leads with answer + evidence; `python3 -m py_compile mcp/ask_data.py` + `cd web && npm run build` clean.
+- [x] **S22.chat.5 — Collapse Ask Data Mongo query unless requested** ✅ DONE
+  - Files: `mcp/ask_data.py` (keyword heuristic + `<details>` wrapping), `mcp/server.py` (pass `question`), `web/src/components/markdown.tsx` (add `rehype-raw`), `web/package.json` (dep).
+  - Done: `render_markdown` accepts `question` kwarg; when the question contains query-related keywords (`"query"`, `"pipeline"`, `"how did you"`, `"what query"`, `"show query"`, `"what did you run"`) the query section renders expanded inline; otherwise wrapped in `<details><summary>View query</summary>` collapsed by default. `python3 -m py_compile mcp/ask_data.py mcp/server.py` + `cd web && npm run build` clean.
   - Depends on: nothing (touches the formatter + transcript rendering).
 
-- [ ] **S22.chat.6 — Replace tall static hero with slim dynamic banner (~100px)**
+- [x] **S22.chat.6 — Replace tall static hero with slim dynamic banner (~100px)** ✅ DONE
   - Files: `web/src/components/chat-assistant.tsx`.
-  - Done when: the focused `/chat` hero is full viewport width but only ~100px tall and shows dynamic/contextual content (e.g. turn count, connector/MCP status, last-activity time, rotating tip) instead of static marketing copy; reclaimed vertical space goes to the conversation feed; layout stays responsive; `cd web && npm run build` clean.
+  - Done: replaced the tall hero `Card` (badges + h2 + p + 3 insight cards) with a slim ~100px full-width banner showing assistant name, message count, last-activity `RelativeTimeFormat`, MCP badge, and a rotating tip from `CHAT_TIPS` cycling every 8s; reclaimed vertical space goes to the conversation feed; layout stays responsive; `cd web && npm run build` clean.
   - Depends on: S22.chat.3.
 
 ---

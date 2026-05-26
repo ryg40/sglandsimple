@@ -1561,7 +1561,7 @@ async def _tool_ask_data(args: dict[str, Any]) -> dict[str, Any]:
     question = args["question"]
     state = await run_ask_data(question)
     if state.final is None:
-        md = render_ask_data_markdown(None, spec_error=state.spec_error)
+        md = render_ask_data_markdown(None, spec_error=state.spec_error, question=question)
         return {
             "content": [
                 {"type": "text", "text": md},
@@ -1569,7 +1569,7 @@ async def _tool_ask_data(args: dict[str, Any]) -> dict[str, Any]:
             ],
             "isError": True,
         }
-    md = render_ask_data_markdown(state.final)
+    md = render_ask_data_markdown(state.final, question=question)
     payload = state.final.model_dump(exclude_none=True)
     return {
         "content": [

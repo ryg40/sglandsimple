@@ -436,7 +436,10 @@ async def run_ask_data(question: str) -> AskDataState:
 # ---------------------------------------------------------------------------
 
 
-def render_markdown(final: FinalAnswer | None, spec_error: str | None = None) -> str:
+_QUERY_KEYWORDS = ("query", "pipeline", "how did you", "what query", "show query", "what did you run")
+
+
+def render_markdown(final: FinalAnswer | None, spec_error: str | None = None, *, question: str | None = None) -> str:
     if final is None:
         return f"# ask_data\n\n**Run failed.** {spec_error or 'no further detail'}\n"
 
@@ -451,8 +454,21 @@ def render_markdown(final: FinalAnswer | None, spec_error: str | None = None) ->
         lines.append(f"  > {e.quote}")
         lines.append(f"  {e.why}")
     lines.append("")
-    lines.append("## Query used")
-    lines.append("```json")
-    lines.append(json.dumps(final.query_used.model_dump(exclude_none=True), indent=2, default=str))
-    lines.append("```")
+
+    query_json = json.dumps(final.query_used.model_dump(exclude_none=True), indent=2, default=str)
+    q = (question or "").lower()
+    show_expanded = any(kw in q for kw in _QUERY_KEYWORDS)
+    if show_expanded:
+        lines.append("## Query used")
+        lines.append("```json")
+        lines.append(query_json)
+        lines.append("```")
+    else:
+        lines.append("<details>")
+        lines.append("<summary>View query</summary>")
+        lines.append("")
+        lines.append("```json")
+        lines.append(query_json)
+        lines.append("```")
+        lines.append("</details>")
     return "\n".join(lines)

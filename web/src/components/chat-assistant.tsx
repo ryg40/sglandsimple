@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import {
   ArrowUpRight,
   Bot,
@@ -8,7 +8,8 @@ import {
   PanelBottomOpen,
   Send,
   Sparkles,
-  Wand2,
+  Activity,
+  Clock,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -39,6 +40,15 @@ const DATA_PROMPTS = [
   "List employees by department and location.",
 ];
 
+const CHAT_TIPS = [
+  "Use Ask Data for concrete counts and tables from Mongo.",
+  "Try 'summarize open tickets by priority' for a quick overview.",
+  "Paste a Jira key to let the assistant pull context.",
+  "Use ⌘/Ctrl+Enter to send without clicking.",
+  "Switch between Chat and Ask Data in the same thread.",
+  "Ask for an 'executive summary' of current risk findings.",
+];
+
 function reply(data: ChatCompletion): string {
   const content = data.choices?.[0]?.message?.content?.trim();
   if (content && data.error) return `${content}\n\n---\n\n**error detail:** ${JSON.stringify(data.error)}`;
@@ -50,12 +60,10 @@ function reply(data: ChatCompletion): string {
 function useAssistantSession() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const endRef = useRef<HTMLDivElement>(null);
+  const [lastActivity, setLastActivity] = useState<Date | null>(null);
   const chat = useChat();
   const askData = useAskData();
   const busy = chat.isPending || askData.isPending;
-
-  const scroll = () => requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }));
 
   async function run(kind: "chat" | "ask", seed?: string) {
     const text = (seed ?? input).trim();
@@ -64,15 +72,16 @@ function useAssistantSession() {
     const userMsg: ChatMessage = { role: "user", content: kind === "ask" ? `(ask data) ${text}` : text };
     const next = [...messages, userMsg];
     setMessages(next);
-    scroll();
+    setLastActivity(new Date());
     try {
       const data = kind === "ask" ? await askData.mutateAsync(text) : await chat.mutateAsync(next);
       setMessages((m) => [...m, { role: "assistant", content: reply(data) }]);
-      scroll();
+      setLastActivity(new Date());
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       toast.error(`Request failed: ${message}`);
       setMessages((m) => [...m, { role: "assistant", content: `**error:** ${message}` }]);
+      setLastActivity(new Date());
     }
   }
 
@@ -81,8 +90,8 @@ function useAssistantSession() {
     setInput,
     messages,
     busy,
+    lastActivity,
     run,
-    endRef,
   };
 }
 
@@ -136,23 +145,27 @@ function PromptChips({
 function ConversationFeed({
   messages,
   busy,
-  endRef,
   empty,
   className,
 }: {
   messages: ChatMessage[];
   busy: boolean;
-  endRef: RefObject<HTMLDivElement>;
   empty: ReactNode;
   className?: string;
 }) {
+  const latestFirst = [...messages].reverse();
   return (
     <div className={cn("space-y-3 overflow-y-auto", className)} aria-live="polite">
       {messages.length === 0 && empty}
-      {messages.map((m, i) => {
+      {busy && (
+        <div className="flex items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-2 text-sm text-muted-foreground shadow-sm w-fit">
+          <Loader2 className="size-4 animate-spin" /> thinking…
+        </div>
+      )}
+      {latestFirst.map((m, i) => {
         const isUser = m.role === "user";
         return (
-          <div key={i} className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+          <div key={messages.length - 1 - i} className={cn("flex", isUser ? "justify-end" : "justify-start")}>
             <Card
               className={cn(
                 "max-w-[90%] overflow-hidden border px-4 py-3 shadow-sm",
@@ -174,12 +187,6 @@ function ConversationFeed({
           </div>
         );
       })}
-      {busy && (
-        <div className="flex items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-2 text-sm text-muted-foreground shadow-sm w-fit">
-          <Loader2 className="size-4 animate-spin" /> thinking…
-        </div>
-      )}
-      <div ref={endRef} />
     </div>
   );
 }
@@ -244,62 +251,50 @@ function Composer({
 
 export function ChatWorkspace() {
   const session = useAssistantSession();
-  const insightCards = useMemo(
-    () => [
-      {
-        icon: Sparkles,
-        title: "Executive-ready synthesis",
-        text: "Turn scattered Jira, GitHub, docs, and connector context into a crisp narrative.",
-      },
-      {
-        icon: Database,
-        title: "Grounded data pulls",
-        text: "Use Ask Data for Mongo-backed answers when you need a concrete count or table.",
-      },
-      {
-        icon: Wand2,
-        title: "Next-step guidance",
-        text: "Draft follow-ups, remediation plans, summaries, and handoff notes in the same workspace.",
-      },
-    ],
-    []
-  );
+  const [tipIndex, setTipIndex] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTipIndex((i) => (i + 1) % CHAT_TIPS.length), 8000);
+    return () => clearInterval(id);
+  }, []);
+
+  const lastActivityLabel = session.lastActivity
+    ? new Intl.RelativeTimeFormat("en", { style: "narrow" }).format(
+        Math.round((session.lastActivity.getTime() - Date.now()) / 60000),
+        "minute"
+      )
+    : null;
 
   return (
     <div className="min-h-full bg-[radial-gradient(circle_at_top_left,rgba(255,208,0,0.16),transparent_24%),radial-gradient(circle_at_top_right,rgba(6,116,140,0.14),transparent_22%)] px-4 py-5 sm:px-6 lg:px-8">
       <div className="mx-auto flex h-full max-w-7xl flex-col gap-5">
-        <Card className="overflow-hidden border-primary/10 bg-[linear-gradient(135deg,rgba(26,20,70,0.98),rgba(26,20,70,0.9)_55%,rgba(6,116,140,0.76))] p-6 text-white shadow-2xl">
-          <div className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr] lg:items-end">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="accent" className="bg-white/15 text-white">Focused assistant</Badge>
-                <Badge variant="outline" className="border-white/20 text-white/80">Tool-aware</Badge>
-                <Badge variant="outline" className="border-white/20 text-white/80">Ask Data ready</Badge>
-              </div>
-              <div className="space-y-2">
-                <h2 className="max-w-3xl text-3xl font-semibold tracking-tight sm:text-4xl">
-                  A richer command desk for cross-system analysis, grounded answers, and fast follow-through.
-                </h2>
-                <p className="max-w-2xl text-sm leading-6 text-white/80 sm:text-base">
-                  Use the focused chat view when the assistant is your primary workspace. Pull direct data,
-                  compare signals across systems, and turn findings into concise updates without leaving the app.
-                </p>
-              </div>
+        {/* Slim dynamic banner */}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/10 bg-[linear-gradient(135deg,rgba(26,20,70,0.98),rgba(26,20,70,0.92)_60%,rgba(6,116,140,0.72))] px-5 py-3 text-white shadow-xl">
+          <div className="flex flex-wrap items-center gap-4 text-sm">
+            <div className="flex items-center gap-1.5">
+              <Bot className="size-4 text-primary" />
+              <span className="font-semibold">Assistant</span>
             </div>
-
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-              {insightCards.map((item) => (
-                <div key={item.title} className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm">
-                  <div className="mb-3 flex size-10 items-center justify-center rounded-xl bg-white/15">
-                    <item.icon className="size-5 text-primary" />
-                  </div>
-                  <div className="text-sm font-semibold">{item.title}</div>
-                  <p className="mt-1 text-xs leading-5 text-white/75">{item.text}</p>
-                </div>
-              ))}
+            <div className="hidden h-4 w-px bg-white/20 sm:block" />
+            <div className="flex flex-wrap items-center gap-3 text-xs text-white/70">
+              <span className="flex items-center gap-1">
+                <MessageSquare className="size-3" />
+                {session.messages.length} {session.messages.length === 1 ? "message" : "messages"}
+              </span>
+              {lastActivityLabel && (
+                <span className="flex items-center gap-1">
+                  <Clock className="size-3" />
+                  {lastActivityLabel}
+                </span>
+              )}
+              <Badge variant="outline" className="border-white/20 text-white/70 text-[10px]">MCP</Badge>
             </div>
           </div>
-        </Card>
+          <div className="flex items-center gap-1.5 text-xs text-white/60 max-w-md truncate">
+            <Activity className="size-3 shrink-0 text-primary" />
+            <span className="truncate">{CHAT_TIPS[tipIndex]}</span>
+          </div>
+        </div>
 
         <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[18rem_minmax(0,1fr)]">
           <div className="space-y-4 xl:order-1">
@@ -334,7 +329,6 @@ export function ChatWorkspace() {
               <ConversationFeed
                 messages={session.messages}
                 busy={session.busy}
-                endRef={session.endRef}
                 className="min-h-0 flex-1 pr-1"
                 empty={
                   <div className="flex h-full min-h-[18rem] flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-background/50 px-6 text-center">
@@ -408,7 +402,6 @@ export function GlobalAssistant() {
             <ConversationFeed
               messages={session.messages}
               busy={session.busy}
-              endRef={session.endRef}
               className="min-h-0 flex-1 px-5 py-4"
               empty={
                 <div className="flex h-full min-h-[14rem] flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card/40 px-5 text-center">
