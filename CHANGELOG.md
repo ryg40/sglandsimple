@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Deep Agent platform runtime (Stage 21, in progress): a `deepagents`-based orchestrator that routes a goal to one of eight system-scoped agents (Atlassian, Mongo, GitHub, ServiceNow, AWS, Audit, Docs, Standup), each with a per-tool allowlist, per-tool HITL gate, and its own model. New MCP tools `agent_profiles_list` and `agent_run_start/status/resume/cancel/artifacts` (runs persist to `deep_agent_runs`). Agents and tool scopes are declared in `mcp/deep_agent/profiles.yaml`. New env vars: `DEEP_AGENT_PROFILES_FILE`. Note: `agent_run_start` end-to-end execution and the web `/api/agents/*` surface are not yet complete.
 - Optional `sandbox` Deep Agent runtime container (Stage 21), gated behind the `sandbox` compose profile and off by default. Start with `docker compose --profile sandbox up -d`; it runs as a non-root user and shares the `./sandbox` mount with the MCP service. New env vars: `DEEP_AGENT_RUNTIME_MODE`, `DEEP_AGENT_ARTIFACT_DIR`, `DEEP_AGENT_DRY_RUN_ONLY`.
 
 ### Changed
