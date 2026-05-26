@@ -18,7 +18,7 @@ Update this table when you start/finish. One owner per stage.
 | 22 (UX/chat polish + Wrangler derived fields) | pi orchestrator | main tree | **COMPLETE** — chat, global assistant, Wrangler derived fields, banner |
 | 23 (Confluence wire-up + cross-system enrichment + teaching docs) | pi orchestrator + gpt-5.4 workers | main tree + isolated subagent worktrees | **COMPLETE** — Confluence live gate, overlap data, teaching docs, smoke verified |
 | 24 (standup Epics + Templates reference rail) | pi agent | main tree | **PLANNED** — tasks added to IMPLEMENT.md; no code yet |
-| 21 (Deep Agent platform) | pi agent | branch `stage-21-langchain-upgrade` | **IN PROGRESS** — S21.arch.1 done; deepagents SDK + one-agent-per-system roster. **S21.upgrade.1 done** on branch: LangChain 1.x + deepagents, checkpointer fix, opt-in `sandbox` service; all existing graph smokes green. Not merged. Next: S21.profile.1. |
+| 21 (Deep Agent platform) | pi agent | main tree | **IN PROGRESS** — S21.arch.1 + S21.upgrade.1 **merged to main** (`6c8b9d7`): LangChain 1.x + deepagents, checkpointer fix, opt-in `sandbox` service; all existing graph smokes green; stack healthy on main. Next: S21.profile.1. |
 | 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user |
 
 > **Single agent working the main tree.** The parallel agent sessions have completed. All work is committed on `stage-14-docs-wiki`. Follow the IMPLEMENT.md commit protocol below for any new edits.
