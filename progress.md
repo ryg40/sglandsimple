@@ -15,7 +15,9 @@ Added **Stage 27 (S27.layout.1)** to `IMPLEMENT.md` and implemented it. Goal: im
 
 **Verification:** `cd web && npm run build` passed (tsc + vite; pre-existing chunk-size warning only). No backend/`.py` changes, so no py_compile needed.
 
-**Git:** changes left in the working tree (`CHANGELOG.md`, `IMPLEMENT.md`, `docs/standup.md`, `web/src/routes/standup.tsx`, `web/src/components/standup-chat.tsx`, `progress.md`). Not committed/pushed — see note below.
+**Git:** committed `691b9b0` and pushed to `main`; `web` image rebuilt + redeployed (`docker compose build web && up -d web`, healthy on :5452).
+
+**Follow-up (same session):** per user feedback, **Widen no longer collapses to full-width**. The outer grid stays two-column in both states; widening just swaps the chat track from `23rem` → `69rem` (3×), main section keeps `minmax(0,1fr)`. Removed the `grid-cols-1` collapse and the `order-1`/`order-2` reshuffle. Updated `docs/standup.md` + `CHANGELOG.md` wording. Build passes.
 
 ## Session 2026-05-26 (pi agent) — Standup layout follow-up: chat top, templates bottom
 

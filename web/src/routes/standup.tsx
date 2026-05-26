@@ -354,10 +354,10 @@ export default function Standup() {
 
       <div
         className={`grid min-h-[calc(100vh-10rem)] gap-4 ${
-          chatExpanded ? "grid-cols-1" : "xl:grid-cols-[minmax(0,1fr)_23rem]"
+          chatExpanded ? "xl:grid-cols-[minmax(0,1fr)_69rem]" : "xl:grid-cols-[minmax(0,1fr)_23rem]"
         }`}
       >
-        <section className={`min-w-0 space-y-3 ${chatExpanded ? "order-2" : ""}`}>
+        <section className="min-w-0 space-y-3">
           <Card className="overflow-hidden">
             <CardHeader className="border-b bg-muted/20 pb-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -621,7 +621,7 @@ export default function Standup() {
           </div>
         </section>
 
-        <aside className={`flex min-h-0 flex-col gap-4 ${chatExpanded ? "order-1" : ""}`}>
+        <aside className="flex min-h-0 flex-col gap-4">
           <StandupChat
             sessionId="daily-standup"
             onAssociationCountChange={setLinkCount}
