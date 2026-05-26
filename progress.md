@@ -4,6 +4,17 @@
 **Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `d8bd928` (`docs(S20): add task to dedupe optimistic + echoed standup messages`).
 
+## Session 2026-05-26 (pi agent) — S21.arch.1 (Deep Agent platform design doc)
+
+Started Stage 21. **S21.arch.1 DONE** — wrote `docs/deep_agent_platform.md`, the design doc that gates the rest of the `S21.*` chain. Grounded it in the actual Stage-4 code (read `mcp/deep_agent/{__init__,models,planner,catalog}.py` + the server tool wiring) rather than the spec's idealized shape:
+- Identifies the **central refactor seam**: `mcp/deep_agent/catalog.py` today exposes one global catalog filtered only by a hardcoded `_EXCLUDED` recursion denylist; Stage 21 replaces "one global denylist" with "**one allowlist per profile**" (catalog functions become profile-scoped; the recursion guard stays as a floor).
+- Documents: keep/change table vs Stage 4; the `profiles.yaml` profile schema + 7 baseline profiles (jira/docs/architecture/audit/workflow/auth/standup) with non-overlapping tool scopes and Stage-19 capability gates; context packs sourced from existing material; the typed HITL interrupt/resume contract (reuses the Stage-14 docs-agent checkpointed-StateGraph pattern, survives restart); the `agent_run_*` runtime API + `/api/agents/*` proxies; security/audit/redaction/observability; `DEEP_AGENT_RUNTIME_MODE` in_mcp→sidecar→remote (ECS/Fargate, K8s, Bedrock) deployment path; on-rails future direction; env surface; verification intent; task map.
+- Cross-references `docs/deep_agent.md` (Stage 4) instead of duplicating it.
+
+Flipped `S21.arch.1` to `[x]` in `IMPLEMENT.md` with a completion note. Docs-only; no build run.
+
+Remaining Stage 21 (all blocked on this doc's downstream chain): S21.profile.1 → policy.1/context.1 → runtime.1 → hitl.1/ui.1 → agent.1 → security.1/obs.1/deploy.1 → deploy.2/bedrock.1 → verify.1/verify.2.
+
 ## Session 2026-05-26 (pi agent) — Stage 24 planned (standup Epics + Templates reference rail)
 
 Planning-only session: added **Stage 24 — Standup reference rail: foldable Epics + Templates panels** to `IMPLEMENT.md` (no code yet). Two new collapsible cards for `/standup`, both read-first/additive:

@@ -1003,9 +1003,9 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
 
 ### Task checklist — Stage 21
 
-- [ ] **S21.arch.1 — Write Deep Agent platform design doc**
+- [x] **S21.arch.1 — Write Deep Agent platform design doc** ✅ DONE
   - Files: `docs/deep_agent_platform.md` (new), `IMPLEMENT.md`.
-  - Done when: design explains relationship to Stage 4, profile model, service-specific agents, HITL pattern, deployment options (compose/Fargate/K8S/Bedrock), security boundaries, and future on-rails workflow direction.
+  - Done: `docs/deep_agent_platform.md` grounds the platform in the real Stage-4 code (`mcp/deep_agent/{models,planner,builder,catalog,budget}.py`, `deep_agent_plans`, `checkpointer_context`) and names the central seam — replacing `catalog.py`'s single global `_EXCLUDED` denylist with a **per-profile allowlist**. Covers the profile model (`profiles.yaml` shape + the 7 baseline profiles with non-overlapping scopes and Stage-19 capability gates), context packs, the typed HITL interrupt/resume contract (reusing the Stage-14 docs-agent checkpointed-`StateGraph` pattern; survives restart), the `agent_run_*` runtime API + `/api/agents/*` proxies, security/audit/observability, the `DEEP_AGENT_RUNTIME_MODE` compose→sidecar→remote/ECS/K8s/Bedrock deployment path, the on-rails future direction, the §21h env surface, the §21i verification intent, and the `S21.*` task map. Cross-references `docs/deep_agent.md` rather than duplicating Stage-4 detail.
 
 - [ ] **S21.profile.1 — Define agent profile schema and config**
   - Files: `mcp/deep_agent/profiles.py` (new) or config loader, `mcp/deep_agent/profiles.yaml`, `.env.example`.
