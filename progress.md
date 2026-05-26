@@ -4,6 +4,16 @@
 **Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `d8bd928` (`docs(S20): add task to dedupe optimistic + echoed standup messages`).
 
+## Session 2026-05-26 (pi agent) — Stage 24 planned (standup Epics + Templates reference rail)
+
+Planning-only session: added **Stage 24 — Standup reference rail: foldable Epics + Templates panels** to `IMPLEMENT.md` (no code yet). Two new collapsible cards for `/standup`, both read-first/additive:
+- **Epics panel** — live read of the active `epics` collection (reuse `overview_summary`'s active notion); shows key/title/program_area/status/priority/tags/regulation_refs/db_platform_combos/ticket_refs/finding_ids with Jira deep links, for quick story creation/triage/reclassification mid-standup.
+- **Templates panel** — (1) a read-only per-epic customized-fields table built off a typed field-spec + presentational cell component so a future editor drops in, and (2) a prompt/template library (dropdown + Markdown viewport via the existing `Markdown` component) sourcing ticket/Confluence-doc generation prompts from a backend-owned store — the same source `tool_calls` execute. Editing of both is explicitly deferred to a future stage; seams left in place.
+
+Tasks added: `S24.api.1`, `S24.epics.1`, `S24.templates.api.1`, `S24.templates.ui.1`, `S24.future.1`, `S24.verify.1`. New env vars `STANDUP_EPICS_ACTIVE_ONLY`/`STANDUP_EPICS_LIMIT`/`STANDUP_TEMPLATES_ENABLED` added to the Stage-24 §24d table and the global Env-surface table. "Open work" line + COORDINATION.md ownership updated. Also added a CHANGELOG.md upkeep requirement to CLAUDE.md.
+
+No build/compile run this session (docs only).
+
 ## Session 2026-05-23 (pi orchestrator + gpt-5.4 workers) — Stage 23 completion
 
 Executed the full Stage-23 Confluence wire-up + cross-system enrichment stage using isolated gpt-5.4 worker subagents and integrated their diffs in main.

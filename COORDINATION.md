@@ -17,6 +17,7 @@ Update this table when you start/finish. One owner per stage.
 | 20 (standup Jira cockpit) | pi agent | main tree | **COMPLETE** — RBAC + HITL approval tray + websocket smoke verified |
 | 22 (UX/chat polish + Wrangler derived fields) | pi orchestrator | main tree | **COMPLETE** — chat, global assistant, Wrangler derived fields, banner |
 | 23 (Confluence wire-up + cross-system enrichment + teaching docs) | pi orchestrator + gpt-5.4 workers | main tree + isolated subagent worktrees | **COMPLETE** — Confluence live gate, overlap data, teaching docs, smoke verified |
+| 24 (standup Epics + Templates reference rail) | pi agent | main tree | **PLANNED** — tasks added to IMPLEMENT.md; no code yet |
 | 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user |
 
 > **Single agent working the main tree.** The parallel agent sessions have completed. All work is committed on `stage-14-docs-wiki`. Follow the IMPLEMENT.md commit protocol below for any new edits.

@@ -33,6 +33,10 @@ curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' \
   -d '{"model":"qwen3.6-27b","messages":[{"role":"user","content":"summarize: ..."}]}'
 ```
 
+## Changelog discipline
+
+Keep a standard **`CHANGELOG.md`** at the repo root in [Keep a Changelog](https://keepachangelog.com) style (newest first; an `## Unreleased` section at the top; entries grouped under `Added` / `Changed` / `Fixed` / `Removed` as needed). **Any change that alters observable behavior — a feature, fix, removal, env-var/config change, or API/UI change — must add a `CHANGELOG.md` entry in the same change** (create the file if it does not exist). Entries are user-facing and concise; pure internal refactors, docs-only edits, and planning notes (which belong in `progress.md`) do not require one. This is in addition to the `progress.md` log and the `IMPLEMENT.md` checkbox flip.
+
 ## Key design choices
 
 - **Streaming is deliberately not implemented** in the agent — callers must send `stream: false`. Adding SSE would require restructuring the tool loop.

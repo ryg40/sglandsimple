@@ -73,7 +73,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), and **21** (Deep Agent platform — all TBD). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **20** (Standup Jira cockpit), **22** (UX/chat polish + Wrangler derived fields), and **23** (Confluence wire-up + cross-system enrichment) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — all TBD), and **24** (standup Epics + Templates reference rail — all TBD). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), and **23** (Confluence wire-up + cross-system enrichment) are complete but retained here until the next archive pass.
 
 ---
 
@@ -1265,6 +1265,94 @@ Author docs that explain the *processes the dashboard executes*, aimed at cowork
 
 ---
 
+## Stage 24 — Standup reference rail: foldable Epics + Templates panels
+
+**Goal:** Give the `/standup` view two always-at-hand reference panels so a scrum master can drive backlog work *while the team is talking* without leaving the page or hunting through Jira/Confluence. Both panels are **collapsible** (fold to a one-line header) so they cost almost no vertical space when idle but expand to full reference detail on click. They surface the on-hand context a facilitator needs to quickly create stories, assign work, reclassify a story, add tags, or kick off ticket/doc generation.
+
+This stage is **read-first and additive**. It does not introduce a new write path: Epics is a live read of the existing `epics` collection, the Templates **fields table** is a read of per-epic customized fields, and the Templates **prompt library** renders Markdown templates the MCP server already (or will) own. Editing of either is explicitly deferred to a future stage; the data shapes and component seams below are chosen so editing can be layered on without a rewrite.
+
+> **Placement.** `/standup` today (`web/src/routes/standup.tsx`) is a two-column layout: Explorer-dominant main area + a right `aside` carrying the chat/approval tray and the collapsed Jira Configuration bubble. The two new panels live in that same `aside` (or a dedicated reference column on xl screens), above or below the Jira Configuration bubble, each as a self-contained collapsible card. Reuse the existing collapse idiom already used for the Jira Configuration bubble (`configOpen` + `ChevronDown/ChevronUp`), not a new dependency.
+
+### 24a. Epics panel — active-epic quick reference
+
+A foldable card titled **Epics** (collapsed shows count + a one-line summary, e.g. "4 active epics"). Expanded, it lists the **currently active epics** (those whose `status` is not done/archived — reuse the `overview_summary` "active" notion). Each epic row shows the most important fields a facilitator references mid-standup to create/triage stories:
+
+- `epic_key` / `jira_key` (with a deep link to Jira via `JIRA_BASE_URL`)
+- `title`
+- `program_area`
+- `status` and `priority` (as badges)
+- `tags[]` / `regulation_refs[]` / `db_platform_combos[]` (the classification chips used when reclassifying or tagging a story)
+- `ticket_refs[]` count and `finding_ids[]` linkage (so a facilitator can see what's already attached)
+
+The list is compact and scannable; rows can expand to show the full field set. Selecting an epic row should set the standup context (e.g. emit an `explorer.selection`-style hint / set local selected-epic state) so the chat agent's "follow up on X" phrasing can resolve against it — wire this to the existing selection plumbing if cheap, otherwise leave a clearly-marked seam. **Read-only**; no inline edit.
+
+### 24b. Templates panel — fields table + prompt library
+
+A second foldable card titled **Templates**, containing **two** sub-sections:
+
+**1. Per-epic customized-fields table.** A table showing, for each (active) epic, the customized/critical fields and their current values — the same fields a facilitator would set when creating or reclassifying a story under that epic (e.g. `program_area`, `priority`, `status`, `regulation_refs`, `db_platform_combos`, default labels/tags, epic link). This is a **read-only** projection now; it must be built so that **cells become editable in a future stage** — i.e. render values through a small presentational cell component and key the table off a typed field-spec list, not hardcoded `<td>`s, so an editor can drop in later. Add a visible "Editing coming soon" affordance.
+
+**2. Prompt/template library — dropdown + Markdown viewport.** A window split into (a) a **dropdown-selectable list** of named Markdown templates/prompts and (b) a **Markdown rendering viewport** showing the selected template. These are the prompts the **MCP server** uses, executed via `tool_calls`, to generate **Jira tickets** and **Confluence docs**. Selecting a name renders its Markdown body using the existing `Markdown` component (`react-markdown` + `remark-gfm` + `rehype-highlight`, already used by `/docs` and `/architecture`) — **do not** add a new Markdown dependency. This is **read-only/preview** now but must be built for **future editability** (textarea-editor seam like `/docs`), so source the template bodies from a backend store/tool rather than inlining them in the component.
+
+### 24c. Backend / data shape
+
+Reuse existing infrastructure; add only thin read tools/proxies:
+
+- **Epics + fields:** read the `epics` collection. Prefer reusing `overview_summary`'s epic roll-up or `get_rows("epics")` via `validate_spec`; expose to the web layer as a `/api/standup/epics` proxy (or extend an existing standup proxy) returning active epics with the 24a fields. No new write path.
+- **Templates fields table:** derive the per-epic customized-field projection from the same epics read; define the field-spec (which keys are "customized/critical") in one typed place shared by backend shape and frontend table so the future editor and this view agree.
+- **Prompt/template library:** the templates are MCP-owned prompts for ticket/doc generation. Source them where the standup agent already reasons about templates (`mcp/standup_agent.py` builds deterministic Jira story-template context; Stage-9 carries a workflow Jira template, `mcp/workflow/pr_template.py`). Expose a `standup_templates` MCP tool (list `{name, kind: jira|confluence, body_md}`) + a `/api/standup/templates` proxy. Bodies live in a backend-owned location (a `standup_templates` seed/collection or a templates module) so a future stage can make them editable and so `tool_calls` execute the same source the UI previews. **No live ticket/doc writes in this stage** — preview only; generation stays behind the existing dry-run/HITL gates.
+
+### 24d. Env surface (proposed)
+
+| Var | Default | Required | Stage | Notes |
+| --- | --- | --- | --- | --- |
+| `STANDUP_EPICS_ACTIVE_ONLY` | `true` | no | 24 | Epics panel lists only non-done/archived epics; `false` shows all |
+| `STANDUP_EPICS_LIMIT` | `25` | no | 24 | Max epics returned to the Epics panel / fields table |
+| `STANDUP_TEMPLATES_ENABLED` | `true` | no | 24 | Master gate for the Templates prompt-library panel |
+
+### 24e. Verification intent
+
+1. `/standup` shows an **Epics** card and a **Templates** card; both are collapsed by default (one-line header) and expand on click without pushing the Explorer off-screen.
+2. The Epics panel lists the active epics from the `epics` collection with key/title/program_area/status/priority/tags and Jira deep links; a done/archived epic is excluded (or shown only when `STANDUP_EPICS_ACTIVE_ONLY=false`).
+3. The Templates **fields table** renders per-epic customized fields and values, read-only, with an "editing coming soon" affordance and a cell/field-spec structure ready for a future editor.
+4. The Templates **prompt library** offers a dropdown of named templates and renders the selected one as Markdown in the viewport using the existing `Markdown` component; switching selection re-renders.
+5. The template bodies are sourced from the backend (the same source `tool_calls` would execute), not inlined in the component.
+6. No new external writes; existing dry-run/HITL gates untouched. Build/checks pass: `python3 -m py_compile mcp/*.py web/*.py`; `cd web && npm run build` clean.
+
+### Task checklist — Stage 24
+
+- [ ] **S24.api.1 — Active-epics read proxy for the standup panels**
+  - Files: `mcp/server.py` (or reuse `overview_summary`/`get_rows`), `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
+  - Done when: a `/api/standup/epics` proxy returns active epics (gated by `STANDUP_EPICS_ACTIVE_ONLY`/`STANDUP_EPICS_LIMIT`) with `epic_key`/`jira_key`/`title`/`program_area`/`status`/`priority`/`tags`/`regulation_refs`/`db_platform_combos`/`ticket_refs`/`finding_ids`; a typed `StandupEpic` interface + `useStandupEpics()` hook exist (no `any`); errors surfaced; read-only (no write tool added). `python3 -m py_compile` + `cd web && npm run build` clean.
+  - Depends on: S20.ui.1.
+
+- [ ] **S24.epics.1 — Foldable Epics reference card**
+  - Files: `web/src/routes/standup.tsx`, optional `web/src/components/standup-epics.tsx`.
+  - Done when: a collapsible **Epics** card (reusing the existing `configOpen`/Chevron collapse idiom — no new dep) sits in the standup `aside`; collapsed header shows active count; expanded shows scannable rows with key/title/program_area/status+priority badges and classification chips (tags/regulation_refs/db_platform_combos), Jira deep links via `JIRA_BASE_URL`, and per-row expand for the full field set; selecting a row sets local selected-epic context (wired to existing selection plumbing if cheap, else a marked seam). Read-only. Build clean.
+  - Depends on: S24.api.1.
+
+- [ ] **S24.templates.api.1 — `standup_templates` MCP tool + proxy (ticket/doc prompt library)**
+  - Files: `mcp/standup_templates.py` (new) or extend `mcp/standup_agent.py`, `mcp/server.py`, `web/main.py`, `web/src/lib/queries.ts`, `web/src/lib/types.ts`.
+  - Done when: a `standup_templates` MCP tool lists `{name, kind: "jira"|"confluence", body_md, description?}` from a backend-owned source (seed/collection or templates module) — the *same* source that `tool_calls` use to generate Jira tickets/Confluence docs; a `/api/standup/templates` proxy + typed `useStandupTemplates()` hook expose it; gated by `STANDUP_TEMPLATES_ENABLED`. Bodies are not inlined in the frontend. **Future-edit seam:** structure leaves room for an upsert tool later (note it in code/comments); no edit endpoint added now. Build/compile clean.
+  - Depends on: S20.agent.1.
+
+- [ ] **S24.templates.ui.1 — Templates card: customized-fields table + prompt-library viewport**
+  - Files: `web/src/routes/standup.tsx`, optional `web/src/components/standup-templates.tsx`.
+  - Done when: a collapsible **Templates** card holds two sub-sections — (1) a per-epic **customized-fields table** rendered from a typed field-spec list through a presentational cell component (read-only, with an "editing coming soon" affordance, structured so a future editor drops in), and (2) a **prompt library** with a dropdown of template names (from `useStandupTemplates`) and a Markdown viewport rendering the selected template via the existing `Markdown` component (no new Markdown dep); switching selection re-renders; editor seam noted for a future stage. Build clean.
+  - Depends on: S24.api.1, S24.templates.api.1.
+
+- [ ] **S24.future.1 — Document the deferred editability path (feature improvement)**
+  - Files: `docs/standup.md`, `IMPLEMENT.md`.
+  - Done when: `docs/standup.md` records that the Epics fields table and the template prompt library are **read-only in Stage 24** and captures the planned future feature — inline-editable epic fields and editable Markdown templates (textarea-editor like `/docs`, backed by an upsert MCP tool + audited write-layer) — including the component/data seams left in place so the editor can be added without a rewrite.
+  - Depends on: S24.epics.1, S24.templates.ui.1.
+
+- [ ] **S24.verify.1 — Build + standup reference-rail review**
+  - Files: `IMPLEMENT.md`, `progress.md`.
+  - Done when: `python3 -m py_compile mcp/*.py web/*.py` and `cd web && npm run build` pass; manual review confirms both cards are collapsed by default, expand without displacing the Explorer, the Epics panel lists active epics with the 24a fields + Jira links, the fields table is read-only with the future-edit affordance, and the prompt library dropdown renders each template as Markdown; results logged in `progress.md`.
+  - Depends on: S24.epics.1, S24.templates.ui.1.
+
+---
+
 ## Stage 5 — GitHub Copilot as an upstream provider (SHELVED)
 
 **Goal:** Let the stack target a GitHub Copilot subscription as `UPSTREAM_*` so the same agent + MCP plumbing can run on Copilot-hosted models.
@@ -1475,6 +1563,9 @@ All values live in `.env.local` (gitignored). `compose.yaml` uses `${VAR:?requir
 | `STANDUP_AGENT_INTERVAL_SECONDS` | `0` | no | 20 | `0` = on-demand only; positive enables periodic suggestions |
 | `STANDUP_REQUIRE_ADMIN` | `true` | no | 20 | Require admin/approval capability for session control and approvals |
 | `STANDUP_DRY_RUN_ONLY` | `true` | no | 20 | Extra guardrail: never apply live writes from Standup even if connector writes are enabled |
+| `STANDUP_EPICS_ACTIVE_ONLY` | `true` | no | 24 | Epics panel lists only non-done/archived epics; `false` shows all |
+| `STANDUP_EPICS_LIMIT` | `25` | no | 24 | Max epics returned to the Epics panel / fields table |
+| `STANDUP_TEMPLATES_ENABLED` | `true` | no | 24 | Master gate for the Templates prompt-library panel |
 | `JIRA_WRITES_ENABLED` | `false` | no | 16 | When `false`, `jira_apply_staged` produces a dry-run plan |
 | `JIRA_STAGE_MAX_EDITS` | `100` | no | 16 | Hard cap on issues per `jira_stage_edits` call |
 | `UPSTREAM_MAX_TOKENS` | `0` | no | 17 | Default `max_tokens` forwarded to upstream when client omits it |
