@@ -1,14 +1,17 @@
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 httpx==0.28.1
-openai==1.59.7
-langgraph==0.2.62
-langgraph-checkpoint-mongodb==0.1.0
-langchain-openai==0.2.14
-langchain-core==0.3.28
-motor==3.6.0
-pydantic==2.10.4
-tiktoken==0.8.0
+openai==2.38.0
+# LangChain 1.x line — required by deepagents (Stage 21, S21.upgrade.1).
+langgraph==1.2.1
+langgraph-checkpoint-mongodb==0.4.0
+langchain-openai==1.2.2
+langchain-core==1.4.0
+deepagents==0.6.3
+# motor unpinned to >=3.7 so it accepts pymongo>=4.12 that checkpoint-mongodb 0.4.0 needs.
+motor>=3.7,<4
+pydantic>=2.10,<3
+tiktoken==0.13.0
 fpdf2==2.7.9
 python-pptx==1.0.2
 snowflake-connector-python==3.10.0

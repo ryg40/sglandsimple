@@ -190,8 +190,12 @@ traces, pending approvals, resume/cancel.
 ## 10. Deployment
 
 `DEEP_AGENT_RUNTIME_MODE`: `in_mcp` (default/baseline — code in the `mcp`
-container), `sidecar` (`agent-runtime` container), `remote` (ECS/Fargate or
-K8s). Managed blueprints (≥1 in this stage): ECS/Fargate (task role, Secrets
+container), `sidecar` (the `sandbox` container), `remote` (ECS/Fargate or
+K8s). The optional `sandbox` service (`sandbox-runtime/`, added in
+`S21.upgrade.1`) already exists as the isolated, non-root sidecar shell — gated
+behind the `sandbox` compose profile so it's off by default
+(`docker compose --profile sandbox up -d`); it shares the `./sandbox` mount with
+`mcp` and idles until `S21.deploy.1` gives it the runtime entrypoint. Managed blueprints (≥1 in this stage): ECS/Fargate (task role, Secrets
 Manager/SSM, CloudWatch, VPC reach to Mongo + connectors) or K8s
 (Helm/Kustomize, config maps for profiles, HPA on concurrent runs). Optional
 `provider: bedrock` per agent maps model selection to Bedrock IDs + IAM; the

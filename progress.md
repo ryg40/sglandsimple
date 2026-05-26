@@ -4,6 +4,17 @@
 **Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `d8bd928` (`docs(S20): add task to dedupe optimistic + echoed standup messages`).
 
+## Session 2026-05-26 (pi agent) — S21.upgrade.1 (LangChain 1.x + deepagents) on branch `stage-21-langchain-upgrade`
+
+Started Stage 21 implementation on a new branch. **S21.upgrade.1 DONE.**
+
+- **Resolved a conflict-free version set** by dry-run resolving `deepagents` against our deps in a throwaway venv: `deepagents==0.6.3`, `langchain-core==1.4.0`, `langchain==1.3.1` (transitive), `langchain-openai==1.2.2`, `langgraph==1.2.1`, `langgraph-checkpoint-mongodb==0.4.0`, `openai==2.38.0`, `tiktoken==0.13.0`. Had to **relax `motor` to `>=3.7,<4`** (checkpoint-mongodb 0.4.0 requires `pymongo>=4.12`, blocked by the old `motor==3.6.0`) and `pydantic>=2.10,<3`. Verified the full set (incl. snowflake/fpdf2/pptx) resolves with no conflicts.
+- **One real API break, fixed:** checkpoint-mongodb 0.4.0 dropped `langgraph.checkpoint.mongodb.aio.AsyncMongoDBSaver`. The unified `MongoDBSaver` serves the async checkpointer interface but its `from_conn_string` is a **sync** `@contextmanager` — first attempt `async with` failed at runtime (`'_GeneratorContextManager' object does not support the asynchronous context manager protocol`, caught by `smoke_deep_agent.sh`). Fixed `mcp/checkpointer.py` to enter it with `with` inside our `@asynccontextmanager`. `mcp/llm.py` unchanged (raw `openai` SDK + basic `ChatOpenAI` ctor, stable across versions). Dockerfile unchanged (py3.12 already).
+- **Verified live** (mcp rebuilt + recreated, healthy, clean startup logs): container import-smoke of every langchain/langgraph module + `server` + `deepagents` = 0 failures; `smoke_deep_agent.sh` PASS (planner/builder + Mongo checkpointer + sandbox + persistence); `smoke_ask_data.sh` 3/3; docs-agent HITL fresh→`waiting_approval`, resume `reject`→`completed` (0 applied) — exercises `interrupt`/`Command(resume)`/`MemorySaver`; `smoke_agent.sh` PASS; `smoke_workflow.sh` PASS. Stage-4 fallback not needed.
+- **Sandbox container (user request, "if necessary"):** added an **opt-in** `sandbox` runtime service — `sandbox-runtime/Dockerfile` (non-root uid-1000, shares `./sandbox`), gated behind a `sandbox` compose profile so `docker compose up` is unchanged (verified: default profile lists mongo/mcp/agent/web; `--profile sandbox` adds sandbox). Built + started + confirmed non-root + shared mount, then stopped (opt-in shouldn't linger). It idles until the Stage-21 sidecar runtime (`S21.deploy.1`) gives it an entrypoint; `DEEP_AGENT_RUNTIME_MODE=sidecar` is its hook. Added `DEEP_AGENT_RUNTIME_MODE`/`DEEP_AGENT_ARTIFACT_DIR`/`DEEP_AGENT_DRY_RUN_ONLY` to `.env.example`; CHANGELOG updated; design doc deployment note updated.
+
+Branch `stage-21-langchain-upgrade`; not yet merged to main. Next: `S21.profile.1`.
+
 ## Session 2026-05-26 (pi agent) — S21 design revised to deepagents SDK + roster + contributor guide
 
 Revisited S21.arch.1 against the LangChain `deepagents` overview (fetched the overview + subagents pages) and our current deps. User decisions: **adopt `deepagents`** as the runtime, and **one agent per external system** (read/write gated per-tool via `interrupt_on` + `write_policy`, not separate reader/writer agents).

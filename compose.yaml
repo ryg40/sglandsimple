@@ -81,6 +81,36 @@ services:
       timeout: 3s
       retries: 5
 
+  # Stage 21 — optional Deep Agent sandbox runtime (off by default).
+  #
+  # An isolated, non-root container for running agent shell/code/filesystem
+  # work away from the MCP request path and Mongo credentials. Only starts
+  # when the `sandbox` compose profile is selected
+  # (`docker compose --profile sandbox up -d`) — a plain `docker compose up`
+  # leaves it stopped, so existing behavior is unchanged. It shares the same
+  # `./sandbox` bind mount (uid 1000) as `mcp`, so files written here are
+  # visible to the in-mcp deep-agent and vice versa. Until the Stage-21
+  # sidecar runtime lands (S21.deploy.1) it idles; use it via
+  # `docker compose exec sandbox bash`.
+  sandbox:
+    build: ./sandbox-runtime
+    container_name: sglandsimple-sandbox
+    restart: unless-stopped
+    profiles:
+      - sandbox
+    env_file:
+      - .env.local
+    environment:
+      DEEP_AGENT_RUNTIME_MODE: ${DEEP_AGENT_RUNTIME_MODE:-in_mcp}
+      DEEP_AGENT_ARTIFACT_DIR: ${DEEP_AGENT_ARTIFACT_DIR:-/sandbox/agent-artifacts}
+      DEEP_AGENT_DRY_RUN_ONLY: ${DEEP_AGENT_DRY_RUN_ONLY:-true}
+    volumes:
+      - ./sandbox:/sandbox
+    # LAN-only, default network only — deliberately NOT on `proxy`. The sandbox
+    # runtime is never publicly reachable.
+    networks:
+      - default
+
   agent:
     build: ./agent
     container_name: sglandsimple-agent
