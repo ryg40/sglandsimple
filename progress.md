@@ -4,6 +4,19 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-26 (pi agent) — Stage 27: widenable standup chat + main-grid reference rail
+
+Added **Stage 27 (S27.layout.1)** to `IMPLEMENT.md` and implemented it. Goal: improve `/standup` screen-share ergonomics.
+
+- `web/src/components/standup-chat.tsx`: added optional `expanded`/`onToggleExpand` props and a header **Widen/Collapse** button (Maximize2/Minimize2 icons, `aria-pressed`). Layout is parent-controlled; chat send/presence/Summarize unchanged.
+- `web/src/routes/standup.tsx`: new `chatExpanded` state. Outer grid switches between `xl:grid-cols-[minmax(0,1fr)_23rem]` (collapsed) and `grid-cols-1` (widened); when widened, the chat aside is `order-1` (full width on top) and the main section `order-2`. Moved **Epics** and **Approvals viewport** out of the right aside into the main left section as a `lg:grid-cols-2` two-up grid (below Jira Explorer / config-trace / Templates). The right aside is now chat-only.
+- **Jira Configuration / tool trace** card already always renders its header/card as a stable section item; only its `CardContent` is toggled, so its show/hide no longer reflows the grid. Documented this guarantee.
+- Updated `docs/standup.md` and `CHANGELOG.md`; flipped the S27.layout.1 checkbox.
+
+**Verification:** `cd web && npm run build` passed (tsc + vite; pre-existing chunk-size warning only). No backend/`.py` changes, so no py_compile needed.
+
+**Git:** changes left in the working tree (`CHANGELOG.md`, `IMPLEMENT.md`, `docs/standup.md`, `web/src/routes/standup.tsx`, `web/src/components/standup-chat.tsx`, `progress.md`). Not committed/pushed — see note below.
+
 ## Session 2026-05-26 (pi agent) — Standup layout follow-up: chat top, templates bottom
 
 Adjusted `/standup` layout for screen-share ergonomics:

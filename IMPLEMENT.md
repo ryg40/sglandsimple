@@ -73,7 +73,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — in progress), and **26** (chat runtime visibility — planned). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), **23** (Confluence wire-up + cross-system enrichment), **24** (standup Epics + Templates reference rail), and **25** (standup production approvals viewport) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — in progress), **26** (chat runtime visibility — planned), and **27** (standup view layout — **DONE**, retained until archive). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), **23** (Confluence wire-up + cross-system enrichment), **24** (standup Epics + Templates reference rail), and **25** (standup production approvals viewport) are complete but retained here until the next archive pass.
 
 ---
 
@@ -1385,6 +1385,20 @@ Reuse existing infrastructure; add only thin read tools/proxies:
   - Done when: `/chat` displays a compact runtime panel/banner showing the active OpenAI-compatible endpoint (redacted host/path only; no keys), provider, and model used by the main agent; the same panel lists Deep-Agent/subagent roles/profiles that may be delegated to (orchestrator, atlassian, mongo, github, servicenow, aws, audit, docs, standup) with each role's configured provider/model/endpoint and whether it inherits the upstream default; secrets/API keys are never exposed; values come from a server-side `/api/chat/runtime` proxy backed by an MCP/runtime-info tool, not from frontend env constants; unauthenticated users cannot read it; normal authenticated users get read-only visibility; admins with `canAdminAuth` (or a future narrower capability) see a clearly-marked future-control affordance for selecting/modifying provider/model, but no mutation endpoint is added in this first task; the design notes how a later task can persist admin overrides safely (validated allowlist, audit log, rollback, no secrets in JSON payloads); `python3 -m py_compile agent/*.py mcp/*.py web/*.py` and `cd web && npm run build` pass.
   - Git handoff: before coding, `git pull --ff-only origin main`; stage by explicit path only (`git add agent/main.py mcp/llm.py mcp/deep_agent/profiles.py mcp/deep_agent/runtime.py mcp/server.py web/main.py web/src/components/chat-assistant.tsx web/src/lib/queries.ts web/src/lib/types.ts docs/clients.md IMPLEMENT.md progress.md` as applicable — never `git add -A`/`.`/`commit -a`); inspect `git status --short` and `git diff --cached --stat`; commit with a focused message such as `feat(S26): show chat runtime model routing`; push the feature branch; merge via PR or fast-forward only after review/smokes pass.
   - Depends on: S21.profile.1, S21.orch.1, S22.chat.3.
+
+---
+
+## Stage 27 — Standup view layout: widenable chat + main-section reference grid (planned)
+
+**Goal:** Improve the `/standup` cockpit layout for screen-share readability. Make the live chat panel **widenable** so a presenter can expand it for easier viewing during standup, move the **Epics** and **Approvals viewport** cards out of the narrow right rail and into the main left section as grid items, and keep the **Jira Configuration / tool trace** card rendered as a consistent grid item rather than something that disappears or destabilizes the grid when toggled.
+
+### Task checklist — Stage 27
+
+- [x] **S27.layout.1 — Widenable chat + Epics/Approvals in main grid + stable config/trace grid item** ✅ DONE
+  - Files: `web/src/routes/standup.tsx`, `web/src/components/standup-chat.tsx`, `docs/standup.md`, `CHANGELOG.md`, `IMPLEMENT.md`, `progress.md`.
+  - Done when: the standup chat panel has an expand/widen affordance (header toggle) that lets a presenter widen it (e.g. span the full row / both grid columns) and collapse it back to the rail width, with the chat remaining fully functional (send, presence, summarize) in both states; the **Epics** and **Approvals viewport** cards render in the main left section as grid items rather than only in the right `23rem` aside; the **Jira Configuration / tool trace** card always renders as a grid item and its show/hide toggle does not break the surrounding grid layout; the existing RBAC/dry-run gates, proposal Save/Submit/Reject flow, and websocket trace wiring are unchanged in behavior; `cd web && npm run build` passes.
+  - Git handoff: before coding, confirm `git status` and `git log --oneline -1`; stage by explicit path only (`git add web/src/routes/standup.tsx web/src/components/standup-chat.tsx docs/standup.md CHANGELOG.md IMPLEMENT.md progress.md` — never `git add -A`/`.`/`commit -a`); inspect `git status --short` and `git diff --cached --stat`; commit with a focused message such as `feat(S27): widenable standup chat + main-grid reference rail`; push the feature branch; merge via PR or fast-forward only after review/build pass.
+  - Depends on: S24.templates.ui.1, S25.approver.1.
 
 ---
 

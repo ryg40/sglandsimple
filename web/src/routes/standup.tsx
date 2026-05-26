@@ -312,6 +312,7 @@ function StandupTemplatesCard() {
 
 export default function Standup() {
   const [configOpen, setConfigOpen] = useState(false);
+  const [chatExpanded, setChatExpanded] = useState(false);
   const [linkCount, setLinkCount] = useState(0);
   const [associations, setAssociations] = useState<StandupAssociation[]>([]);
   const [trace, setTrace] = useState<StandupTraceState | null>(null);
@@ -351,8 +352,12 @@ export default function Standup() {
         </div>
       </div>
 
-      <div className="grid min-h-[calc(100vh-10rem)] gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]">
-        <section className="min-w-0 space-y-3">
+      <div
+        className={`grid min-h-[calc(100vh-10rem)] gap-4 ${
+          chatExpanded ? "grid-cols-1" : "xl:grid-cols-[minmax(0,1fr)_23rem]"
+        }`}
+      >
+        <section className={`min-w-0 space-y-3 ${chatExpanded ? "order-2" : ""}`}>
           <Card className="overflow-hidden">
             <CardHeader className="border-b bg-muted/20 pb-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -503,17 +508,9 @@ export default function Standup() {
           </Card>
 
           <StandupTemplatesCard />
-        </section>
 
-        <aside className="flex min-h-0 flex-col gap-4">
-          <StandupChat
-            sessionId="daily-standup"
-            onAssociationCountChange={setLinkCount}
-            onAssociationsChange={setAssociations}
-            onTraceChange={setTrace}
-            onControlsChange={setControls}
-          />
-          <StandupEpicsCard selectedEpicKey={selectedEpic?.epic_key ?? null} onSelectEpic={setSelectedEpic} />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <StandupEpicsCard selectedEpicKey={selectedEpic?.epic_key ?? null} onSelectEpic={setSelectedEpic} />
 
           <Card>
             <CardHeader className="pb-3">
@@ -621,6 +618,19 @@ export default function Standup() {
               </div>
             </CardContent>
           </Card>
+          </div>
+        </section>
+
+        <aside className={`flex min-h-0 flex-col gap-4 ${chatExpanded ? "order-1" : ""}`}>
+          <StandupChat
+            sessionId="daily-standup"
+            onAssociationCountChange={setLinkCount}
+            onAssociationsChange={setAssociations}
+            onTraceChange={setTrace}
+            onControlsChange={setControls}
+            expanded={chatExpanded}
+            onToggleExpand={() => setChatExpanded((value) => !value)}
+          />
         </aside>
       </div>
     </div>

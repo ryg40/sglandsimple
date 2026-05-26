@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link2, MessageSquare, Radio, RefreshCw, UsersRound, WifiOff } from "lucide-react";
+import { Link2, Maximize2, MessageSquare, Minimize2, Radio, RefreshCw, UsersRound, WifiOff } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -95,6 +95,10 @@ type StandupChatProps = {
   onAssociationsChange?: (associations: StandupAssociation[]) => void;
   onTraceChange?: (trace: StandupTraceState) => void;
   onControlsChange?: (controls: StandupControls) => void;
+  /** When true, the chat is rendered widened (parent controls the grid span). */
+  expanded?: boolean;
+  /** Toggle the widened state; when provided, a header expand/collapse button is shown. */
+  onToggleExpand?: () => void;
 };
 
 function normalizeProposal(raw: unknown): StandupProposal | null {
@@ -324,6 +328,8 @@ export function StandupChat({
   onAssociationsChange,
   onTraceChange,
   onControlsChange,
+  expanded = false,
+  onToggleExpand,
 }: StandupChatProps) {
   const { me } = useAuth();
   const [messages, setMessages] = useState<StandupChatMessage[]>(INITIAL_MESSAGES);
@@ -628,10 +634,26 @@ export function StandupChat({
             </CardTitle>
             <CardDescription>Live session chat with local fallback when the websocket endpoint is absent.</CardDescription>
           </div>
-          <Badge variant={statusBadgeVariant(connection.status)} className="gap-1 whitespace-nowrap text-[10px]">
-            {connection.status === "local" ? <WifiOff className="size-3" /> : <Radio className="size-3" />}
-            {connection.status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={statusBadgeVariant(connection.status)} className="gap-1 whitespace-nowrap text-[10px]">
+              {connection.status === "local" ? <WifiOff className="size-3" /> : <Radio className="size-3" />}
+              {connection.status}
+            </Badge>
+            {onToggleExpand && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 px-2"
+                onClick={onToggleExpand}
+                aria-pressed={expanded}
+                title={expanded ? "Collapse chat to the rail" : "Widen chat for easier viewing"}
+              >
+                {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+                {expanded ? "Collapse" : "Widen"}
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3 p-3">
