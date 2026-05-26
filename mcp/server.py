@@ -686,6 +686,16 @@ TOOLS.extend([
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "chat_runtime_info",
+        "description": (
+            "Report the active LLM runtime routing for the chat agent and the "
+            "Deep Agent platform: provider, redacted endpoint (host+path only, "
+            "never keys), and model for the public chat agent plus each system "
+            "agent/role. Read-only runtime visibility (Stage 26)."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "agent_run_start",
         "description": (
             "Start a Deep Agent run. Routes the goal to one system agent (or the "
@@ -1351,6 +1361,49 @@ async def _tool_agent_profiles_list(args: dict[str, Any]) -> dict[str, Any]:
     return _agent_envelope({"agents": profiles}, "\n".join(lines))
 
 
+async def _tool_chat_runtime_info(args: dict[str, Any]) -> dict[str, Any]:
+    """Stage 26 — redacted view of which runtime answers chat + delegated work.
+
+    The public chat agent (the `/v1/chat/completions` service) talks to the
+    `default` role's upstream; the Deep Agent platform's orchestrator and
+    system agents resolve to planner/builder/default roles. No keys are
+    surfaced anywhere here."""
+    from llm import role_runtime
+
+    chat_agent = role_runtime("default")
+    try:
+        from deep_agent.runtime import runtime_info
+
+        platform = runtime_info()
+    except Exception as e:  # noqa: BLE001 — platform is optional; chat still reports
+        platform = {"error": str(e), "roles": {}, "orchestrator": None, "agents": []}
+
+    payload = {"chat_agent": chat_agent, "platform": platform}
+
+    lines = [
+        "# Chat runtime",
+        "",
+        f"**Chat agent** — provider `{chat_agent['provider']}`, "
+        f"model `{chat_agent['model']}`, endpoint `{chat_agent['endpoint']}`",
+    ]
+    agents = platform.get("agents") or []
+    if agents:
+        lines += ["", "## Deep Agent delegation"]
+        orch = platform.get("orchestrator")
+        if orch:
+            lines.append(
+                f"- **orchestrator** ({orch['role']}) — `{orch['provider']}` / "
+                f"`{orch['model']}`"
+            )
+        for a in agents:
+            inh = " · inherits default" if a["inherits_default"] else ""
+            lines.append(
+                f"- **{a['name']}** ({a['role']}) — `{a['provider']}` / "
+                f"`{a['model']}`{inh}"
+            )
+    return _agent_envelope(payload, "\n".join(lines))
+
+
 async def _tool_agent_run_start(args: dict[str, Any]) -> dict[str, Any]:
     from deep_agent.runtime import AgentRunStartRequest, agent_run_start
 
@@ -1650,6 +1703,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_deep_agent(args)
     if name == "agent_profiles_list":
         return await _tool_agent_profiles_list(args)
+    if name == "chat_runtime_info":
+        return await _tool_chat_runtime_info(args)
     if name == "agent_run_start":
         return await _tool_agent_run_start(args)
     if name == "agent_run_status":

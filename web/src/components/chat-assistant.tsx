@@ -10,6 +10,9 @@ import {
   Sparkles,
   Activity,
   Clock,
+  Cpu,
+  Lock,
+  ServerCog,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -24,7 +27,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Markdown } from "@/components/markdown";
-import { useAskData, useChat } from "@/lib/queries";
+import { useAuth, Capability } from "@/components/auth-provider";
+import { useAskData, useChat, useChatRuntime } from "@/lib/queries";
 import type { ChatCompletion, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -249,6 +253,104 @@ function Composer({
   );
 }
 
+// Stage 26 — read-only runtime routing panel. Shows the public chat agent's
+// provider/model/endpoint (redacted, no keys) plus the Deep-Agent roles work
+// may be delegated to. Admins (canAdminAuth) additionally see a clearly-marked
+// future-control affordance; no mutation endpoint exists yet.
+function RuntimePanel() {
+  const { hasCapability } = useAuth();
+  const isAdmin = hasCapability(Capability.CAN_ADMIN_AUTH);
+  const { data, isLoading, isError } = useChatRuntime();
+
+  return (
+    <Card className="border-border/80 bg-card/90 p-4 shadow-sm">
+      <div className="mb-3 flex items-center gap-2">
+        <ServerCog className="size-4 text-secondary" />
+        <h3 className="text-sm font-semibold">Runtime routing</h3>
+      </div>
+
+      {isLoading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3 animate-spin" /> Resolving runtime…
+        </div>
+      )}
+      {isError && (
+        <div className="text-xs text-muted-foreground">Runtime info unavailable.</div>
+      )}
+
+      {data && (
+        <div className="space-y-3 text-xs">
+          <div className="rounded-lg border border-border bg-background/70 p-3">
+            <div className="flex items-center gap-1.5 font-medium text-foreground">
+              <Cpu className="size-3 text-primary" /> Chat agent
+            </div>
+            <dl className="mt-1.5 space-y-0.5 text-muted-foreground">
+              <div className="flex justify-between gap-2">
+                <dt>Provider</dt>
+                <dd className="font-mono text-foreground">{data.chat_agent.provider}</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt>Model</dt>
+                <dd className="truncate font-mono text-foreground">{data.chat_agent.model}</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt>Endpoint</dt>
+                <dd className="truncate font-mono text-foreground" title={data.chat_agent.endpoint}>
+                  {data.chat_agent.endpoint}
+                </dd>
+              </div>
+            </dl>
+          </div>
+
+          {data.platform.agents.length > 0 && (
+            <div>
+              <div className="mb-1.5 font-medium text-foreground">Delegated agents</div>
+              <ul className="space-y-1">
+                {data.platform.orchestrator && (
+                  <li className="flex items-center justify-between gap-2 text-muted-foreground">
+                    <span className="truncate">orchestrator</span>
+                    <span className="shrink-0 font-mono text-foreground">
+                      {data.platform.orchestrator.model}
+                    </span>
+                  </li>
+                )}
+                {data.platform.agents.map((a) => (
+                  <li key={a.name} className="flex items-center justify-between gap-2 text-muted-foreground">
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className="truncate">{a.name}</span>
+                      {a.inherits_default && (
+                        <Badge variant="outline" className="shrink-0 px-1 py-0 text-[9px]">default</Badge>
+                      )}
+                    </span>
+                    <span className="shrink-0 font-mono text-foreground" title={a.endpoint}>
+                      {a.model}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {isAdmin ? (
+            <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-2.5 text-[11px] leading-4 text-muted-foreground">
+              <div className="mb-0.5 flex items-center gap-1 font-medium text-foreground">
+                <Lock className="size-3 text-primary" /> Admin · model routing
+              </div>
+              Selecting/overriding provider &amp; model from here is planned (a
+              future task). It will use a validated allowlist with an audit log
+              and rollback — no secrets in the payload. Read-only for now.
+            </div>
+          ) : (
+            <p className="text-[10px] leading-4 text-muted-foreground">
+              API keys are never exposed here. Routing is configured server-side.
+            </p>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function ChatWorkspace() {
   const session = useAssistantSession();
   const [tipIndex, setTipIndex] = useState(0);
@@ -311,6 +413,7 @@ export function ChatWorkspace() {
                 </div>
               </div>
             </Card>
+            <RuntimePanel />
           </div>
 
           <div className="flex min-h-[36rem] flex-col gap-4 xl:order-2">

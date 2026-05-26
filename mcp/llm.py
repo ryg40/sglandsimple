@@ -82,6 +82,71 @@ def llm_max_tokens(role: str = "default") -> int:
     return int(val) if val else 0
 
 
+def _redact_endpoint(base_url: str) -> str:
+    """Host + path of an endpoint, with any embedded credentials/query stripped.
+
+    Used for runtime-visibility surfaces (Stage 26): callers may show *where*
+    a role's traffic goes, never *how* it authenticates. A URL like
+    ``https://user:pass@host:8000/v1?k=secret`` becomes ``host:8000/v1``.
+    """
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(base_url)
+    except ValueError:
+        return "(unparseable endpoint)"
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    path = (parts.path or "").rstrip("/")
+    return f"{host}{path}" if host else (path or "(no endpoint)")
+
+
+def _provider_for(prefix: str, base_url: str) -> str:
+    """Best-effort provider label for a role's endpoint.
+
+    An explicit ``<PREFIX>_PROVIDER`` env var wins; otherwise infer from the
+    host. This is a display hint only — every role in this stack still speaks
+    the OpenAI-compatible protocol regardless of the label.
+    """
+    explicit = os.environ.get(f"{prefix}_PROVIDER")
+    if explicit:
+        return explicit
+    host = _redact_endpoint(base_url).lower()
+    if "openai.com" in host:
+        return "openai"
+    if "bedrock" in host or "amazonaws.com" in host:
+        return "bedrock"
+    if "anthropic" in host:
+        return "anthropic"
+    if "azure" in host:
+        return "azure-openai"
+    return "openai-compatible"
+
+
+def role_runtime(role: str = "default") -> dict[str, object]:
+    """Redacted runtime descriptor for one role (Stage 26 visibility).
+
+    Returns provider / endpoint (host+path only) / model / max_tokens and
+    whether the role inherits the ``UPSTREAM_*`` defaults (i.e. has no role-
+    specific overrides). Never includes API keys.
+    """
+    prefix = _ROLE_PREFIX.get(role, "UPSTREAM")
+    base, model, _key = _role_env(prefix)
+    inherits = prefix == "UPSTREAM" or not any(
+        os.environ.get(f"{prefix}_{suffix}")
+        for suffix in ("BASE_URL", "MODEL", "API_KEY")
+    )
+    return {
+        "role": role,
+        "provider": _provider_for(prefix, base),
+        "endpoint": _redact_endpoint(base),
+        "model": model,
+        "max_tokens": llm_max_tokens(role),
+        "inherits_default": inherits,
+    }
+
+
 def _client() -> AsyncOpenAI:
     # Kept for backwards compatibility with callers that haven't been
     # updated to use llm_client(role=...).

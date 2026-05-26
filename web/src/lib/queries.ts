@@ -10,6 +10,7 @@ import type {
   AuthDiagnostics,
   ChatCompletion,
   ChatMessage,
+  ChatRuntimeResponse,
   CollectionsResponse,
   DeleteResult,
   InsertResult,
@@ -220,6 +221,16 @@ export function useChat() {
 export function useAskData() {
   return useMutation({
     mutationFn: (question: string) => api.post<ChatCompletion>("/api/ask_data", { question }),
+  });
+}
+
+// Stage 26 — read-only chat runtime routing (provider/endpoint/model).
+export function useChatRuntime(enabled = true) {
+  return useQuery({
+    queryKey: ["chat-runtime"],
+    queryFn: () => api.get<ChatRuntimeResponse>("/api/chat/runtime"),
+    enabled,
+    staleTime: 60_000,
   });
 }
 

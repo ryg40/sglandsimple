@@ -28,9 +28,15 @@ from typing import Any, Callable, Literal
 
 from langchain_core.tools import StructuredTool
 
-from llm import chat_model
+from llm import chat_model, role_runtime
 from .context import render_packs
-from .profiles import AgentProfile, PlatformProfiles, get_profiles, validate_against_catalog
+from .profiles import (
+    AgentProfile,
+    OrchestratorProfile,
+    PlatformProfiles,
+    get_profiles,
+    validate_against_catalog,
+)
 
 # Recorded policy events (denied / out-of-allowlist tool attempts). In S21.security.1
 # these persist to Mongo; here we keep an in-process ring so the boundary is
@@ -164,6 +170,17 @@ def _graph_runnable(name: str):
     return None
 
 
+def _subagent_role(profile: AgentProfile) -> str:
+    """The llm.py role a profile resolves to. A profile's ``model`` names a
+    role ("planner"/"builder"/"default"); anything else falls back to builder."""
+    return profile.model if profile.model in ("planner", "builder", "default") else "builder"
+
+
+def _orchestrator_role(orch: OrchestratorProfile) -> str:
+    """Routing is a small classification task → planner role by default."""
+    return orch.model if orch.model in ("planner", "builder", "default") else "planner"
+
+
 def _compile_subagent(profile: AgentProfile, live_tools: set[str]) -> Any:
     """Compile one profile into a deepagents subagent dict or CompiledSubAgent."""
     from deepagents import CompiledSubAgent
@@ -194,8 +211,7 @@ def _compile_subagent(profile: AgentProfile, live_tools: set[str]) -> Any:
     # provider string (which would resolve to a real OpenAI/Bedrock endpoint).
     # A profile's `model` selects the role ("planner"/"builder") used to resolve
     # base_url/model/key; default subagents run on the builder role.
-    role = profile.model if profile.model in ("planner", "builder", "default") else "builder"
-    sub["model"] = chat_model(role=role)
+    sub["model"] = chat_model(role=_subagent_role(profile))
     if profile.write_tools:
         sub["interrupt_on"] = profile.interrupt_on()
     return sub
@@ -230,9 +246,8 @@ def build_orchestrator(profiles: PlatformProfiles | None = None, checkpointer: A
     # write_todos that deepagents injects). Routing is a small classification
     # task → planner role. Pass a configured BaseChatModel (our upstream), not
     # a provider string.
-    orch_role = orch.model if orch.model in ("planner", "builder", "default") else "planner"
     return create_deep_agent(
-        model=chat_model(role=orch_role),
+        model=chat_model(role=_orchestrator_role(orch)),
         tools=[],
         system_prompt=orch_prompt,
         subagents=subagents,
@@ -469,3 +484,49 @@ def agent_profiles_list() -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def runtime_info() -> dict[str, Any]:
+    """Redacted runtime descriptor for the Deep Agent platform (Stage 26).
+
+    Surfaces the resolved provider/endpoint/model each role uses, plus the
+    orchestrator and every system agent mapped to its role. No API keys are
+    included. ``inherits_default`` flags a role with no role-specific env
+    overrides (it rides the ``UPSTREAM_*`` defaults).
+    """
+    profiles = get_profiles()
+    # The distinct roles in play, resolved once so the UI can show the role
+    # table and the per-agent mapping consistently.
+    roles = {
+        "default": role_runtime("default"),
+        "planner": role_runtime("planner"),
+        "builder": role_runtime("builder"),
+    }
+    orch_role = _orchestrator_role(profiles.orchestrator)
+    agents = []
+    for a in profiles.agents:
+        role = _subagent_role(a)
+        rt = roles[role]
+        agents.append(
+            {
+                "name": a.name,
+                "description": a.description.strip(),
+                "role": role,
+                "graph": a.graph,
+                "write_policy": a.write_policy,
+                "required_capability": a.required_capability,
+                "provider": rt["provider"],
+                "endpoint": rt["endpoint"],
+                "model": rt["model"],
+                "inherits_default": rt["inherits_default"],
+            }
+        )
+    return {
+        "roles": roles,
+        "orchestrator": {
+            "description": profiles.orchestrator.description.strip(),
+            "role": orch_role,
+            **{k: roles[orch_role][k] for k in ("provider", "endpoint", "model", "inherits_default")},
+        },
+        "agents": agents,
+    }

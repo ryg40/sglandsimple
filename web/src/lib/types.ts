@@ -711,3 +711,50 @@ export interface MeResponse {
   /** Present only when authenticated === true. */
   source?: string;
 }
+
+// Stage 26 — chat runtime visibility (/api/chat/runtime). Redacted: no keys.
+export interface RuntimeRole {
+  role: string;
+  provider: string;
+  /** Host + path only; credentials/query stripped server-side. */
+  endpoint: string;
+  model: string;
+  max_tokens: number;
+  /** True when the role rides the UPSTREAM_* defaults (no role overrides). */
+  inherits_default: boolean;
+}
+
+export interface RuntimeAgent {
+  name: string;
+  description: string;
+  role: string;
+  graph: string | null;
+  write_policy: string;
+  required_capability: string | null;
+  provider: string;
+  endpoint: string;
+  model: string;
+  inherits_default: boolean;
+}
+
+export interface RuntimeOrchestrator {
+  description: string;
+  role: string;
+  provider: string;
+  endpoint: string;
+  model: string;
+  inherits_default: boolean;
+}
+
+export interface ChatRuntimePlatform {
+  roles: Record<string, RuntimeRole>;
+  orchestrator: RuntimeOrchestrator | null;
+  agents: RuntimeAgent[];
+  /** Present only if the deep-agent platform failed to resolve. */
+  error?: string;
+}
+
+export interface ChatRuntimeResponse {
+  chat_agent: RuntimeRole;
+  platform: ChatRuntimePlatform;
+}

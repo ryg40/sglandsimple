@@ -334,6 +334,18 @@ async def api_chat(request: Request) -> JSONResponse:
     return JSONResponse(data)
 
 
+@app.get("/api/chat/runtime", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_READ_CHAT))])
+async def api_chat_runtime() -> JSONResponse:
+    """S26.chat-runtime.1 — read-only view of the active LLM routing.
+
+    Backed by the MCP `chat_runtime_info` tool; never exposes API keys. Any
+    authenticated chat reader may view it. The frontend gates the (future)
+    admin control affordance separately on `canAdminAuth`."""
+    result = await _mcp_tool("chat_runtime_info", {})
+    payload = _extract_json_block(result)
+    return JSONResponse(payload)
+
+
 # ---------------------------------------------------------------------------
 # Stage 6 — spreadsheet endpoints (proxy MCP)
 # ---------------------------------------------------------------------------

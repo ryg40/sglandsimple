@@ -1,8 +1,22 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
+**Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
+
+## Session 2026-05-26 (claude code) — Stage 26: chat runtime visibility (S26.chat-runtime.1)
+
+Worked in worktree `../wt-s26` (branch `s26-chat-runtime`) branched from HEAD `08147da`, per COORDINATION.md rule 2 (PiAgent worktrees active).
+
+**S26.chat-runtime.1 DONE** — the `/chat` page exposes a read-only **Runtime routing** panel: the public chat agent's provider/model/redacted-endpoint plus the Deep-Agent orchestrator and per-agent model assignments.
+- `mcp/llm.py`: added `role_runtime(role)` returning a redacted descriptor (provider / host+path endpoint / model / max_tokens / `inherits_default`); `_redact_endpoint` strips credentials + query, `_provider_for` infers a provider label (or honors `<PREFIX>_PROVIDER`). No API keys are ever returned.
+- `mcp/deep_agent/runtime.py`: factored the inline role-resolution (`_subagent_role`, `_orchestrator_role`) used by `_compile_subagent`/`build_orchestrator`, and added `runtime_info()` mapping the orchestrator + each profile to its resolved role's redacted runtime.
+- `mcp/server.py`: new `chat_runtime_info` tool (def + dispatch + `_tool_chat_runtime_info` handler) — `chat_agent` = `default` role (what the public agent service uses), `platform` = `runtime_info()`, degrades gracefully if the deep-agent package fails to import.
+- `web/main.py`: `GET /api/chat/runtime` proxy, guarded by `CAN_READ_CHAT` (read-only for any chat reader); unauthed → 401.
+- Frontend: `ChatRuntime*` types + `useChatRuntime` hook (append-only); a `RuntimePanel` in `chat-assistant.tsx` shown in the left rail. Admins (`canAdminAuth`) see a clearly-marked, non-functional "admin · model routing" affordance noting the future control path (validated allowlist + audit + rollback, no secrets); non-admins see a "keys never exposed" note. No mutation endpoint added.
+- Docs: `docs/clients.md` gained a `chat_runtime_info` section (curl + redaction note); `CHANGELOG.md` Added entry.
+
+**Validation:** `python3 -m py_compile agent/*.py mcp/*.py mcp/deep_agent/*.py web/*.py` passed; `cd web && npm run build` (tsc + vite) passed; verified `_redact_endpoint` strips embedded credentials and query strings (`https://user:secret@llm.lan:8000/v1?key=abc` → `llm.lan:8000/v1`). Runtime import-level smoke of `runtime_info()` not run on host (langgraph/langchain live only in the mcp image); covered by py_compile + isolated redaction test.
 
 ## Session 2026-05-26 (pi agent) — Stage 30 planned (multi-agent hygiene enforcement) + gitblockhook.md + S29 web deploy
 

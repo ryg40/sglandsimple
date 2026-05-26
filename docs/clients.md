@@ -268,6 +268,34 @@ curl -i http://localhost:5451/mcp \
 # HTTP 202; response arrives as event: message on GET /mcp
 ```
 
+## Chat runtime visibility (`chat_runtime_info`)
+
+The MCP server exposes a `chat_runtime_info` tool that reports which LLM
+runtime answers chat and delegated Deep-Agent work, for operators who want to
+confirm routing without reading env vars off a host:
+
+```bash
+curl -s http://localhost:5451/mcp \
+  -H 'Content-Type: application/json' \
+  ${MCP_AUTH_TOKEN:+-H "Authorization: Bearer $MCP_AUTH_TOKEN"} \
+  -H "Mcp-Session-Id: $SID" \
+  -d '{"jsonrpc":"2.0","id":6,"method":"tools/call",
+       "params":{"name":"chat_runtime_info","arguments":{}}}'
+```
+
+The JSON content block contains `chat_agent` (the public agent's
+provider/model/redacted endpoint) and `platform` (the orchestrator and each
+system agent mapped to its resolved role). **Endpoints are redacted to host +
+path only — no API keys, credentials, or query strings are ever returned.**
+Provider labels are inferred from the host (or an optional `<PREFIX>_PROVIDER`
+env var) and are display hints only; every role still speaks the
+OpenAI-compatible protocol.
+
+In the web app, the `/chat` page surfaces the same data in a read-only
+**Runtime routing** panel via the authenticated `GET /api/chat/runtime` proxy
+(any chat reader may view it). Admins additionally see a marker that
+admin-selectable provider/model routing is planned but not yet implemented.
+
 ## Notes
 
 - Streaming chat completions (`stream: true`) is not supported by the
