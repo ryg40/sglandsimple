@@ -17,7 +17,9 @@ Added **Stage 27 (S27.layout.1)** to `IMPLEMENT.md` and implemented it. Goal: im
 
 **Git:** committed `691b9b0` and pushed to `main`; `web` image rebuilt + redeployed (`docker compose build web && up -d web`, healthy on :5452).
 
-**Follow-up (same session):** per user feedback, **Widen no longer collapses to full-width**. The outer grid stays two-column in both states; widening just swaps the chat track from `23rem` → `69rem` (3×), main section keeps `minmax(0,1fr)`. Removed the `grid-cols-1` collapse and the `order-1`/`order-2` reshuffle. Updated `docs/standup.md` + `CHANGELOG.md` wording. Build passes.
+**Follow-up (same session):** per user feedback, **Widen no longer collapses to full-width**. The outer grid stays two-column in both states; widening just swaps the chat track from `23rem` → `69rem` (3×), main section keeps `minmax(0,1fr)`. Removed the `grid-cols-1` collapse and the `order-1`/`order-2` reshuffle. Updated `docs/standup.md` + `CHANGELOG.md` wording. Build passes. (committed `8df6954`, pushed by user.)
+
+**Follow-up 2 (same session):** per user, reordered the main section to **Jira Explorer → Epics + Templates (two-up `lg:grid-cols-2`) → Approvals viewport (full-width) → Jira Configuration / tool trace (moved to bottom)**. Previously Epics paired with Approvals and the config/trace card sat directly under Jira Explorer. Also added an inline **How to use this** numbered guide to the Approvals viewport (capture chat → Summarize → review/edit payload → Save → Submit/Reject, with a read-only notice for non-approvers) and simplified its `CardDescription`. `web/src/routes/standup.tsx` only; `docs/standup.md` + `CHANGELOG.md` updated. `cd web && npm run build` passes.
 
 ## Session 2026-05-26 (pi agent) — Standup layout follow-up: chat top, templates bottom
 

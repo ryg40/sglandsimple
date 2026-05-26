@@ -379,6 +379,132 @@ export default function Standup() {
             </CardContent>
           </Card>
 
+          <div className="grid gap-4 lg:grid-cols-2">
+            <StandupEpicsCard selectedEpicKey={selectedEpic?.epic_key ?? null} onSelectEpic={setSelectedEpic} />
+            <StandupTemplatesCard />
+          </div>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Bot className="size-4 text-primary" />
+                    Approvals viewport
+                  </CardTitle>
+                  <CardDescription>
+                    Staging area for follow-ups the agent proposes from the standup chat. Every item is a dry-run until an approver submits it through the production gates.
+                  </CardDescription>
+                </div>
+                <DisabledWithTooltip
+                  enabled={Boolean(controls?.canSend) && !controls?.summarizing}
+                  message={controls?.canSend ? "Summarizing…" : "Live websocket not connected"}
+                >
+                  <Button size="sm" variant="outline" onClick={() => controls?.summarize()}>
+                    <Sparkles className="size-4" />
+                    {controls?.summarizing ? "Summarizing…" : "Summarize"}
+                  </Button>
+                </DisabledWithTooltip>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0">
+              <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
+                <div className="mb-1 font-medium text-foreground">How to use this</div>
+                <ol className="ml-4 list-decimal space-y-1">
+                  <li>Capture notes, Jira keys, links, and @mentions in the chat panel.</li>
+                  <li>Click <span className="font-medium text-foreground">Summarize</span> to turn the conversation into staged proposals (new Jira work, edits, links).</li>
+                  <li>Review each proposal&apos;s rationale and target service; edit its JSON payload inline if needed.</li>
+                  <li><span className="font-medium text-foreground">Save</span> persists your edits without applying them — safe to do anytime.</li>
+                  <li><span className="font-medium text-foreground">Submit</span> revalidates and applies to production, but <em>only</em> when the live-write gates below are all enabled; otherwise it stays a validated dry-run.</li>
+                  <li><span className="font-medium text-foreground">Reject</span> discards a proposal.</li>
+                </ol>
+                {!canApprove && (
+                  <p className="mt-2 text-[color:var(--warning)]">
+                    You have read-only access. Save / Submit / Reject require the <span className="font-mono">canApproveStandupActions</span> capability or a named-approver grant.
+                  </p>
+                )}
+              </div>
+              {proposals.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-center text-xs text-muted-foreground">
+                  No staged changes yet. Capture standup notes, then run <span className="font-medium">Summarize</span> to
+                  generate proposals for approver review.
+                </div>
+              ) : (
+                proposals.map((proposal) => {
+                  const status = String(proposal.status);
+                  const decided = status !== "proposed";
+                  const validation = validationLabel(proposal);
+                  const draft = payloadDrafts[proposal.id] ?? payloadText(proposal.dry_run_payload);
+                  const parsedDraft = parsePayloadDraft(draft);
+                  return (
+                    <div key={proposal.id} className="rounded-lg border bg-muted/20 p-3 text-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 font-medium">{proposal.title ?? proposal.type ?? "Proposal"}</div>
+                        <Badge variant={proposalStatusVariant(status)} className="text-[10px] capitalize">{status}</Badge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+                        {proposal.target_service && <Badge variant="outline" className="capitalize">{proposal.target_service}</Badge>}
+                        {proposal.dry_run && <Badge variant="outline">staged</Badge>}
+                        {validation && <Badge variant="outline">{validation}</Badge>}
+                      </div>
+                      {proposal.rationale && <p className="mt-2 text-xs text-muted-foreground">{proposal.rationale}</p>}
+                      <label className="mt-3 block text-[11px] font-medium text-muted-foreground">Editable staged payload</label>
+                      <textarea
+                        className="mt-1 min-h-32 w-full rounded-md border bg-background p-2 font-mono text-[11px]"
+                        value={draft}
+                        disabled={!canApprove || decided}
+                        onChange={(event) => setPayloadDrafts((current) => ({ ...current, [proposal.id]: event.target.value }))}
+                      />
+                      {!parsedDraft && <p className="mt-1 text-[10px] text-destructive">Payload must be a valid JSON object before Save/Submit.</p>}
+                      {proposal.approval?.actor && (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {status} by {proposal.approval.actor}
+                          {proposal.approval.applied === false ? " · not applied" : " · applied"}
+                        </p>
+                      )}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <DisabledWithTooltip
+                          enabled={canApprove && !decided && Boolean(controls?.canSend) && Boolean(parsedDraft)}
+                          message={!canApprove ? "Requires approver rights" : !controls?.canSend ? "Live websocket not connected" : !parsedDraft ? "Fix JSON first" : "Already decided"}
+                        >
+                          <Button size="sm" variant="outline" onClick={() => parsedDraft && controls?.edit(proposal.id, parsedDraft)}>
+                            <Check className="size-3.5" />
+                            Save
+                          </Button>
+                        </DisabledWithTooltip>
+                        <DisabledWithTooltip
+                          enabled={canApprove && !decided && Boolean(controls?.canSend) && Boolean(parsedDraft)}
+                          message={!canApprove ? "Requires approver rights" : !controls?.canSend ? "Live websocket not connected" : !parsedDraft ? "Fix JSON first" : "Already decided"}
+                        >
+                          <Button size="sm" variant="default" onClick={() => {
+                            if (parsedDraft) controls?.edit(proposal.id, parsedDraft);
+                            controls?.approve(proposal.id);
+                          }}>
+                            <ShieldCheck className="size-3.5" />
+                            Submit
+                          </Button>
+                        </DisabledWithTooltip>
+                        <DisabledWithTooltip
+                          enabled={canApprove && !decided && Boolean(controls?.canSend)}
+                          message={!canApprove ? "Requires approver rights" : !controls?.canSend ? "Live websocket not connected" : "Already decided"}
+                        >
+                          <Button size="sm" variant="ghost" onClick={() => controls?.reject(proposal.id)}>
+                            <X className="size-3.5" />
+                            Reject
+                          </Button>
+                        </DisabledWithTooltip>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+              <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-[color:var(--warning)]">
+                <ShieldCheck className="size-4" />
+                Submit revalidates staged Jira edits and only calls production apply when STANDUP_DRY_RUN_ONLY=false, WORKFLOW_WRITES_ENABLED=true, and JIRA_WRITES_ENABLED=true.
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-3">
@@ -506,119 +632,6 @@ export default function Standup() {
               </CardContent>
             )}
           </Card>
-
-          <StandupTemplatesCard />
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <StandupEpicsCard selectedEpicKey={selectedEpic?.epic_key ?? null} onSelectEpic={setSelectedEpic} />
-
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Bot className="size-4 text-primary" />
-                    Approvals viewport
-                  </CardTitle>
-                  <CardDescription>
-                    {canApprove
-                      ? "Edit staged proposal payloads, Save without applying, then Submit through production gates when enabled."
-                      : "Read-only: Save/Submit requires the canApproveStandupActions capability or named approver grant."}
-                  </CardDescription>
-                </div>
-                <DisabledWithTooltip
-                  enabled={Boolean(controls?.canSend) && !controls?.summarizing}
-                  message={controls?.canSend ? "Summarizing…" : "Live websocket not connected"}
-                >
-                  <Button size="sm" variant="outline" onClick={() => controls?.summarize()}>
-                    <Sparkles className="size-4" />
-                    {controls?.summarizing ? "Summarizing…" : "Summarize"}
-                  </Button>
-                </DisabledWithTooltip>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3 pt-0">
-              {proposals.length === 0 ? (
-                <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-center text-xs text-muted-foreground">
-                  No staged changes yet. Capture standup notes, then run <span className="font-medium">Summarize</span> to
-                  generate proposals for approver review.
-                </div>
-              ) : (
-                proposals.map((proposal) => {
-                  const status = String(proposal.status);
-                  const decided = status !== "proposed";
-                  const validation = validationLabel(proposal);
-                  const draft = payloadDrafts[proposal.id] ?? payloadText(proposal.dry_run_payload);
-                  const parsedDraft = parsePayloadDraft(draft);
-                  return (
-                    <div key={proposal.id} className="rounded-lg border bg-muted/20 p-3 text-sm">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 font-medium">{proposal.title ?? proposal.type ?? "Proposal"}</div>
-                        <Badge variant={proposalStatusVariant(status)} className="text-[10px] capitalize">{status}</Badge>
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
-                        {proposal.target_service && <Badge variant="outline" className="capitalize">{proposal.target_service}</Badge>}
-                        {proposal.dry_run && <Badge variant="outline">staged</Badge>}
-                        {validation && <Badge variant="outline">{validation}</Badge>}
-                      </div>
-                      {proposal.rationale && <p className="mt-2 text-xs text-muted-foreground">{proposal.rationale}</p>}
-                      <label className="mt-3 block text-[11px] font-medium text-muted-foreground">Editable staged payload</label>
-                      <textarea
-                        className="mt-1 min-h-32 w-full rounded-md border bg-background p-2 font-mono text-[11px]"
-                        value={draft}
-                        disabled={!canApprove || decided}
-                        onChange={(event) => setPayloadDrafts((current) => ({ ...current, [proposal.id]: event.target.value }))}
-                      />
-                      {!parsedDraft && <p className="mt-1 text-[10px] text-destructive">Payload must be a valid JSON object before Save/Submit.</p>}
-                      {proposal.approval?.actor && (
-                        <p className="mt-1 text-[10px] text-muted-foreground">
-                          {status} by {proposal.approval.actor}
-                          {proposal.approval.applied === false ? " · not applied" : " · applied"}
-                        </p>
-                      )}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <DisabledWithTooltip
-                          enabled={canApprove && !decided && Boolean(controls?.canSend) && Boolean(parsedDraft)}
-                          message={!canApprove ? "Requires approver rights" : !controls?.canSend ? "Live websocket not connected" : !parsedDraft ? "Fix JSON first" : "Already decided"}
-                        >
-                          <Button size="sm" variant="outline" onClick={() => parsedDraft && controls?.edit(proposal.id, parsedDraft)}>
-                            <Check className="size-3.5" />
-                            Save
-                          </Button>
-                        </DisabledWithTooltip>
-                        <DisabledWithTooltip
-                          enabled={canApprove && !decided && Boolean(controls?.canSend) && Boolean(parsedDraft)}
-                          message={!canApprove ? "Requires approver rights" : !controls?.canSend ? "Live websocket not connected" : !parsedDraft ? "Fix JSON first" : "Already decided"}
-                        >
-                          <Button size="sm" variant="default" onClick={() => {
-                            if (parsedDraft) controls?.edit(proposal.id, parsedDraft);
-                            controls?.approve(proposal.id);
-                          }}>
-                            <ShieldCheck className="size-3.5" />
-                            Submit
-                          </Button>
-                        </DisabledWithTooltip>
-                        <DisabledWithTooltip
-                          enabled={canApprove && !decided && Boolean(controls?.canSend)}
-                          message={!canApprove ? "Requires approver rights" : !controls?.canSend ? "Live websocket not connected" : "Already decided"}
-                        >
-                          <Button size="sm" variant="ghost" onClick={() => controls?.reject(proposal.id)}>
-                            <X className="size-3.5" />
-                            Reject
-                          </Button>
-                        </DisabledWithTooltip>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-              <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-[color:var(--warning)]">
-                <ShieldCheck className="size-4" />
-                Submit revalidates staged Jira edits and only calls production apply when STANDUP_DRY_RUN_ONLY=false, WORKFLOW_WRITES_ENABLED=true, and JIRA_WRITES_ENABLED=true.
-              </div>
-            </CardContent>
-          </Card>
-          </div>
         </section>
 
         <aside className="flex min-h-0 flex-col gap-4">
