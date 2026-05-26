@@ -1,8 +1,20 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
+**Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 25 standup production approvals PLANNED. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `d8bd928` (`docs(S20): add task to dedupe optimistic + echoed standup messages`).
+
+## Session 2026-05-26 (pi agent, yolo) — S21.orch.1 (orchestrator + allowlist)
+
+**S21.orch.1 DONE.** Added `build_orchestrator()` to `mcp/deep_agent/runtime.py`: compiles validated profiles into a `create_deep_agent` thin router (tools=[], delegates via the built-in `task`). Non-graph profiles → subagent dicts with `StructuredTool`s wrapping `server._dispatch_tool`; graph profiles → `CompiledSubAgent` over `ask_data.build_graph()`/`docs_agent.build_docs_agent_graph()`. Per-tool allowlist enforced in the wrapper (out-of-allowlist call fails closed + records a `policy_events()` entry). Model = configured `chat_model(role=)` (our upstream, not a provider string). `_live_tool_names()` includes connector *classes* so disabled-connector tools are valid config; unknown tools fail fast. Verified in-container: orchestrator builds to CompiledStateGraph over all 8 agents; denied tool call fails closed + logs policy event. Next: S21.runtime.1.
+
+## Session 2026-05-26 (pi agent) — Stage 25 planned (standup production approvals viewport)
+
+Planning/docs-only change requested by user. Read `COORDINATION.md` first and followed its shared-file guidance: additive `IMPLEMENT.md` edit only, no broad staging/commit. Added **Stage 25 — Standup production approvals viewport (planned)** to `IMPLEMENT.md` with task `S25.approver.1`.
+
+Task captures: grant `simone.patel@lanGarland.com` `canApproveStandupActions` through the auth/capability system; render a distinct Standup **Approvals** viewport for the approver showing all staged changes/proposals; make staged payload fields editable; **Save** persists edits without applying; **Submit** revalidates and runs production apply paths only when all live-write gates are explicitly enabled (`STANDUP_DRY_RUN_ONLY=false`, `JIRA_WRITES_ENABLED=true`, `WORKFLOW_WRITES_ENABLED=true`, connector gates); audit actor/original payload/edited payload/validation/apply result; smoke viewer-forbidden + Simone save/submit behavior.
+
+Also documented the git handoff directly in the task per user request: pull first, stage named paths only (never `git add -A`/`.`/`commit -a`), inspect `git status --short` + `git diff --cached --stat`, commit with a focused `feat(S25): ...` message, push feature branch, and merge by PR or fast-forward after review/smokes. No build run (planning/docs only).
 
 ## Session 2026-05-26 (pi agent, yolo) — S21.context.1 (context packs)
 

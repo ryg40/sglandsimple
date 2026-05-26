@@ -73,7 +73,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — all TBD), and **24** (standup Epics + Templates reference rail — all TBD). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), and **23** (Confluence wire-up + cross-system enrichment) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — all TBD), **24** (standup Epics + Templates reference rail — all TBD), and **25** (standup production approvals — planned). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), and **23** (Confluence wire-up + cross-system enrichment) are complete but retained here until the next archive pass.
 
 ---
 
@@ -1026,9 +1026,9 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
   - Done: `context.py` registers named, versioned `ContextPack`s (`jira_story_template` v1, `standup_labels` v1) built from **existing** Stage-20 material (`build_story_template_context`, `ACCEPTANCE_CRITERIA_FORMAT`, `DEFAULT_STANDUP_LABELS`) — no duplicated prompts. `render_packs(names)` emits one compact version-stamped block per pack for the subagent `system_prompt`; unknown packs raise (fail-fast, like profiles); `validate_profile_packs()` cross-checks every profile's `context_packs`. **Stage-24 convergence seam:** `_try_standup_templates_store()` reads the shared `standup_templates` store first, falling back to in-repo material, so neither side forks when Stage 24 lands. Verified in-container: both packs render from real standup content, unknown pack rejects, all profile pack refs validate clean. Import-light (no deepagents at load).
   - Depends on: S21.profile.1.
 
-- [ ] **S21.orch.1 — Orchestrator + per-tool allowlist enforcement**
-  - Files: `mcp/deep_agent/runtime.py` (new), `mcp/deep_agent/catalog.py`, `mcp/server.py`.
-  - Done when: `create_deep_agent(...)` builds a thin router orchestrator (only `task` + `write_todos`, no system tools) over the compiled subagents from S21.profile.1; the orchestrator routes a goal to a subagent via the `task` tool; a subagent can only see/call its `allowed_tools` (a tool call outside the allowlist fails closed and is recorded as a policy event); the Stage-4 recursion guard (no agent calls `task`/agent-runtime tools recursively) holds.
+- [x] **S21.orch.1 — Orchestrator + per-tool allowlist enforcement** ✅ DONE
+  - Files: `mcp/deep_agent/runtime.py` (new).
+  - Done: `build_orchestrator()` compiles the validated profiles into a `deepagents` `create_deep_agent(...)` thin router — `tools=[]`, no system tools (deepagents injects `task`/`write_todos`), `system_prompt` says delegate to exactly one subagent via `task`. Each non-graph profile compiles to a subagent dict whose `tools` are LangChain `StructuredTool`s wrapping the single MCP seam `server._dispatch_tool`; graph profiles (`ask_data`/`docs_agent`) compile to `CompiledSubAgent` via `ask_data.build_graph()` / `docs_agent.build_docs_agent_graph()`. **Per-tool allowlist enforcement:** the wrapper re-checks membership at call time — a tool invoked outside its agent's allowlist returns a `[policy]` message and records a policy event (`policy_events()`), failing closed (defense in depth on top of the toolset already being scoped). Model selection hands deepagents a **configured `chat_model(role=...)`** (our upstream), not a provider string, so it never resolves to real OpenAI/Bedrock. `_live_tool_names()` builds the known-tool universe from static `TOOLS` + connector *classes* (so a real-but-disabled connector tool like `jira_apply_staged` is valid config); `validate_against_catalog` fails fast on genuinely unknown tools. Reserved-tool recursion guard holds (rejected at profile load). Verified in-container: orchestrator builds to a `CompiledStateGraph` over all 8 agents; out-of-allowlist call fails closed + records a policy event.
   - Depends on: S21.profile.1, S21.context.1.
 
 - [ ] **S21.runtime.1 — Typed agent runtime API/tools**
@@ -1369,6 +1369,20 @@ Reuse existing infrastructure; add only thin read tools/proxies:
   - Files: `IMPLEMENT.md`, `progress.md`.
   - Done when: `python3 -m py_compile mcp/*.py web/*.py` and `cd web && npm run build` pass; manual review confirms both cards are collapsed by default, expand without displacing the Explorer, the Epics panel lists active epics with the 24a fields + Jira links, the fields table is read-only with the future-edit affordance, and the prompt library dropdown renders each template as Markdown; results logged in `progress.md`.
   - Depends on: S24.epics.1, S24.templates.ui.1.
+
+---
+
+## Stage 25 — Standup production approvals viewport (planned)
+
+**Goal:** Promote the existing Standup dry-run approval tray into a restricted production-approval workflow for the named approver `simone.patel@lanGarland.com`. The regular `/standup` view can continue to stage proposals in dry-run form, but Simone's auth-resolved approver view should expose an approval viewport that shows **all staged changes**, lets the approver edit any necessary fields before finalizing, and then applies the approved production updates through the existing Stage-16/Stage-20 gates rather than stopping at dry-run validation.
+
+### Task checklist — Stage 25
+
+- [ ] **S25.approver.1 — Simone standup approver view with editable production apply**
+  - Files: `web/auth.py`, `web/src/components/auth-provider.tsx`, `web/standup_ws.py`, `web/standup_store.py`, `web/src/routes/standup.tsx`, `docs/standup.md`, `scripts/smoke_standup_ws.py`, `IMPLEMENT.md`, `progress.md`.
+  - Done when: the auth system grants `simone.patel@lanGarland.com` the standup approver capability (`canApproveStandupActions`) in a durable, auditable way (group/capability preferred over one-off UI checks; email matching case-insensitive); the approver's `/standup` view includes a distinct **Approvals** viewport listing every staged proposal/change for the session (new Jira work, Jira edits, links, Confluence/doc proposals when present) with status, source messages, rationale, validation result, and target service; every editable payload field needed by an approver can be changed inline before apply; **Save** persists the edited staged payload without applying; **Submit** revalidates the saved payload and then invokes the production apply path (`jira_apply_staged` and future equivalent connector apply tools) only when all live-write gates are explicitly enabled (`STANDUP_DRY_RUN_ONLY=false`, `JIRA_WRITES_ENABLED=true`, `WORKFLOW_WRITES_ENABLED=true`, plus any connector-specific gate); non-approvers can view only allowed read context and cannot save/submit; approvals record actor, timestamp, original payload, edited payload, validation result, apply result, and dry-run/live mode; rejected/failed applies remain recoverable and auditable; smoke coverage proves viewer forbidden, Simone save-only, Simone submit with dry-run gates still blocked, and Simone submit with test/live gates reaches the apply path; `python3 -m py_compile web/*.py scripts/smoke_standup_ws.py` and `cd web && npm run build` pass.
+  - Git handoff: before coding, `git pull --ff-only origin main`; stage by explicit path only (`git add web/auth.py web/standup_ws.py web/standup_store.py web/src/components/auth-provider.tsx web/src/routes/standup.tsx docs/standup.md scripts/smoke_standup_ws.py IMPLEMENT.md progress.md` as applicable — never `git add -A`/`.`/`commit -a`); inspect `git status --short` and `git diff --cached --stat`; commit with a focused message such as `feat(S25): add standup production approvals viewport`; push the feature branch; merge via PR or fast-forward only after review/smokes pass.
+  - Depends on: S20.approval.1, S20.auth.1, S24.templates.ui.1 (only if Confluence/doc template proposals are included in the first production viewport slice; Jira-only production apply may start earlier).
 
 ---
 
