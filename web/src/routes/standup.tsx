@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Markdown } from "@/components/markdown";
-import { useConnectors, useStandupEpics, useStandupTemplates } from "@/lib/queries";
+import { useConnectors, useSetStandupGates, useStandupEpics, useStandupGates, useStandupTemplates } from "@/lib/queries";
 import type { StandupEpic, StandupTemplate } from "@/lib/types";
 
 const GATES = [
@@ -321,7 +321,10 @@ export default function Standup() {
   const [payloadDrafts, setPayloadDrafts] = useState<Record<string, string>>({});
   const { hasCapability } = useAuth();
   const canApprove = hasCapability(Capability.CAN_APPROVE_STANDUP);
+  const canAdmin = hasCapability(Capability.CAN_ADMIN_AUTH);
   const proposals = controls?.proposals ?? [];
+  const gates = useStandupGates();
+  const setGates = useSetStandupGates();
   const connectors = useConnectors();
   const connectorRows = connectors.data?.connectors ?? [];
   const healthyConnectors = useMemo(
@@ -536,6 +539,56 @@ export default function Standup() {
                           <p className="mt-1 text-xs text-muted-foreground">{gate.detail}</p>
                         </div>
                       ))}
+                    </div>
+
+                    {/* S29.gate-toggle.1 — live effective gate state + admin dry-run toggle */}
+                    <div className="mt-3 rounded-md border bg-card p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium">Effective live writes</span>
+                        <Badge variant={gates.data?.live_writes_effective ? "destructive" : "success"} className="text-[10px]">
+                          {gates.isLoading ? "loading" : gates.data?.live_writes_effective ? "LIVE — writes reach Jira" : "dry-run (no external writes)"}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 grid gap-1.5 text-[11px]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-muted-foreground">STANDUP_DRY_RUN_ONLY <span className="text-[10px]">(web)</span></span>
+                          <Badge variant={gates.data?.dry_run_only === false ? "warning" : "outline"} className="text-[10px]">
+                            {gates.data ? String(gates.data.dry_run_only) : "—"}
+                            {gates.data?.dry_run_only_source === "override" ? " · override" : ""}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-muted-foreground">WORKFLOW_WRITES_ENABLED <span className="text-[10px]">(mcp)</span></span>
+                          <Badge variant={gates.data?.workflow_writes_enabled ? "warning" : "outline"} className="text-[10px]">{gates.data ? String(gates.data.workflow_writes_enabled) : "—"}</Badge>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-muted-foreground">JIRA_WRITES_ENABLED <span className="text-[10px]">(mcp)</span></span>
+                          <Badge variant={gates.data?.jira_writes_enabled ? "warning" : "outline"} className="text-[10px]">{gates.data ? String(gates.data.jira_writes_enabled) : "—"}</Badge>
+                        </div>
+                      </div>
+                      {canAdmin ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant={gates.data?.dry_run_only === false ? "outline" : "default"}
+                            disabled={gates.isLoading || setGates.isPending || !gates.data}
+                            onClick={() => gates.data && setGates.mutate(!gates.data.dry_run_only)}
+                          >
+                            <ShieldCheck className="size-3.5" />
+                            {setGates.isPending
+                              ? "Saving…"
+                              : gates.data?.dry_run_only === false
+                                ? "Re-enable dry-run"
+                                : "Disable dry-run (web)"}
+                          </Button>
+                          <span className="text-[10px] text-muted-foreground">
+                            Admin: flips the web gate only. The two <span className="font-mono">(mcp)</span> gates are independent and require an MCP restart — disabling dry-run alone does not enable live writes.
+                          </span>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[10px] text-muted-foreground">Read-only. Toggling the dry-run gate requires the <span className="font-mono">canAdminAuth</span> capability.</p>
+                      )}
+                      {setGates.isError && <p className="mt-1 text-[10px] text-destructive">Failed to update the gate.</p>}
                     </div>
                   </div>
 

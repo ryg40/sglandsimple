@@ -32,6 +32,8 @@ import type {
   JiraApplyResult,
   StandupEpicsResponse,
   StandupTemplatesResponse,
+  StandupGates,
+  StandupSetGatesResult,
   DocsTreeResponse,
   Doc,
   DocUpsertResult,
@@ -281,6 +283,7 @@ export const jiraKeys = { issues: ["jira-issues"] as const };
 export const standupKeys = {
   epics: ["standup-epics"] as const,
   templates: ["standup-templates"] as const,
+  gates: ["standup-gates"] as const,
 };
 
 export function useJiraIssues() {
@@ -338,6 +341,28 @@ export function useStandupTemplates() {
     queryKey: standupKeys.templates,
     queryFn: () => api.get<StandupTemplatesResponse>("/api/standup/templates"),
     staleTime: 60_000,
+  });
+}
+
+// S29.gate-toggle.1 — read the effective dry-run/live-write gate state.
+export function useStandupGates() {
+  return useQuery({
+    queryKey: standupKeys.gates,
+    queryFn: () => api.get<StandupGates>("/api/standup/gates"),
+    refetchInterval: 30_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+// S29.gate-toggle.1 — admin-only toggle of the web-side dry-run gate.
+export function useSetStandupGates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dryRunOnly: boolean) =>
+      api.post<StandupSetGatesResult>("/api/standup/gates", { dry_run_only: dryRunOnly }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: standupKeys.gates });
+    },
   });
 }
 

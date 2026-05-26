@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 import auth as _auth
@@ -29,6 +29,22 @@ def _env_bool(key: str, default: bool = True) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# S29.gate-toggle.1 — runtime override for the *web-side* dry-run gate.
+# `STANDUP_DRY_RUN_ONLY` is read per-request in this process, so an admin can
+# flip it live here. The MCP-side gates (`WORKFLOW_WRITES_ENABLED`,
+# `JIRA_WRITES_ENABLED`) are baked into the MCP process at import time and are
+# NOT changed by this override — they remain the real interlock for live writes.
+_dry_run_only_override: bool | None = None
+_gate_audit: list[dict[str, Any]] = []
+
+
+def _dry_run_only() -> bool:
+    """Effective web-side dry-run gate: in-process override wins over env."""
+    if _dry_run_only_override is not None:
+        return _dry_run_only_override
+    return _env_bool("STANDUP_DRY_RUN_ONLY", True)
 
 
 def _event_type(data: dict[str, Any]) -> str:
@@ -239,6 +255,66 @@ async def standup_snapshot(session_id: str, request: Request) -> JSONResponse:
     snapshot = await get_store().snapshot(session_id)
     snapshot["presence"] = {"participants": manager.participants(session_id)}
     return JSONResponse(snapshot)
+
+
+def _gate_state() -> dict[str, Any]:
+    """Effective gate state for the standup production-apply path.
+
+    `dry_run_only` is the web-side gate this process can toggle at runtime.
+    The other two are reported read-only because they are MCP-process import
+    constants and are not affected by the toggle here.
+    """
+    return {
+        "dry_run_only": _dry_run_only(),
+        "dry_run_only_source": "override" if _dry_run_only_override is not None else "env",
+        "workflow_writes_enabled": _env_bool("WORKFLOW_WRITES_ENABLED", False),
+        "jira_writes_enabled": _env_bool("JIRA_WRITES_ENABLED", False),
+        # The web button only flips dry_run_only; the MCP-side gates are
+        # independent and require their own enablement + an MCP restart.
+        "mcp_gates_independent": True,
+        "live_writes_effective": (
+            (not _dry_run_only())
+            and _env_bool("WORKFLOW_WRITES_ENABLED", False)
+            and _env_bool("JIRA_WRITES_ENABLED", False)
+        ),
+    }
+
+
+@router.get("/api/standup/gates")
+async def standup_gates(request: Request) -> JSONResponse:
+    """Effective production-apply gate state. Any authenticated user may read."""
+    _auth.require_user(request)
+    return JSONResponse(_gate_state())
+
+
+@router.post("/api/standup/gates")
+async def standup_set_gates(
+    request: Request,
+    payload: dict[str, Any] = Body(default_factory=dict),
+    user: Any = Depends(_auth.require_capability(_auth.Capability.CAN_ADMIN_AUTH)),
+) -> JSONResponse:
+    """Flip the web-side `STANDUP_DRY_RUN_ONLY` gate at runtime. Admin-only.
+
+    S29.gate-toggle.1 — guarded by `canAdminAuth`. Changes only the in-process
+    web gate; the MCP-side write gates are unchanged. Every change is audited.
+    """
+    global _dry_run_only_override
+    if "dry_run_only" not in payload:
+        return JSONResponse({"error": "dry_run_only (bool) is required"}, status_code=400)
+    new_value = bool(payload["dry_run_only"])
+    before = _gate_state()
+    _dry_run_only_override = new_value
+    after = _gate_state()
+    entry = {
+        "actor": getattr(user, "username", None) or getattr(user, "email", None) or "unknown",
+        "action": "standup_dry_run_only.set",
+        "before": before["dry_run_only"],
+        "after": after["dry_run_only"],
+        "live_writes_effective_after": after["live_writes_effective"],
+        "ts": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(timespec="seconds"),
+    }
+    _gate_audit.append(entry)
+    return JSONResponse({"gates": after, "audit": entry})
 
 
 @router.websocket("/api/standup/ws/{session_id}")
@@ -547,7 +623,7 @@ async def _apply_proposal_submit(session_id: str, proposal_id: str, state: Clien
     if proposal is None:
         raise KeyError(f"proposal not found: {proposal_id}")
 
-    dry_run_only = _env_bool("STANDUP_DRY_RUN_ONLY", True)
+    dry_run_only = _dry_run_only()
     workflow_writes = _env_bool("WORKFLOW_WRITES_ENABLED", False)
     jira_writes = _env_bool("JIRA_WRITES_ENABLED", False)
     edits = _jira_edits_from_proposal(proposal)

@@ -4,6 +4,19 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-26 (pi agent) — Stage 29 planned + S29.gate-toggle.1 implemented
+
+**Answered the user's question first:** traced the apply path end-to-end. `jira_edit` proposals DO execute live when all three gates open (`web/standup_ws.py::_apply_proposal_submit` → MCP `jira_apply_staged` → `mcp/connectors/jira.py::_live_update_issue` hits hosted Atlassian). But `new_jira_work`/comments hit the "no supported production apply tool" branch — approved, never executed. And proposals never get cleared (no delete/dismiss anywhere in `standup_store.py`). So: scaffold needed for create/comment + lifecycle.
+
+**Added Stage 29 to `IMPLEMENT.md`** (planning): S29.lifecycle.1 (dismiss/archive/clear decided proposals), S29.apply.1 (extend production apply to Jira create + comment), S29.gate-toggle.1 (admin dry-run toggle). Documented the verified gate-architecture constraint: `STANDUP_DRY_RUN_ONLY` is read per-request in the **web** process (toggleable live) while `WORKFLOW_WRITES_ENABLED`/`JIRA_WRITES_ENABLED` are **MCP** import-time constants (need restart) — so the toggle can only flip the web gate, and that's the safety interlock.
+
+**Implemented S29.gate-toggle.1:**
+- `web/standup_ws.py`: in-process `_dry_run_only_override` + `_dry_run_only()` helper (override > env); `_apply_proposal_submit` now reads `_dry_run_only()`. New `GET /api/standup/gates` (any authed user, effective state incl. `live_writes_effective`) and `POST /api/standup/gates` (`Depends(require_capability(CAN_ADMIN_AUTH))`, flips the web gate only, appends a `_gate_audit` entry with actor/before/after/ts).
+- `web/src/lib/types.ts` + `queries.ts`: `StandupGates`/`StandupSetGatesResult` types, `useStandupGates()` query + `useSetStandupGates()` mutation (append-only).
+- `web/src/routes/standup.tsx`: in the config/trace card, a live "Effective live writes" panel showing all three gates (web vs mcp tagged); admins (`canAdminAuth`) get a Disable/Re-enable dry-run button with an explicit note that the two MCP gates are independent + need a restart; non-admins see read-only.
+
+**Verification:** `python3 -m py_compile web/standup_ws.py` passes. `npx tsc -b` shows my files (`standup.tsx`, `queries.ts`, `types.ts`) **clean**. NOTE: `npm run build`/docker `web` build currently FAILS, but only on `web/src/components/chat-assistant.tsx` — an **uncommitted parallel-session WIP** (alongside uncommitted `mcp/ask_data.py`, `mcp/server.py`, `markdown.tsx`, `package.json` that I did not touch). Per COORDINATION.md I staged only my own files by name and did not sweep theirs. Docker `web` rebuild deferred until that WIP compiles.
+
 ## Session 2026-05-26 (pi agent) — Stage 28 planned: multi-session chat + AI extraction
 
 Added **Stage 28** to `IMPLEMENT.md` (planning only, no code yet). Two tasks:

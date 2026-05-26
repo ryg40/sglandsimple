@@ -333,6 +333,19 @@ export interface StandupTemplatesResponse {
   version: string;
   templates: StandupTemplate[];
 }
+// S29.gate-toggle.1 — effective production-apply gate state for /standup.
+export interface StandupGates {
+  dry_run_only: boolean;
+  dry_run_only_source: "override" | "env";
+  workflow_writes_enabled: boolean;
+  jira_writes_enabled: boolean;
+  mcp_gates_independent: boolean;
+  live_writes_effective: boolean;
+}
+export interface StandupSetGatesResult {
+  gates: StandupGates;
+  audit: Record<string, unknown>;
+}
 export interface JiraStageEdit {
   issue_key: string;
   changes: Record<string, unknown>;
