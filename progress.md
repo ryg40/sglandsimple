@@ -4,6 +4,14 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-26 (pi agent) — Stage 28 planned: multi-session chat + AI extraction
+
+Added **Stage 28** to `IMPLEMENT.md` (planning only, no code yet). Two tasks:
+- **S28.chat-sessions.1** — New-chat button + session switcher on `/standup`. Reuses the existing arbitrary-`session_id` `StandupStore`; adds a `GET /api/standup/sessions` list endpoint + `StandupStore.list_sessions()`, makes `StandupChat`'s `sessionId` controlled so switching tears down/reopens the websocket. No stored-schema change.
+- **S28.ai-extract.1** — an **"AI"** button (distinct from Summarize) that extracts a structured brief (participant/user identity, referenced tickets, detected config items + related config JSON pulled via existing read-only connector tools, user-requested actions) and emits dry-run **proposals phrased as approver instructions** (e.g. "Create a new Jira ticket under Epic XYZ…", "Update ABC-12 to Blocked per chat", "Add a comment to ABC-1234 with the AWS config pulled for that resource"). Built as an enrichment over `mcp/standup_agent.py::run_standup_summarize` / the `standup_summarize` tool, **not** a new agent; everything stays dry-run and flows through the Stage-25 approver Save/Submit gates. Degrades to a placeholder like `_handle_agent_summarize` on failure; smoke `scripts/smoke_standup_ws.py` to be extended for an `agent.extract` round-trip.
+
+Researched the existing surface first (`web/standup_ws.py`, `web/standup_store.py`, `mcp/standup_agent.py`) so the task references real files/functions and the "Reuse, don't reinvent" note is accurate. Updated the open-work summary line. No CHANGELOG entry (planning note, per CLAUDE.md).
+
 ## Session 2026-05-26 (pi agent) — Stage 27: widenable standup chat + main-grid reference rail
 
 Added **Stage 27 (S27.layout.1)** to `IMPLEMENT.md` and implemented it. Goal: improve `/standup` screen-share ergonomics.
