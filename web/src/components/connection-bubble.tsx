@@ -61,12 +61,17 @@ export function ConnectionBubble({ name, health, summary, isSelected, onSelect }
   const status = health?.status || "disabled";
   const color = getStatusColor(status);
 
-  // Render a compact descriptive label
+  // Render a compact descriptive label. Confluence keeps a seeded dry-run
+  // sample even when the live Atlassian MCP gate is disabled, so show that
+  // evidence instead of the generic "Not Connected" copy.
   const getMetricsSummary = () => {
+    if (name === "confluence") {
+      const pages = summary.pages_count || 0;
+      return status === "disabled" ? `${pages} dry-run pages` : `${pages} pages synced`;
+    }
     if (status === "disabled") return "Not Connected";
     if (name === "mongodb") return `${summary.collections?.length || 0} collections`;
     if (name === "jira") return `${summary.open_issues_count || 0} open issues`;
-    if (name === "confluence") return `${summary.pages_count || 0} pages synced`;
     if (name === "github") return `${summary.prs_count || 0} active PRs`;
     if (name === "aws") return `${summary.rds_instances_count || 0} DB instances`;
     if (name === "servicenow") return `${summary.open_incidents || 0} compliance incident tickets`;

@@ -78,6 +78,10 @@ Credential surface to teach:
 
 When those gates are off, the sync path should stay dry-run and still produce a useful plan.
 
+### Hub status behavior
+
+The `/hub` Confluence card uses `connector_health` for live Atlassian MCP status and `connector_summary` for seeded proof data. If `CONN_CONFLUENCE_ENABLED`, `CONFLUENCE_MCP_URL`, or a Confluence token are missing, health is `disabled`/`degraded`, but the Confluence connector can still publish canonical dry-run pages for the overlap-chain demo. The hub should therefore label those as dry-run pages, not as a total lack of Confluence evidence.
+
 ## How to explain MCP to a teammate
 
 Use this short version:
