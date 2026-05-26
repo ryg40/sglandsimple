@@ -28,6 +28,7 @@ Stage 19 capability enforcement is now wired end-to-end:
 - `/standup` provides an Explorer-dominant layout using the existing Jira editable grid.
 - FastAPI websocket chat persists session snapshots, messages, agent runs, and proposals in the web-owned JSON store.
 - Chat identity is wired to the Stage-19 auth context when available: message bubbles and presence use the logged-in display name, and persisted messages keep `author_email` for cross-service references. Auth-disabled or unresolved sessions fall back to the browser/legacy author behavior.
+- Sender-side chat delivery is a single dynamic bubble: the optimistic local message shows `sending`, then the server echo is correlated by `client_message_id`, replaces the local bubble, and shows `sent` only to the sender. Other participants see the accepted message once without delivery status.
 - `standup_link_context` and `standup_summarize` MCP helpers remain dry-run/side-effect-free.
 - `standup_summarize` passes deterministic story-template context to the planner: acceptance-criteria format, default standup labels, priority/story-point guidance, selected epic/workflow context, and relevant Docs Wiki/Confluence links. Returned `new_jira_work` proposals are normalized to keep these fields in the dry-run payload.
 - Websocket `agent.summarize` persists dry-run standup proposals. Existing-Jira edit proposals with concrete `issue_key`/`changes` are staged and validated through the Stage-16 Jira staging tools, but the Standup path never calls live apply.

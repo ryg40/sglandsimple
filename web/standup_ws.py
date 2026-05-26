@@ -324,7 +324,15 @@ async def _handle_join(websocket: WebSocket, session_id: str, state: ClientState
 async def _handle_chat_message(session_id: str, state: ClientState, payload: dict[str, Any]) -> None:
     body = str(payload.get("body") or payload.get("text") or payload.get("content") or "")
     kind = str(payload.get("kind") or "chat")
-    message = await get_store().add_message(session_id, author=state.author, author_email=state.email, body=body, kind=kind)
+    client_message_id = str(payload.get("id") or payload.get("client_message_id") or "").strip()
+    message = await get_store().add_message(
+        session_id,
+        author=state.author,
+        author_email=state.email,
+        body=body,
+        kind=kind,
+        client_message_id=client_message_id,
+    )
     await manager.broadcast(session_id, {"type": "chat.message", "session_id": session_id, "message": message})
 
 

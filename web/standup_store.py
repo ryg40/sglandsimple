@@ -146,7 +146,7 @@ class StandupStore:
             self._save(data)
             return self._snapshot(session)
 
-    async def add_message(self, session_id: str, *, author: str, body: str, kind: str = "chat", author_email: str = "") -> dict[str, Any]:
+    async def add_message(self, session_id: str, *, author: str, body: str, kind: str = "chat", author_email: str = "", client_message_id: str = "") -> dict[str, Any]:
         body = body.strip()
         if not body:
             raise ValueError("message body is required")
@@ -161,6 +161,7 @@ class StandupStore:
                 "author_email": author_email or "",
                 "body": body,
                 "kind": kind or "chat",
+                "client_message_id": client_message_id or "",
                 "links": parsed["links"],
                 "mentions": parsed["mentions"],
                 "jira_keys": parsed["jira_keys"],

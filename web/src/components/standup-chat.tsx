@@ -10,11 +10,13 @@ type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "local" | 
 
 type StandupChatMessage = {
   id: string;
+  clientMessageId?: string;
   author: string;
   authorEmail?: string;
   body: string;
   createdAt: string;
   pending?: boolean;
+  deliveryStatus?: "sending" | "sent";
   source?: "seed" | "local" | "server";
 };
 
@@ -156,6 +158,7 @@ function normalizeMessage(raw: unknown): StandupChatMessage | null {
   const author = record.author ?? record.user ?? record.name ?? "Participant";
   return {
     id: String(record.id ?? record.message_id ?? makeId("server")),
+    clientMessageId: typeof record.client_message_id === "string" && record.client_message_id ? record.client_message_id : undefined,
     author: typeof author === "string" && author.trim() ? author : "Participant",
     authorEmail: typeof record.author_email === "string" ? record.author_email : undefined,
     body,
@@ -171,8 +174,24 @@ function normalizeMessages(raw: unknown): StandupChatMessage[] {
 
 function mergeMessages(messages: StandupChatMessage[]) {
   const byId = new Map<string, StandupChatMessage>();
+  const localIds = new Set(messages.filter((message) => message.source === "local").map((message) => message.id));
+  const clientToServerId = new Map<string, string>();
   for (const message of messages) {
-    byId.set(message.id, { ...byId.get(message.id), ...message, pending: message.pending ?? false });
+    if (message.source === "server" && message.clientMessageId) {
+      clientToServerId.set(message.clientMessageId, message.id);
+    }
+  }
+  for (const message of messages) {
+    const replacementId = clientToServerId.get(message.id);
+    if (message.source === "local" && replacementId) continue;
+    const existing = byId.get(message.id);
+    const acknowledgedLocal = message.source === "server" && Boolean(message.clientMessageId && localIds.has(message.clientMessageId));
+    byId.set(message.id, {
+      ...existing,
+      ...message,
+      pending: acknowledgedLocal ? false : message.pending ?? existing?.pending ?? false,
+      deliveryStatus: acknowledgedLocal ? "sent" : message.deliveryStatus ?? existing?.deliveryStatus,
+    });
   }
   return Array.from(byId.values());
 }
@@ -508,6 +527,7 @@ export function StandupChat({
       body,
       createdAt: formatTime(undefined),
       pending,
+      deliveryStatus: pending ? "sending" : undefined,
       source: "local",
     };
     setMessages((current) => mergeMessages([...current, message]));
@@ -644,7 +664,7 @@ export function StandupChat({
                   <div className="mb-1 flex items-center justify-between gap-2 text-xs">
                     <span className="font-medium">{message.author}</span>
                     <span className="text-muted-foreground">
-                      {message.pending ? "sending · " : ""}
+                      {message.deliveryStatus ? `${message.deliveryStatus} · ` : ""}
                       {message.createdAt}
                     </span>
                   </div>
