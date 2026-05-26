@@ -17,7 +17,8 @@ Update this table when you start/finish. One owner per stage.
 | 20 (standup Jira cockpit) | pi agent | main tree | **COMPLETE** — RBAC + HITL approval tray + websocket smoke verified |
 | 22 (UX/chat polish + Wrangler derived fields) | pi orchestrator | main tree | **COMPLETE** — chat, global assistant, Wrangler derived fields, banner |
 | 23 (Confluence wire-up + cross-system enrichment + teaching docs) | pi orchestrator + gpt-5.4 workers | main tree + isolated subagent worktrees | **COMPLETE** — Confluence live gate, overlap data, teaching docs, smoke verified |
-| 24 (standup Epics + Templates reference rail) | pi agent | main tree | **PLANNED** — tasks added to IMPLEMENT.md; no code yet |
+| 24 (standup Epics + Templates reference rail) | pi agent | main tree | **COMPLETE** — `/standup` Epics/Templates cards landed, `standup_templates` MCP tool added, build/py-compile verified |
+| 25 (standup production approvals viewport) | pi agent | main tree | **COMPLETE** — approver email gate, editable approvals viewport, Save/Submit flow, gated production apply path verified locally |
 | 21 (Deep Agent platform) | pi agent | main tree | **IN PROGRESS** — DONE & on main: arch.1, upgrade.1 (LangChain 1.x), profile.1 (`profiles.yaml`+loader), context.1, orch.1 (`build_orchestrator`+allowlist). **runtime.1 PARTIAL** — 6 `agent_*` MCP tools live (`agent_profiles_list` verified; runs persist to Mongo) but `agent_run_start` hangs at `running` (orchestrator→`ask_data` CompiledSubAgent input contract + request timeout; needs background exec) and web `/api/agents/*` proxies not added. Next: finish runtime.1, then hitl.1. |
 | 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user |
 

@@ -73,7 +73,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — all TBD), **25** (standup production approvals — planned), and **26** (chat runtime visibility — planned). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), **23** (Confluence wire-up + cross-system enrichment), and **24** (standup Epics + Templates reference rail) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — in progress), and **26** (chat runtime visibility — planned). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), **23** (Confluence wire-up + cross-system enrichment), **24** (standup Epics + Templates reference rail), and **25** (standup production approvals viewport) are complete but retained here until the next archive pass.
 
 ---
 
@@ -1388,13 +1388,13 @@ Reuse existing infrastructure; add only thin read tools/proxies:
 
 ---
 
-## Stage 25 — Standup production approvals viewport (planned)
+## Stage 25 — Standup production approvals viewport
 
 **Goal:** Promote the existing Standup dry-run approval tray into a restricted production-approval workflow for the named approver `simone.patel@lanGarland.com`. The regular `/standup` view can continue to stage proposals in dry-run form, but Simone's auth-resolved approver view should expose an approval viewport that shows **all staged changes**, lets the approver edit any necessary fields before finalizing, and then applies the approved production updates through the existing Stage-16/Stage-20 gates rather than stopping at dry-run validation.
 
 ### Task checklist — Stage 25
 
-- [ ] **S25.approver.1 — Simone standup approver view with editable production apply**
+- [x] **S25.approver.1 — Simone standup approver view with editable production apply** ✅ DONE
   - Files: `web/auth.py`, `web/src/components/auth-provider.tsx`, `web/standup_ws.py`, `web/standup_store.py`, `web/src/routes/standup.tsx`, `docs/standup.md`, `scripts/smoke_standup_ws.py`, `IMPLEMENT.md`, `progress.md`.
   - Done when: the auth system grants `simone.patel@lanGarland.com` the standup approver capability (`canApproveStandupActions`) in a durable, auditable way (group/capability preferred over one-off UI checks; email matching case-insensitive); the approver's `/standup` view includes a distinct **Approvals** viewport listing every staged proposal/change for the session (new Jira work, Jira edits, links, Confluence/doc proposals when present) with status, source messages, rationale, validation result, and target service; every editable payload field needed by an approver can be changed inline before apply; **Save** persists the edited staged payload without applying; **Submit** revalidates the saved payload and then invokes the production apply path (`jira_apply_staged` and future equivalent connector apply tools) only when all live-write gates are explicitly enabled (`STANDUP_DRY_RUN_ONLY=false`, `JIRA_WRITES_ENABLED=true`, `WORKFLOW_WRITES_ENABLED=true`, plus any connector-specific gate); non-approvers can view only allowed read context and cannot save/submit; approvals record actor, timestamp, original payload, edited payload, validation result, apply result, and dry-run/live mode; rejected/failed applies remain recoverable and auditable; smoke coverage proves viewer forbidden, Simone save-only, Simone submit with dry-run gates still blocked, and Simone submit with test/live gates reaches the apply path; `python3 -m py_compile web/*.py scripts/smoke_standup_ws.py` and `cd web && npm run build` pass.
   - Git handoff: before coding, `git pull --ff-only origin main`; stage by explicit path only (`git add web/auth.py web/standup_ws.py web/standup_store.py web/src/components/auth-provider.tsx web/src/routes/standup.tsx docs/standup.md scripts/smoke_standup_ws.py IMPLEMENT.md progress.md` as applicable — never `git add -A`/`.`/`commit -a`); inspect `git status --short` and `git diff --cached --stat`; commit with a focused message such as `feat(S25): add standup production approvals viewport`; push the feature branch; merge via PR or fast-forward only after review/smokes pass.

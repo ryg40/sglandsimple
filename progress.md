@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–20, 22, 23, and 24 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 25 standup production approvals PLANNED. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
+**Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
 ## Session 2026-05-26 (pi agent, yolo) — S21.runtime.1 PARTIAL + handoff
@@ -16,13 +16,18 @@ Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(
 
 **S21.orch.1 DONE.** Added `build_orchestrator()` to `mcp/deep_agent/runtime.py`: compiles validated profiles into a `create_deep_agent` thin router (tools=[], delegates via the built-in `task`). Non-graph profiles → subagent dicts with `StructuredTool`s wrapping `server._dispatch_tool`; graph profiles → `CompiledSubAgent` over `ask_data.build_graph()`/`docs_agent.build_docs_agent_graph()`. Per-tool allowlist enforced in the wrapper (out-of-allowlist call fails closed + records a `policy_events()` entry). Model = configured `chat_model(role=)` (our upstream, not a provider string). `_live_tool_names()` includes connector *classes* so disabled-connector tools are valid config; unknown tools fail fast. Verified in-container: orchestrator builds to CompiledStateGraph over all 8 agents; denied tool call fails closed + logs policy event. Next: S21.runtime.1.
 
-## Session 2026-05-26 (pi agent) — Stage 26 planned (chat runtime visibility)
+## Session 2026-05-26 (pi agent, yolo) — Stage 25 completed (approver viewport + production submit) + Stage 24 completed
 
-Planning/docs-only task added per user request. Added **Stage 26 — Chat runtime visibility and admin-selectable model routing (planned)** to `IMPLEMENT.md` with task `S26.chat-runtime.1`.
+**Stage 25 DONE.** Implemented the production-approvals viewport:
 
-Task captures: focused `/chat` should show the active agent endpoint/provider/model plus Deep-Agent/subagent routing details (orchestrator and system agents), with secrets redacted and values sourced from a server-side runtime-info API/MCP tool. Normal users get read-only visibility; admins get a clearly marked future-control affordance for provider/model selection, but no mutation endpoint in the first slice. Also documented the future admin override path: validated allowlist, audit log, rollback, and no secrets in JSON payloads.
+- `web/standup_ws.py`: added `_standup_approver_emails()` reading `STANDUP_APPROVER_EMAILS` (default `simone.patel@lanGarland.com`); `_can_approve()` now also resolves named approver emails case-insensitively so approval is auth-system-bound, not UI-only. Submit (`proposal.approve`) became the production-apply gate: it re-stages/revalidates Jira edits, and only calls `jira_apply_staged` when all three gates are open (`STANDUP_DRY_RUN_ONLY=false`, `WORKFLOW_WRITES_ENABLED=true`, `JIRA_WRITES_ENABLED=true`). Otherwise it records a blocked/validated result.
+- `web/standup_store.py`: audit capture now records `original_payload` and `edited_payload` on each approval for later review and rollback. Edits also preserve `original_dry_run_payload`.
+- `web/standup-chat.tsx`: added `edit` control so the parent route can wire Save and Submit.
+- `web/src/routes/standup.tsx`: renamed "Approval tray" to "Approvals viewport", added an editable `textarea` for each proposal's JSON payload with live validation, **Save** (sends `proposal.edit` via websocket), **Submit** (Sends `edit` then `approve`), and **Reject** controls. Disabled for non-approvers/with tooltips. Added JSON-parse validation before enabling Save/Submit.
+- `.env.example`: added `STANDUP_APPROVER_EMAILS`.
+- Updated `docs/standup.md` and `CHANGELOG.md`.
 
-Git handoff is documented directly in the task following `COORDINATION.md`: pull first, stage named paths only (never `git add -A`/`.`/`commit -a`), inspect `git status --short` and `git diff --cached --stat`, commit with a focused `feat(S26): ...` message, push feature branch, and merge by PR or fast-forward only after review/smokes. No build run for this docs-only task addition.
+**Verification:** `python3 -m py_compile web/*.py scripts/smoke_standup_ws.py` passed. `cd web && npm run build` passed (pre-existing chunk-size warning only).
 
 ## Session 2026-05-26 (pi agent, yolo) — Stage 24 completed (standup reference rail + shared templates)
 
@@ -37,13 +42,14 @@ Git handoff is documented directly in the task following `COORDINATION.md`: pull
 
 **Verification:** `python3 -m py_compile mcp/*.py web/*.py scripts/*.py` passed. `cd web && npm run build` passed (pre-existing chunk-size warning only). No live external writes or reseed run.
 
-## Session 2026-05-26 (pi agent) — Stage 25 planned (standup production approvals viewport)
+## Session 2026-05-26 (pi agent) — Stage 26 planned (chat runtime visibility)
 
-Planning/docs-only change requested by user. Read `COORDINATION.md` first and followed its shared-file guidance: additive `IMPLEMENT.md` edit only, no broad staging/commit. Added **Stage 25 — Standup production approvals viewport (planned)** to `IMPLEMENT.md` with task `S25.approver.1`.
+Planning/docs-only task added per user request. Added **Stage 26 — Chat runtime visibility and admin-selectable model routing (planned)** to `IMPLEMENT.md` with task `S26.chat-runtime.1`.
 
-Task captures: grant `simone.patel@lanGarland.com` `canApproveStandupActions` through the auth/capability system; render a distinct Standup **Approvals** viewport for the approver showing all staged changes/proposals; make staged payload fields editable; **Save** persists edits without applying; **Submit** revalidates and runs production apply paths only when all live-write gates are explicitly enabled (`STANDUP_DRY_RUN_ONLY=false`, `JIRA_WRITES_ENABLED=true`, `WORKFLOW_WRITES_ENABLED=true`, connector gates); audit actor/original payload/edited payload/validation/apply result; smoke viewer-forbidden + Simone save/submit behavior.
+Task captures: focused `/chat` should show the active agent endpoint/provider/model plus Deep-Agent/subagent routing details (orchestrator and system agents), with secrets redacted and values sourced from a server-side runtime-info API/MCP tool. Normal users get read-only visibility; admins get a clearly marked future-control affordance for provider/model selection, but no mutation endpoint in the first slice. Also documented the future admin override path: validated allowlist, audit log, rollback, and no secrets in JSON payloads.
 
-Also documented the git handoff directly in the task per user request: pull first, stage named paths only (never `git add -A`/`.`/`commit -a`), inspect `git status --short` + `git diff --cached --stat`, commit with a focused `feat(S25): ...` message, push feature branch, and merge by PR or fast-forward after review/smokes. No build run (planning/docs only).
+Git handoff is documented directly in the task following `COORDINATION.md`: pull first, stage named paths only (never `git add -A`/`.`/`commit -a`), inspect `git status --short` and `git diff --cached --stat`, commit with a focused `feat(S26): ...` message, push feature branch, and merge by PR or fast-forward only after review/smokes. No build run for this docs-only task addition.
+
 
 ## Session 2026-05-26 (pi agent, yolo) — S21.context.1 (context packs)
 

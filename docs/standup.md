@@ -12,14 +12,14 @@ Stage 19 capability enforcement is now wired end-to-end:
 
 - **Session join**: the websocket requires a resolved Stage-19 identity unless `AUTH_MODE=disabled`. Unauthenticated clients are closed with a `1008` policy-violation ("authentication required").
 - **Snapshot read** (`GET /api/standup/sessions/{id}/snapshot`): requires any authenticated user (401 otherwise).
-- **Approve / reject / edit**: gated on `canApproveStandupActions`. Non-approvers receive a `forbidden` websocket error and the tray buttons are disabled with an explanatory tooltip in the UI.
+- **Approve / reject / edit / submit**: gated on `canApproveStandupActions` or the `STANDUP_APPROVER_EMAILS` auth-system allowlist. The default named production approver is `simone.patel@lanGarland.com` (case-insensitive). Non-approvers receive a `forbidden` websocket error and the approval controls are disabled with an explanatory tooltip in the UI.
 - Presence entries carry a `can_approve` flag so the UI can distinguish approvers from participants.
 
 ## Safety policy
 
 - Standup proposals are **dry-run by default**.
 - No Jira, Confluence, Archer, ServiceNow, GitHub, Snowflake, or MongoDB production mutation should occur from chat or agent output without explicit human approval.
-- `STANDUP_DRY_RUN_ONLY=true` is an extra guardrail: even if connector write flags are enabled, Standup should not perform live external writes. Approving a proposal re-validates any staged Jira edits through Stage-16 `jira_validate_staged` but never calls `jira_apply_staged`; the recorded `approval.applied` is always `false` while this guardrail is on.
+- `STANDUP_DRY_RUN_ONLY=true` is an extra guardrail: even if connector write flags are enabled, Standup should not perform live external writes. S25 Submit re-stages and re-validates Jira edits, but calls `jira_apply_staged` only when `STANDUP_DRY_RUN_ONLY=false`, `WORKFLOW_WRITES_ENABLED=true`, and `JIRA_WRITES_ENABLED=true` are all deliberately enabled.
 - Jira live writes still require `JIRA_WRITES_ENABLED=true` and the existing Stage 16 validation/apply gates.
 - The embedded grid keeps `allowApply={false}` in Standup; create/edit follow-ups flow through the dry-run proposal tray, not direct grid apply.
 
@@ -32,7 +32,10 @@ Stage 19 capability enforcement is now wired end-to-end:
 - `standup_link_context` and `standup_summarize` MCP helpers remain dry-run/side-effect-free.
 - `standup_summarize` passes deterministic story-template context to the planner: acceptance-criteria format, default standup labels, priority/story-point guidance, selected epic/workflow context, and relevant Docs Wiki/Confluence links. Returned `new_jira_work` proposals are normalized to keep these fields in the dry-run payload.
 - Websocket `agent.summarize` persists dry-run standup proposals. Existing-Jira edit proposals with concrete `issue_key`/`changes` are staged and validated through the Stage-16 Jira staging tools, but the Standup path never calls live apply.
-- The `/standup` aside hosts a live **approval tray** driven by `proposal.created`/`proposal.updated`/`agent.summary` websocket events. Approvers see Approve/Reject buttons; non-approvers see them disabled with a tooltip. A `Summarize` button triggers `agent.summarize` over the live socket. Approvals record `actor`, `decided_at`, `dry_run_only`, `applied`, and the validation `apply_result`.
+- The `/standup` aside hosts a live **Approvals viewport** driven by `proposal.created`/`proposal.updated`/`agent.summary` websocket events. Approvers can edit each staged JSON payload, **Save** edits without applying, **Submit** through the gated production path, or Reject. Non-approvers see the controls disabled with a tooltip. A `Summarize` button triggers `agent.summarize` over the live socket. Approvals record `actor`, `decided_at`, original payload, edited payload, validation result, dry-run/live mode, and the apply result.
+- The `/standup` aside now includes Stage-24 reference cards in front of the chat/approval workflow:
+  - **Epics** is collapsed by default and expands into a read-only active-epic list sourced from `/api/standup/epics` (the `epics` collection via MCP). Rows show key/title/program area/status/priority, tags, regulation refs, database/platform combos, ticket refs, finding links, and Jira deep links. Selecting a row sets local selected-epic context as the seam for future agent resolution.
+  - **Templates** is collapsed by default and expands into a read-only per-epic customized-fields table plus a prompt-library dropdown/Markdown viewport sourced from the backend-owned `standup_templates` MCP tool. This shared store is the same source Stage-21 Deep Agent context packs read, avoiding duplicate Jira/Confluence generation prompts.
 - The Jira Configuration/tool trace bubble stays collapsed by default and expands to show websocket state, connector health, dry-run/live-write gates, tool traces, and detected cross-service associations.
 
 ## Verification
@@ -43,3 +46,4 @@ Stage 19 capability enforcement is now wired end-to-end:
 
 1. Optional periodic agent summarization (`STANDUP_AGENT_INTERVAL_SECONDS`) instead of on-demand only.
 2. Live Jira apply from an approved proposal once `STANDUP_DRY_RUN_ONLY=false` + `JIRA_WRITES_ENABLED=true` are deliberately enabled, reusing the Stage-16 apply gate.
+3. Stage-24 editability follow-up: the Epics fields table and prompt library are intentionally read-only today. The implementation leaves two seams for a future audited editor: (a) epic table values render through a typed field-spec + `FieldCell` component so inline editors can replace the presentational cells, and (b) prompt bodies come from `mcp/standup_templates.py::list_templates()` so a future `standup_templates_upsert` MCP tool can move the store to Mongo, audit updates, and feed both the UI and Deep Agent context packs without rewriting the Standup page.

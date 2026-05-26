@@ -85,6 +85,7 @@ export type StandupControls = {
   summarize: () => void;
   approve: (proposalId: string) => void;
   reject: (proposalId: string) => void;
+  edit: (proposalId: string, dryRunPayload: Record<string, unknown>) => void;
   summarizing: boolean;
 };
 
@@ -567,9 +568,13 @@ export function StandupChat({
     sendEvent("proposal.reject", { proposal_id: proposalId });
   }, [sendEvent]);
 
+  const edit = useCallback((proposalId: string, dryRunPayload: Record<string, unknown>) => {
+    sendEvent("proposal.edit", { proposal_id: proposalId, dry_run_payload: dryRunPayload });
+  }, [sendEvent]);
+
   useEffect(() => {
-    onControlsChange?.({ proposals, canSend, summarize, approve, reject, summarizing });
-  }, [approve, canSend, onControlsChange, proposals, reject, summarize, summarizing]);
+    onControlsChange?.({ proposals, canSend, summarize, approve, reject, edit, summarizing });
+  }, [approve, canSend, edit, onControlsChange, proposals, reject, summarize, summarizing]);
 
   function addMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

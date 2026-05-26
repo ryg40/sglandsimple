@@ -30,6 +30,8 @@ import type {
   JiraValidateResult,
   JiraRevertResult,
   JiraApplyResult,
+  StandupEpicsResponse,
+  StandupTemplatesResponse,
   DocsTreeResponse,
   Doc,
   DocUpsertResult,
@@ -276,6 +278,10 @@ export function useArchitecture() {
 // ---- Stage 16 — HIL-gated Jira bulk editing -------------------------------
 
 export const jiraKeys = { issues: ["jira-issues"] as const };
+export const standupKeys = {
+  epics: ["standup-epics"] as const,
+  templates: ["standup-templates"] as const,
+};
 
 export function useJiraIssues() {
   return useQuery({
@@ -313,6 +319,25 @@ export function useApplyJira() {
   return useMutation({
     mutationFn: (issue_keys?: string[]) => api.post<JiraApplyResult>("/api/jira/apply", { issue_keys }),
     onSuccess: () => qc.invalidateQueries({ queryKey: jiraKeys.issues }),
+  });
+}
+
+// ---- Stage 24 — Standup reference rail -----------------------------------
+
+export function useStandupEpics() {
+  return useQuery({
+    queryKey: standupKeys.epics,
+    queryFn: () => api.get<StandupEpicsResponse>("/api/standup/epics"),
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useStandupTemplates() {
+  return useQuery({
+    queryKey: standupKeys.templates,
+    queryFn: () => api.get<StandupTemplatesResponse>("/api/standup/templates"),
+    staleTime: 60_000,
   });
 }
 

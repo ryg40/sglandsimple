@@ -298,6 +298,41 @@ export interface JiraIssuesResponse {
   issues: JiraIssueRow[];
   staged_count: number;
 }
+
+// Stage 24 — Standup reference rail
+export interface StandupEpic {
+  _id: string;
+  epic_key: string;
+  jira_key: string;
+  title: string;
+  program_area: string;
+  status: string;
+  priority: string;
+  tags: string[];
+  regulation_refs: string[];
+  db_platform_combos: string[];
+  ticket_refs: string[];
+  finding_ids: string[];
+  due_date?: string | null;
+  updated_at?: string | null;
+}
+export interface StandupEpicsResponse {
+  epics: StandupEpic[];
+  active_only: boolean;
+  limit: number;
+  count: number;
+}
+export interface StandupTemplate {
+  name: string;
+  kind: "jira" | "confluence";
+  description?: string;
+  body_md: string;
+}
+export interface StandupTemplatesResponse {
+  enabled: boolean;
+  version: string;
+  templates: StandupTemplate[];
+}
 export interface JiraStageEdit {
   issue_key: string;
   changes: Record<string, unknown>;

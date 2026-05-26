@@ -302,6 +302,9 @@ class StandupStore:
                         "decided_at": now,
                         "dry_run_only": bool((apply_result or {}).get("dry_run_only", True)),
                         "applied": bool((apply_result or {}).get("applied", False)),
+                        "original_payload": deepcopy(proposal.get("original_dry_run_payload") or proposal.get("dry_run_payload") or {}),
+                        "edited_payload": deepcopy(proposal.get("dry_run_payload") or {}),
+                        "validation_result": deepcopy((apply_result or {}).get("validation")),
                     }
                     if apply_result is not None:
                         approval["apply_result"] = deepcopy(apply_result)
@@ -330,6 +333,8 @@ class StandupStore:
                     payload = proposal.get("dry_run_payload")
                     if not isinstance(payload, dict):
                         payload = {}
+                    if "original_dry_run_payload" not in proposal:
+                        proposal["original_dry_run_payload"] = deepcopy(payload)
                     payload.update(patch)
                     payload["dry_run"] = True
                     proposal["dry_run_payload"] = payload

@@ -29,6 +29,8 @@ API surface (all JSON):
 - GET  /api/architecture       → MCP architecture_graph (Architecture page v2)
 - GET  /api/overview           → MCP overview_summary (compliance command center)
 - GET  /api/jira/issues        → MCP jira_list_issues (sample + staged overlay)
+- GET  /api/standup/epics      → read-only active epics for the Standup reference rail
+- GET  /api/standup/templates  → MCP standup_templates (shared prompt library)
 - POST /api/jira/stage         → MCP jira_stage_edits (HIL drafts)
 - POST /api/jira/validate      → MCP jira_validate_staged
 - POST /api/jira/revert        → MCP jira_revert_staged
@@ -630,6 +632,71 @@ async def api_jira_issues() -> JSONResponse:
     if res.get("isError"):
         return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
     return JSONResponse(_extract_json_block(res))
+
+
+_DONE_EPIC_STATUSES = {"done", "closed", "complete", "completed", "archived", "resolved"}
+
+
+def _as_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value if v is not None and str(v) != ""]
+    return [str(value)] if str(value) else []
+
+
+@app.get("/api/standup/epics", dependencies=[Depends(_guard_user)])
+async def api_standup_epics() -> JSONResponse:
+    """Stage 24: read-only active epic rows for the Standup reference rail."""
+    active_only = os.environ.get("STANDUP_EPICS_ACTIVE_ONLY", "true").lower() == "true"
+    limit = max(1, min(int(os.environ.get("STANDUP_EPICS_LIMIT", "25") or 25), 100))
+    filter_spec: dict[str, Any] = {}
+    if active_only:
+        filter_spec["status"] = {"$nin": sorted(_DONE_EPIC_STATUSES)}
+    res = await _mcp_tool("mongo_query", {
+        "collection": "epics",
+        "filter": filter_spec,
+        "sort": {"updated_at": -1, "_id": 1},
+        "limit": limit,
+    })
+    if res.get("isError"):
+        return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
+    rows = (_extract_json_block(res) or {}).get("rows") or []
+    epics: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status") or "unknown")
+        # Defense in depth for mixed-case or connector-seeded statuses that the
+        # Mongo $nin filter may not catch exactly.
+        if active_only and status.lower() in _DONE_EPIC_STATUSES:
+            continue
+        epic_key = str(row.get("epic_key") or row.get("jira_key") or row.get("key") or row.get("_id") or "")
+        epics.append({
+            "_id": str(row.get("_id") or epic_key),
+            "epic_key": epic_key,
+            "jira_key": str(row.get("jira_key") or epic_key),
+            "title": str(row.get("title") or row.get("summary") or epic_key),
+            "program_area": str(row.get("program_area") or ""),
+            "status": status,
+            "priority": str(row.get("priority") or ""),
+            "tags": _as_list(row.get("tags")),
+            "regulation_refs": _as_list(row.get("regulation_refs")),
+            "db_platform_combos": _as_list(row.get("db_platform_combos")),
+            "ticket_refs": _as_list(row.get("ticket_refs") or row.get("ticket_ref")),
+            "finding_ids": _as_list(row.get("finding_ids") or row.get("finding_id")),
+            "due_date": row.get("due_date"),
+            "updated_at": row.get("updated_at"),
+        })
+    return JSONResponse({"epics": epics, "active_only": active_only, "limit": limit, "count": len(epics)})
+
+
+@app.get("/api/standup/templates", dependencies=[Depends(_guard_user)])
+async def api_standup_templates() -> JSONResponse:
+    """Stage 24: backend-owned prompt library shared by UI and Deep Agent context packs."""
+    res = await _mcp_tool("standup_templates", {})
+    payload = _extract_json_block(res)
+    return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
 
 
 @app.post("/api/jira/stage", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_VALIDATE_JIRA))])

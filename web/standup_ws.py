@@ -128,17 +128,24 @@ def _resolved_identity(websocket: WebSocket) -> tuple[str, str, bool, Any]:
     return author, email, False, None
 
 
-def _can_approve(state: "ClientState") -> bool:
-    """Whether this client may approve/reject standup proposals.
+def _standup_approver_emails() -> set[str]:
+    raw = os.environ.get("STANDUP_APPROVER_EMAILS", "simone.patel@lanGarland.com")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
-    Approval requires the Stage-19 ``canApproveStandupActions`` capability,
-    which currently maps to the admin role. When auth is disabled the resolver
-    returns a full-capability admin context, so disabled mode also passes.
-    Unauthenticated/legacy-fallback clients never gain approval rights.
+
+def _can_approve(state: "ClientState") -> bool:
+    """Whether this client may approve/reject/submit standup proposals.
+
+    Approval normally requires the Stage-19 ``canApproveStandupActions``
+    capability. S25 adds an explicit auth-system approver list so the named
+    production approver can be granted without hard-coding UI-only checks.
     """
     user = state.user
     if user is None:
         return False
+    email = (state.email or getattr(user, "email", "") or getattr(user, "username", "")).lower()
+    if email in _standup_approver_emails():
+        return True
     try:
         return user.has(_auth.Capability.CAN_APPROVE_STANDUP)
     except Exception:
@@ -519,10 +526,7 @@ async def _handle_proposal_status(
 
     apply_result: dict[str, Any] | None = None
     if status == "approved":
-        # Dry-run apply path: validate any staged Jira edits via Stage-16 tools.
-        # STANDUP_DRY_RUN_ONLY (default true) means we never call jira_apply_staged
-        # here — approval records a validated, dry-run-only outcome.
-        apply_result = await _apply_proposal_dry_run(session_id, proposal_id, state)
+        apply_result = await _apply_proposal_submit(session_id, proposal_id, state)
 
     proposal = await get_store().update_proposal_status(
         session_id, proposal_id, status=status, actor=state.author, apply_result=apply_result
@@ -530,13 +534,13 @@ async def _handle_proposal_status(
     await manager.broadcast(session_id, {"type": "proposal.updated", "session_id": session_id, "proposal": proposal})
 
 
-async def _apply_proposal_dry_run(session_id: str, proposal_id: str, state: ClientState) -> dict[str, Any]:
-    """Run the dry-run apply path for an approved proposal.
+async def _apply_proposal_submit(session_id: str, proposal_id: str, state: ClientState) -> dict[str, Any]:
+    """Revalidate and optionally submit an approved proposal.
 
-    For Jira-edit proposals carrying concrete edits, re-validate the staged
-    changes through Stage-16 ``jira_validate_staged`` so the recorded approval
-    reflects current validation. Never calls live apply while
-    STANDUP_DRY_RUN_ONLY is enabled (the default).
+    S25 keeps Save separate from Submit. Submit always re-stages/revalidates
+    edited Jira payloads. It reaches the production apply path only when all
+    live gates are deliberately enabled; otherwise it records a blocked/dry-run
+    result for auditability.
     """
     snapshot = await get_store().snapshot(session_id)
     proposal = next((p for p in snapshot.get("proposals", []) if p.get("id") == proposal_id), None)
@@ -544,34 +548,49 @@ async def _apply_proposal_dry_run(session_id: str, proposal_id: str, state: Clie
         raise KeyError(f"proposal not found: {proposal_id}")
 
     dry_run_only = _env_bool("STANDUP_DRY_RUN_ONLY", True)
+    workflow_writes = _env_bool("WORKFLOW_WRITES_ENABLED", False)
+    jira_writes = _env_bool("JIRA_WRITES_ENABLED", False)
     edits = _jira_edits_from_proposal(proposal)
     if not edits:
-        return {"applied": False, "dry_run_only": dry_run_only, "detail": "no Jira edits to validate; recorded as dry-run approval"}
+        return {
+            "applied": False,
+            "dry_run_only": dry_run_only,
+            "live_gates": {"workflow_writes": workflow_writes, "jira_writes": jira_writes},
+            "detail": "no supported production apply tool for this proposal type; recorded as approval only",
+        }
 
     actor = {"display_name": state.author, "email": state.email}
     issue_keys = [str(edit.get("issue_key")) for edit in edits if edit.get("issue_key")]
     try:
+        stage_result = _extract_json_block(await _mcp_tool("jira_stage_edits", {"edits": edits, "actor": actor}))
         validation_result = _extract_json_block(
             await _mcp_tool("jira_validate_staged", {"issue_keys": issue_keys, "actor": actor})
         )
         validated = validation_result.get("validated", 0) if isinstance(validation_result, dict) else 0
-        return {
+        gates_open = (not dry_run_only) and workflow_writes and jira_writes and validated == len(issue_keys)
+        result: dict[str, Any] = {
             "applied": False,
             "dry_run_only": dry_run_only,
             "validated": validated,
             "issue_keys": issue_keys,
+            "stage": stage_result,
             "validation": validation_result,
-            "detail": "validated staged Jira edits; live apply suppressed by STANDUP_DRY_RUN_ONLY"
-            if dry_run_only
-            else "validated staged Jira edits; apply still requires JIRA_WRITES_ENABLED + Stage-16 apply",
+            "live_gates": {"workflow_writes": workflow_writes, "jira_writes": jira_writes},
         }
+        if not gates_open:
+            result["detail"] = "validated staged Jira edits; production apply blocked by dry-run/write gates or validation errors"
+            return result
+        apply_result = _extract_json_block(await _mcp_tool("jira_apply_staged", {"issue_keys": issue_keys, "actor": actor}))
+        result.update({"applied": bool(apply_result.get("applied")), "apply": apply_result, "detail": "submitted through Stage-16 jira_apply_staged"})
+        return result
     except Exception as exc:  # noqa: BLE001
         return {
             "applied": False,
             "dry_run_only": dry_run_only,
             "error": f"{type(exc).__name__}: {exc}",
             "issue_keys": issue_keys,
-            "detail": "validation failed; approval recorded without apply",
+            "live_gates": {"workflow_writes": workflow_writes, "jira_writes": jira_writes},
+            "detail": "submit failed; approval recorded without production apply",
         }
 
 
