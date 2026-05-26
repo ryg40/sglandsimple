@@ -177,6 +177,12 @@ side), shared by web/MCP/background callers:
 (omit `agent` to let the orchestrator route), `agent_run_status`,
 `agent_run_resume`, `agent_run_cancel`, `agent_run_artifacts`.
 
+`agent_run_start` is intentionally **non-blocking**: it persists a `running`
+record in `DEEP_AGENT_RUN_COLLECTION`, launches the LangGraph/deepagents
+orchestrator in the background, and returns a pollable `run_id`. Clients poll
+`agent_run_status` until the run reaches `completed`, `error`, `cancelled`, or
+`waiting_approval`.
+
 ## 9. Security, audit, observability
 
 Per-run `actor`/`source`/agent/role-capability-snapshot/correlation-id;
@@ -184,8 +190,9 @@ tool I/O persisted with secret **redaction**; denied tool calls persisted as
 policy events; approvals record actor/groups/roles/original+edited
 payload/validation/apply result; structured logs + a metrics surface (active/
 completed/failed runs, pending approvals, token usage, tool-call counts,
-per-agent latency); admin `/agents` route (admin-only) for profiles, runs,
-traces, pending approvals, resume/cancel.
+per-agent latency); `/agents` operations route (`canRunWorkflow`-gated) for
+profiles, starting dry-run runs, status/artifacts, pending approvals,
+resume/cancel.
 
 ## 10. Deployment
 

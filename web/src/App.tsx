@@ -16,6 +16,7 @@ import Workflow from "@/routes/workflow";
 import Architecture from "@/routes/architecture";
 import DocsWiki from "@/routes/docs";
 import Standup from "@/routes/standup";
+import Agents from "@/routes/agents";
 import AuthAdmin from "@/routes/auth-admin";
 
 export default function App() {
@@ -42,6 +43,14 @@ export default function App() {
                 <Route path="/docs" element={<DocsWiki />} />
                 <Route path="/hub" element={<Hub />} />
                 <Route path="/standup" element={<Standup />} />
+                <Route
+                  path="/agents"
+                  element={
+                    <RequireCapability capability={Capability.CAN_RUN_WORKFLOW}>
+                      <Agents />
+                    </RequireCapability>
+                  }
+                />
 
                 {/*
                  * /sheet and /wrangler: left OPEN at the route level.

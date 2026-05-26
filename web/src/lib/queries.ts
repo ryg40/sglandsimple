@@ -41,6 +41,9 @@ import type {
   DocsSearchResponse,
   DocsSyncResponse,
   DocsAgentResponse,
+  AgentArtifactsResponse,
+  AgentProfilesResponse,
+  AgentRunRecord,
   MeResponse,
 } from "./types";
 
@@ -50,6 +53,8 @@ export const keys = {
   sample: (c: string) => ["wrangler-sample", c] as const,
   pipelines: (c?: string) => ["wrangler-pipelines", c ?? "all"] as const,
   audit: (limit: number) => ["audit-recent", limit] as const,
+  agentProfiles: ["agent-profiles"] as const,
+  agentRun: (id: string) => ["agent-run", id] as const,
 };
 
 // ---- reads -----------------------------------------------------------------
@@ -469,6 +474,61 @@ export function useDocsAgent() {
       // Applying suggestions writes revisions; refresh the tree/docs.
       if (data.applied_any) qc.invalidateQueries({ queryKey: ["docs-tree"] });
     },
+  });
+}
+
+// ---- Stage 21 — Deep Agent runtime ----------------------------------------
+
+export function useAgentProfiles() {
+  return useQuery({
+    queryKey: keys.agentProfiles,
+    queryFn: () => api.get<AgentProfilesResponse>("/api/agents/profiles"),
+  });
+}
+
+export function useAgentRun(runId: string | null) {
+  return useQuery({
+    queryKey: keys.agentRun(runId ?? ""),
+    queryFn: () => api.get<AgentRunRecord>(`/api/agents/runs/${runId}`),
+    enabled: !!runId,
+    refetchInterval: (q) => {
+      const status = q.state.data?.status;
+      return status === "running" || status === "waiting_approval" ? 2_000 : false;
+    },
+  });
+}
+
+export function useStartAgentRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { goal: string; agent?: string | null; context_refs?: string[]; mode?: "dry_run" | "live" }) =>
+      api.post<AgentRunRecord>("/api/agents/runs", body),
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: keys.agentRun(data.run_id) }),
+  });
+}
+
+export function useResumeAgentRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { run_id: string; decision: unknown }) =>
+      api.post<AgentRunRecord>(`/api/agents/runs/${body.run_id}/resume`, { decision: body.decision }),
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: keys.agentRun(data.run_id) }),
+  });
+}
+
+export function useCancelAgentRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => api.post<AgentRunRecord>(`/api/agents/runs/${runId}/cancel`, {}),
+    onSuccess: (data) => qc.invalidateQueries({ queryKey: keys.agentRun(data.run_id) }),
+  });
+}
+
+export function useAgentArtifacts(runId: string | null) {
+  return useQuery({
+    queryKey: ["agent-artifacts", runId ?? ""],
+    queryFn: () => api.get<AgentArtifactsResponse>(`/api/agents/runs/${runId}/artifacts`),
+    enabled: !!runId,
   });
 }
 

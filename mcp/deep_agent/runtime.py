@@ -249,6 +249,7 @@ def build_orchestrator(profiles: PlatformProfiles | None = None, checkpointer: A
 # compiled with the Mongo checkpointer so a paused run survives a restart.
 # ---------------------------------------------------------------------------
 
+import asyncio
 import os
 import time
 import uuid
@@ -336,27 +337,29 @@ def _extract_interrupt(snapshot: Any, run_id: str) -> ApprovalRequest | None:
     return None
 
 
-async def agent_run_start(req: AgentRunStartRequest) -> AgentRunRecord:
-    """Start a run: route to an agent (or let the orchestrator route) and run to
-    the first HITL pause or completion. Always dry-run unless mode=live AND the
-    global DEEP_AGENT_DRY_RUN_ONLY guardrail is off."""
+async def _execute_run(run_id: str) -> None:
+    """Background worker: run the deep-agent graph to completion or HITL pause.
+
+    S21.runtime.1 intentionally returns `agent_run_start` quickly so web/MCP
+    callers poll status instead of sitting behind a long LLM/subagent request.
+    """
     from checkpointer import checkpointer_context
 
-    rid = f"agent-{uuid.uuid4().hex[:12]}"
-    rec = AgentRunRecord(run_id=rid, goal=req.goal, agent=req.agent, mode=req.mode, actor=req.actor)
-    await _persist_run(rec)
+    rec = await _load_run(run_id)
+    if rec is None or rec.status != "running":
+        return
 
-    goal = req.goal
-    if req.agent:
-        goal = f"Delegate this to the {req.agent} subagent: {req.goal}"
+    goal = rec.goal
+    if rec.agent:
+        goal = f"Delegate this to the {rec.agent} subagent: {rec.goal}"
 
     try:
         async with checkpointer_context() as saver:
             orch = build_orchestrator(checkpointer=saver)
-            config = {"configurable": {"thread_id": rid}}
+            config = {"configurable": {"thread_id": run_id}}
             state = await orch.ainvoke({"messages": [{"role": "user", "content": goal}]}, config)
             snapshot = await orch.aget_state(config)
-            approval = _extract_interrupt(snapshot, rid) if snapshot.next else None
+            approval = _extract_interrupt(snapshot, run_id) if snapshot.next else None
             rec.result_text = _result_text(state)
             if approval:
                 rec.status = "waiting_approval"
@@ -367,6 +370,27 @@ async def agent_run_start(req: AgentRunStartRequest) -> AgentRunRecord:
         rec.status = "error"
         rec.error = f"{type(e).__name__}: {e}"
     await _persist_run(rec)
+
+
+def _spawn_run(run_id: str) -> None:
+    try:
+        asyncio.get_running_loop().create_task(_execute_run(run_id))
+    except RuntimeError:
+        # Fallback for direct CLI/tests that call without an event loop.
+        asyncio.run(_execute_run(run_id))
+
+
+async def agent_run_start(req: AgentRunStartRequest) -> AgentRunRecord:
+    """Start a run and return immediately with a pollable run_id.
+
+    The background graph continues until completion, error, or HITL interrupt.
+    Always dry-run unless mode=live AND the global DEEP_AGENT_DRY_RUN_ONLY
+    guardrail is off (write tools still enforce their own gates).
+    """
+    rid = f"agent-{uuid.uuid4().hex[:12]}"
+    rec = AgentRunRecord(run_id=rid, goal=req.goal, agent=req.agent, mode=req.mode, actor=req.actor)
+    await _persist_run(rec)
+    _spawn_run(rid)
     return rec
 
 

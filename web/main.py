@@ -42,6 +42,12 @@ API surface (all JSON):
 - POST /api/docs/{slug}/flags  → MCP docs_set_flags (status / visibility / tags)
 - POST /api/docs/sync          → MCP docs_sync (Confluence reconciliation, dry-run by default)
 - POST /api/docs/agent         → MCP docs_agent_run (reconcile→triage→suggest)
+- GET  /api/agents/profiles    → MCP agent_profiles_list (Deep Agent roster)
+- POST /api/agents/runs        → MCP agent_run_start
+- GET  /api/agents/runs/{id}   → MCP agent_run_status
+- POST /api/agents/runs/{id}/resume → MCP agent_run_resume
+- POST /api/agents/runs/{id}/cancel → MCP agent_run_cancel
+- GET  /api/agents/runs/{id}/artifacts → MCP agent_run_artifacts
 - GET  /api/auth/diagnostics   → auth internals for sg_sec_admin users (S19.admin.1)
 """
 
@@ -855,6 +861,56 @@ async def api_docs_agent(request: Request) -> JSONResponse:
     if res.get("isError"):
         return JSONResponse({"error": _extract_json_block(res)}, status_code=400)
     return JSONResponse(_extract_json_block(res))
+
+
+# ---------------------------------------------------------------------------
+# Stage 21 — Deep Agent runtime proxy endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/agents/profiles", dependencies=[Depends(_guard_user)])
+async def api_agent_profiles() -> JSONResponse:
+    res = await _mcp_tool("agent_profiles_list", {})
+    return JSONResponse(_extract_json_block(res), status_code=400 if res.get("isError") else 200)
+
+
+@app.post("/api/agents/runs", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_RUN_WORKFLOW))])
+async def api_agent_run_start(request: Request) -> JSONResponse:
+    body = await request.json()
+    actor = _actor_from_request(request)
+    if actor:
+        body["actor"] = actor.get("username")
+    res = await _mcp_tool("agent_run_start", body)
+    return JSONResponse(_extract_json_block(res), status_code=400 if res.get("isError") else 200)
+
+
+@app.get("/api/agents/runs/{run_id}", dependencies=[Depends(_guard_user)])
+async def api_agent_run_status(run_id: str) -> JSONResponse:
+    res = await _mcp_tool("agent_run_status", {"run_id": run_id})
+    return JSONResponse(_extract_json_block(res), status_code=404 if res.get("isError") else 200)
+
+
+@app.post("/api/agents/runs/{run_id}/resume", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_RUN_WORKFLOW))])
+async def api_agent_run_resume(run_id: str, request: Request) -> JSONResponse:
+    body = await request.json()
+    args: dict[str, Any] = {"run_id": run_id, "decision": body.get("decision")}
+    actor = _actor_from_request(request)
+    if actor:
+        args["actor"] = actor.get("username")
+    res = await _mcp_tool("agent_run_resume", args)
+    return JSONResponse(_extract_json_block(res), status_code=400 if res.get("isError") else 200)
+
+
+@app.post("/api/agents/runs/{run_id}/cancel", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_RUN_WORKFLOW))])
+async def api_agent_run_cancel(run_id: str) -> JSONResponse:
+    res = await _mcp_tool("agent_run_cancel", {"run_id": run_id})
+    return JSONResponse(_extract_json_block(res), status_code=400 if res.get("isError") else 200)
+
+
+@app.get("/api/agents/runs/{run_id}/artifacts", dependencies=[Depends(_guard_user)])
+async def api_agent_run_artifacts(run_id: str) -> JSONResponse:
+    res = await _mcp_tool("agent_run_artifacts", {"run_id": run_id})
+    return JSONResponse(_extract_json_block(res), status_code=400 if res.get("isError") else 200)
 
 
 @app.get("/api/reports/download", dependencies=[Depends(_guard_user)])

@@ -14,6 +14,7 @@ import {
   BookText,
   UsersRound,
   Lock,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCollections } from "@/lib/queries";
@@ -50,6 +51,13 @@ const NAV: { group: string; items: NavItem[] }[] = [
       },
       { to: "/docs", label: "Docs Wiki", icon: BookText },
       { to: "/standup", label: "Standup", icon: UsersRound },
+      {
+        to: "/agents",
+        label: "Deep Agents",
+        icon: Bot,
+        requiresCap: Capability.CAN_RUN_WORKFLOW,
+        capTooltip: "Requires canRunWorkflow to start and manage agent runs",
+      },
     ],
   },
   {

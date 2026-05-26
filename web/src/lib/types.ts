@@ -545,6 +545,50 @@ export interface DocsAgentResponse {
   } | null;
 }
 
+// Stage 21 — Deep Agent runtime.
+export interface AgentProfile {
+  name: string;
+  description: string;
+  write_policy?: string;
+  required_capability?: string | null;
+  allowed_tools: string[];
+  write_tools: string[];
+  graph?: string | null;
+}
+
+export interface AgentProfilesResponse {
+  profiles: AgentProfile[];
+}
+
+export type AgentRunStatus = "running" | "waiting_approval" | "completed" | "rejected" | "cancelled" | "error";
+
+export interface AgentApprovalRequest {
+  run_id: string;
+  tool?: string;
+  payload?: Record<string, unknown>;
+  rationale?: string;
+}
+
+export interface AgentRunRecord {
+  run_id: string;
+  goal: string;
+  agent?: string | null;
+  status: AgentRunStatus;
+  mode: string;
+  actor?: string | null;
+  result_text?: string;
+  approval?: AgentApprovalRequest | null;
+  artifacts: Record<string, unknown>[];
+  error?: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AgentArtifactsResponse {
+  run_id: string;
+  artifacts: Record<string, unknown>[];
+}
+
 // Stage 18 — architecture graph v2 (see mcp/architecture.py).
 
 export interface ArchLayer {

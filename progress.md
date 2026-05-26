@@ -438,3 +438,11 @@ User reported that login persisted even in a new incognito browser — no way to
 - **S19.admin.1 DONE** — `/api/auth/diagnostics` is guarded by `canAdminAuth`; `/auth-admin` renders auth mode, group/role/capability mappings, cache status, LDAP adapter status, seeded POC identity hints, and recent denial reasons. Fixed Badge variants to match the project design-system API and updated `web/Dockerfile` so `auth_ldap.py`/`auth_explain.py` are present in the runtime image.
 - Stage 20 docs/checklists reconciled to actual implementation: identity, agent template context, proposal persistence/staging, and trace bubble are complete; approval/RBAC/full rebuilt-stack verification remain open.
 - Validation: `python3 -m py_compile mcp/*.py web/*.py scripts/*.py` passed; `cd web && npm run build` passed after fixing `/auth-admin` badge variants; rebuilt/restarted web with `docker compose up --build -d mcp web`; regenerated POC Basic users with `AUTH_BASIC_SEED_PASSWORD=changeme-poc AUTH_BASIC_USERS_FILE=./perm/auth/users.json python3 web/auth_seed.py`; `bash scripts/smoke_auth.sh` passed (83 pass / 0 fail / 3 skipped mode-specific checks); `scripts/smoke_standup_ws.py` passed; `/api/auth/diagnostics` smoke passed for admin user.
+
+## Session 2026-05-26 — Stage 21 YOLO runtime/UI pass
+- **S21.runtime.1 DONE** — Deep Agent `agent_run_start` now persists a `running` record and launches orchestrator execution in a background task, so API callers receive a pollable `run_id` immediately instead of blocking behind long LLM/subagent hops. Existing status/resume/cancel/artifacts persistence remains in `deep_agent_runs`.
+- Added web `/api/agents/*` proxies for profile list, run start/status/resume/cancel/artifacts with actor propagation from Stage-19 auth where applicable.
+- Added typed TS runtime models and React Query hooks for Deep Agent profiles/runs/artifacts.
+- **S21.ui.1 DONE** — new canRunWorkflow-gated `/agents` operations page + sidebar item: profile roster, dry-run start form, polling status, result/error/artifact inspection, pending approval approve/reject controls, and cancel action.
+- Updated `IMPLEMENT.md` and `CHANGELOG.md` for observable Stage-21 runtime/UI behavior.
+- Validation: `python3 -m py_compile mcp/deep_agent/runtime.py web/main.py` passed; `cd web && npm run build` passed (Vite chunk-size warning only).
