@@ -906,11 +906,18 @@ async def api_agent_run_status(run_id: str) -> JSONResponse:
 async def api_agent_run_resume(run_id: str, request: Request) -> JSONResponse:
     body = await request.json()
     args: dict[str, Any] = {"run_id": run_id, "decision": body.get("decision")}
-    actor = _actor_from_request(request)
-    if actor:
-        args["actor"] = actor.get("username")
+    user: _auth.UserContext | None = getattr(request.state, "user", None)
+    if user is not None:
+        args["actor"] = user.username
+        # The runtime enforces the agent profile's required_capability against
+        # this set before approving/editing a write (S21.hitl.1).
+        args["actor_capabilities"] = sorted(user.capabilities)
     res = await _mcp_tool("agent_run_resume", args)
-    return JSONResponse(_extract_json_block(res), status_code=400 if res.get("isError") else 200)
+    payload = _extract_json_block(res)
+    if res.get("isError"):
+        status = 403 if isinstance(payload, dict) and payload.get("code") == "forbidden" else 400
+        return JSONResponse(payload, status_code=status)
+    return JSONResponse(payload)
 
 
 @app.post("/api/agents/runs/{run_id}/cancel", dependencies=[Depends(_guard_cap(_auth.Capability.CAN_RUN_WORKFLOW))])

@@ -158,15 +158,35 @@ corpus.
 
 ## 7. HITL interrupt/resume
 
-Use deepagents' `interrupt_on` for per-tool pauses, backed by the LangGraph
-checkpointer (already proven by the Stage-14 docs agent). A write tool fires →
-the run interrupts with a typed `ApprovalRequest` (payload, target service,
-validation result, rationale, source refs) → `agent_run_resume` with
-`{run_id, decision}` checks the resuming actor's Stage-19 capability →
-on approve, applies only approved proposals through existing staged-write paths
-(e.g. Stage-16 `jira_apply_staged`), still subject to `JIRA_WRITES_ENABLED` and
-`DEEP_AGENT_DRY_RUN_ONLY`. Pending approvals survive container restart
-(`S21.verify.2`).
+Implemented (`S21.hitl.1`) on deepagents' `interrupt_on` per-tool pauses, backed
+by the Mongo LangGraph checkpointer (the same mechanism the Stage-14 docs agent
+proved). Concretely:
+
+- **Interrupt shape.** deepagents wires `interrupt_on={tool: True}` through
+  `HumanInTheLoopMiddleware`, which interrupts with a `HITLRequest`
+  (`{action_requests: [{name, args, description}], review_configs: [...]}`).
+  `runtime._extract_interrupt` parses the first pending action into a typed
+  `ApprovalRequest` (`tool`, `payload` = the tool args, `rationale` = the
+  description) and resolves `required_capability` from the **owning agent
+  profile's** `write_tools`/`required_capability` (so the gate follows the tool,
+  not the routing).
+- **Resume contract.** `agent_run_resume({run_id, decision, actor,
+  actor_capabilities})` translates the high-level decision (`approve` /
+  `reject` / edited args) into the middleware's required
+  `{"decisions": [Decision, …]}` payload — **one decision per pending
+  `action_request`** — and resumes via `Command(resume=…)`.
+- **Capability gate.** Approving or editing a capability-gated write requires
+  `actor_capabilities` to include the agent's `required_capability`; otherwise a
+  `PermissionDeniedError` is raised (the web proxy maps it to HTTP 403). A
+  *reject* needs no capability.
+- **Dry-run guardrail.** When `DEEP_AGENT_DRY_RUN_ONLY` is on, an approve/edit is
+  downgraded to a no-write reject so no write tool executes; the run resolves as
+  `rejected` with a clear reason. Write tools also keep their own
+  `*_WRITES_ENABLED` gate downstream.
+- **Restart durability.** The run record (`deep_agent_runs`) and the graph
+  checkpoint (`lg_checkpoints`) are both in Mongo, so a paused approval survives
+  an MCP restart and remains resumable (verified — see
+  `scripts/smoke_agent_hitl.py` and `S21.verify.2`).
 
 ## 8. Runtime API
 

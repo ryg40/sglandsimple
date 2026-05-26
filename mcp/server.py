@@ -725,13 +725,23 @@ TOOLS.extend([
     },
     {
         "name": "agent_run_resume",
-        "description": "Resume a waiting_approval run with approve / reject / edited payload.",
+        "description": (
+            "Resume a waiting_approval run with approve / reject / edited payload. "
+            "Approving or editing a capability-gated write requires the actor to hold "
+            "the agent profile's required_capability (pass actor_capabilities)."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "run_id": {"type": "string"},
                 "decision": {"description": "true/'approve', false/'reject', or an edited payload object."},
                 "actor": {"type": "string", "default": ""},
+                "actor_capabilities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                    "description": "The resuming actor's Stage-19 capabilities (for the write capability gate).",
+                },
             },
             "required": ["run_id", "decision"],
         },
@@ -1434,10 +1444,17 @@ async def _tool_agent_run_status(args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _tool_agent_run_resume(args: dict[str, Any]) -> dict[str, Any]:
-    from deep_agent.runtime import agent_run_resume
+    from deep_agent.runtime import PermissionDeniedError, agent_run_resume
 
     try:
-        rec = await agent_run_resume(args.get("run_id", ""), args.get("decision"), actor=args.get("actor") or None)
+        rec = await agent_run_resume(
+            args.get("run_id", ""),
+            args.get("decision"),
+            actor=args.get("actor") or None,
+            actor_capabilities=args.get("actor_capabilities") or [],
+        )
+    except PermissionDeniedError as e:
+        return _agent_envelope({"error": str(e), "code": "forbidden"}, f"[agent_run_resume] {e}", True)
     except ValueError as e:
         return _agent_envelope({"error": str(e)}, f"[agent_run_resume] {e}", True)
     return _agent_envelope(rec.model_dump(), f"# Agent run `{rec.run_id}` · **{rec.status}**")

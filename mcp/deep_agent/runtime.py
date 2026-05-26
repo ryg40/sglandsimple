@@ -277,6 +277,18 @@ DRY_RUN_ONLY = os.environ.get("DEEP_AGENT_DRY_RUN_ONLY", "true").lower() == "tru
 RunStatus = Literal["running", "waiting_approval", "completed", "rejected", "cancelled", "error"]
 
 
+def _dry_run_only() -> bool:
+    """Read the dry-run guardrail fresh each resume so an env change takes
+    effect without re-importing the module (the import-time ``DRY_RUN_ONLY``
+    constant is kept for back-compat/tests)."""
+    return os.environ.get("DEEP_AGENT_DRY_RUN_ONLY", "true").lower() == "true"
+
+
+class PermissionDeniedError(Exception):
+    """Resuming actor lacks the capability that gates the pending write tool.
+    Distinct from ValueError so the web layer can map it to HTTP 403."""
+
+
 class AgentRunStartRequest(BaseModel):
     goal: str = Field(..., min_length=1)
     agent: str | None = None  # omit → orchestrator routes
@@ -286,12 +298,24 @@ class AgentRunStartRequest(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    """Typed payload surfaced at a HITL interrupt."""
+    """Typed payload surfaced at a HITL interrupt.
+
+    Parsed from the LangChain ``HumanInTheLoopMiddleware`` interrupt value, which
+    is a ``HITLRequest`` ``{action_requests: [{name, args, description}], ...}``.
+    ``tool``/``payload`` are the first pending action's name/args; an agent
+    pauses on exactly one write tool at a time in this platform, but
+    ``action_count`` is surfaced so a resume can answer every pending action.
+    """
 
     run_id: str
     tool: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
     rationale: str = ""
+    # The Stage-19 capability the resuming actor must hold to approve this write
+    # (resolved from the owning agent profile). Empty ⇒ no capability gate.
+    required_capability: str = ""
+    # Number of pending action_requests in the interrupt (decisions must match).
+    action_count: int = 1
 
 
 class AgentRunRecord(BaseModel):
@@ -338,18 +362,56 @@ def _result_text(state: Any) -> str:
     return str(content or "")
 
 
+def _capability_for_tool(tool: str) -> str:
+    """The Stage-19 capability that gates a write ``tool``, via its owning agent
+    profile's ``required_capability``. Empty string ⇒ no profile claims it as a
+    write tool (so no capability gate applies)."""
+    if not tool:
+        return ""
+    try:
+        profiles = get_profiles()
+    except Exception:  # noqa: BLE001 — never let profile load break a resume
+        return ""
+    for a in profiles.agents:
+        if tool in a.write_tools and a.required_capability:
+            return a.required_capability
+    return ""
+
+
 def _extract_interrupt(snapshot: Any, run_id: str) -> ApprovalRequest | None:
-    if snapshot.tasks and snapshot.tasks[0].interrupts:
-        val = snapshot.tasks[0].interrupts[0].value
-        if isinstance(val, dict):
-            return ApprovalRequest(
-                run_id=run_id,
-                tool=val.get("tool", ""),
-                payload=val if "payload" not in val else val.get("payload", {}),
-                rationale=val.get("rationale", ""),
-            )
-        return ApprovalRequest(run_id=run_id, rationale=str(val))
-    return None
+    """Parse a LangChain HITL interrupt into a typed ApprovalRequest.
+
+    The ``HumanInTheLoopMiddleware`` interrupts with a ``HITLRequest``
+    (``{action_requests: [{name, args, description}], review_configs: [...]}``).
+    We surface the first pending action's tool/args and resolve the capability
+    that gates it from the owning agent profile. A non-dict/legacy value is
+    tolerated as a bare rationale so older checkpoints don't crash a resume."""
+    if not (snapshot.tasks and snapshot.tasks[0].interrupts):
+        return None
+    val = snapshot.tasks[0].interrupts[0].value
+    if isinstance(val, dict) and val.get("action_requests"):
+        actions = val["action_requests"]
+        first = actions[0] if actions else {}
+        tool = first.get("name", "")
+        return ApprovalRequest(
+            run_id=run_id,
+            tool=tool,
+            payload=first.get("args", {}) or {},
+            rationale=first.get("description", ""),
+            required_capability=_capability_for_tool(tool),
+            action_count=len(actions) or 1,
+        )
+    # Legacy / non-middleware interrupt value: keep it visible as a rationale.
+    if isinstance(val, dict):
+        tool = val.get("tool", "")
+        return ApprovalRequest(
+            run_id=run_id,
+            tool=tool,
+            payload=val.get("payload", val),
+            rationale=val.get("rationale", ""),
+            required_capability=_capability_for_tool(tool),
+        )
+    return ApprovalRequest(run_id=run_id, rationale=str(val))
 
 
 async def _execute_run(run_id: str) -> None:
@@ -413,12 +475,61 @@ async def agent_run_status(run_id: str) -> AgentRunRecord | None:
     return await _load_run(run_id)
 
 
-async def agent_run_resume(run_id: str, decision: Any, actor: str | None = None) -> AgentRunRecord:
-    """Resume a waiting_approval run with approve / reject / edited payload.
+def _normalize_decision(decision: Any) -> tuple[bool, dict[str, Any] | None, str]:
+    """Map a high-level resume decision to (is_reject, edited_args, reject_msg).
 
-    Capability enforcement (the actor must hold the agent's required_capability)
-    is applied by the web proxy layer (which has the auth context); here we
-    honor the global DEEP_AGENT_DRY_RUN_ONLY guardrail and persist the outcome.
+    Accepts: ``True``/``"approve"`` → approve; ``False``/``"reject"``/``None`` →
+    reject; a dict with ``{"type":"edit","args":{...}}`` or bare edited args →
+    edit; ``{"type":"reject","message":...}`` → reject with a message."""
+    if isinstance(decision, dict):
+        dtype = decision.get("type")
+        if dtype == "reject":
+            return True, None, str(decision.get("message", "Rejected by approver"))
+        if dtype == "edit":
+            return False, dict(decision.get("args") or decision.get("edited_action", {}).get("args", {})), ""
+        if dtype == "approve":
+            return False, None, ""
+        # Bare dict ⇒ treat as edited args.
+        return False, dict(decision), ""
+    if decision in (False, "reject", "rejected", None):
+        return True, None, "Rejected by approver"
+    return False, None, ""
+
+
+def _build_resume_decisions(
+    approval: ApprovalRequest | None, is_reject: bool, edited_args: dict[str, Any] | None, reject_msg: str
+) -> dict[str, list[dict[str, Any]]]:
+    """Build the HumanInTheLoopMiddleware resume payload: one Decision per pending
+    action_request, wrapped as ``{"decisions": [...]}`` (its required shape)."""
+    count = approval.action_count if approval else 1
+    if is_reject:
+        one: dict[str, Any] = {"type": "reject", "message": reject_msg or "Rejected by approver"}
+    elif edited_args is not None and approval is not None:
+        one = {"type": "edit", "edited_action": {"name": approval.tool, "args": edited_args}}
+    else:
+        one = {"type": "approve"}
+    return {"decisions": [dict(one) for _ in range(max(count, 1))]}
+
+
+async def agent_run_resume(
+    run_id: str,
+    decision: Any,
+    actor: str | None = None,
+    actor_capabilities: list[str] | None = None,
+) -> AgentRunRecord:
+    """Resume a waiting_approval run with approve / edit / reject.
+
+    Enforcement done here (authoritative gate, next to the write):
+    - **Capability**: to *approve or edit* a write whose owning agent profile
+      declares a ``required_capability``, the resuming ``actor_capabilities``
+      must include it (Stage-19). A reject needs no capability.
+    - **Dry-run guardrail**: when ``DEEP_AGENT_DRY_RUN_ONLY`` is on, an approve/
+      edit is downgraded to a reject so no write tool executes — the run still
+      resolves cleanly as rejected with a clear reason. (Write tools also keep
+      their own ``*_WRITES_ENABLED`` gate downstream.)
+
+    The resume value is the middleware's required ``{"decisions": [...]}`` shape,
+    one decision per pending action_request.
     """
     from checkpointer import checkpointer_context
     from langgraph.types import Command
@@ -429,21 +540,43 @@ async def agent_run_resume(run_id: str, decision: Any, actor: str | None = None)
     if rec.status != "waiting_approval":
         raise ValueError(f"run {run_id!r} is {rec.status}, not waiting_approval")
 
-    reject = decision in (False, "reject", "rejected", None)
+    is_reject, edited_args, reject_msg = _normalize_decision(decision)
+    needed = rec.approval.required_capability if rec.approval else ""
+
+    # Capability gate: only approvals/edits of a capability-gated write are checked.
+    if not is_reject and needed:
+        caps = set(actor_capabilities or [])
+        if needed not in caps:
+            raise PermissionDeniedError(
+                f"actor {actor or '(unknown)'} lacks capability {needed!r} required to "
+                f"approve tool {rec.approval.tool!r}"
+            )
+
+    # Dry-run guardrail: never let an approve reach a live write tool.
+    forced_dry_run = False
+    if not is_reject and _dry_run_only():
+        is_reject = True
+        reject_msg = "DEEP_AGENT_DRY_RUN_ONLY is on — write not applied (dry-run)."
+        forced_dry_run = True
+
+    resume_payload = _build_resume_decisions(rec.approval, is_reject, edited_args, reject_msg)
+
     try:
         async with checkpointer_context() as saver:
             orch = build_orchestrator(checkpointer=saver)
             config = {"configurable": {"thread_id": run_id}}
-            resume_val = "reject" if reject else decision
-            state = await orch.ainvoke(Command(resume=resume_val), config)
+            state = await orch.ainvoke(Command(resume=resume_payload), config)
             snapshot = await orch.aget_state(config)
             rec.result_text = _result_text(state)
             if snapshot.next:
                 rec.status = "waiting_approval"
                 rec.approval = _extract_interrupt(snapshot, run_id)
             else:
-                rec.status = "rejected" if reject else "completed"
+                rec.status = "rejected" if is_reject else "completed"
+                rec.approval = None
             rec.actor = actor or rec.actor
+            if forced_dry_run:
+                rec.error = ""  # not an error; the result_text carries the reason
     except Exception as e:  # noqa: BLE001
         rec.status = "error"
         rec.error = f"{type(e).__name__}: {e}"

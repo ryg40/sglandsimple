@@ -11,6 +11,7 @@ import {
   useResumeAgentRun,
   useStartAgentRun,
 } from "@/lib/queries";
+import { useAuth } from "@/components/auth-provider";
 import { cn } from "@/lib/utils";
 
 function StatusIcon({ status }: { status?: string }) {
@@ -31,6 +32,7 @@ export default function Agents() {
   const artifacts = useAgentArtifacts(runId);
   const resume = useResumeAgentRun();
   const cancel = useCancelAgentRun();
+  const { hasCapability } = useAuth();
 
   const roster = profiles.data?.profiles ?? [];
   const selected = useMemo(() => roster.find((p) => p.name === agent), [roster, agent]);
@@ -107,16 +109,35 @@ export default function Agents() {
               </div>
               {run.data?.error && <pre className="whitespace-pre-wrap rounded-lg bg-destructive/10 p-3 text-xs text-destructive">{run.data.error}</pre>}
               {run.data?.result_text && <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-muted p-3 text-sm">{run.data.result_text}</pre>}
-              {run.data?.approval && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-                  <div className="font-medium">Approval requested: {run.data.approval.tool || "tool"}</div>
-                  <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(run.data.approval.payload ?? run.data.approval, null, 2)}</pre>
-                  <div className="mt-3 flex gap-2">
-                    <Button size="sm" onClick={() => resume.mutate({ run_id: run.data!.run_id, decision: "approve" })}>Approve</Button>
-                    <Button size="sm" variant="outline" onClick={() => resume.mutate({ run_id: run.data!.run_id, decision: "reject" })}>Reject</Button>
+              {run.data?.approval && (() => {
+                const ap = run.data.approval;
+                const cap = ap.required_capability ?? "";
+                const canApprove = !cap || hasCapability(cap);
+                return (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                    <div className="font-medium">Approval requested: {ap.tool || "tool"}</div>
+                    {ap.rationale && <div className="mt-1 text-xs text-amber-900/80">{ap.rationale}</div>}
+                    {cap && (
+                      <div className="mt-1 text-xs">
+                        Requires capability <code className="rounded bg-amber-100 px-1">{cap}</code>
+                        {!canApprove && " — you do not hold it; you can only reject."}
+                      </div>
+                    )}
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(ap.payload ?? ap, null, 2)}</pre>
+                    <div className="mt-3 flex gap-2">
+                      <Button
+                        size="sm"
+                        disabled={!canApprove || resume.isPending}
+                        title={canApprove ? undefined : `Requires ${cap}`}
+                        onClick={() => resume.mutate({ run_id: run.data!.run_id, decision: "approve" })}
+                      >
+                        Approve
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={resume.isPending} onClick={() => resume.mutate({ run_id: run.data!.run_id, decision: "reject" })}>Reject</Button>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
               {runId && run.data?.status === "running" && (
                 <Button variant="outline" onClick={() => cancel.mutate(runId)}><Square className="mr-2 size-4" />Cancel</Button>
               )}

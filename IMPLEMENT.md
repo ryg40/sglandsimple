@@ -1037,9 +1037,9 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
   - Verified: `python3 -m py_compile mcp/deep_agent/runtime.py web/main.py` and `cd web && npm run build` clean.
   - Depends on: S21.orch.1.
 
-- [ ] **S21.hitl.1 — `interrupt_on` HITL interrupt/resume contract**
-  - Files: `mcp/deep_agent/runtime.py`, `mcp/checkpointer.py`.
-  - Done when: a write tool listed in a profile's `write_tools` pauses the run via `interrupt_on`, persists a typed `ApprovalRequest`, and `agent_run_resume` (`{run_id, decision}`) checks the resuming actor's Stage-19 capability, then on approve applies only approved proposals through existing staged-write paths (e.g. Stage-16 `jira_apply_staged`) still subject to `JIRA_WRITES_ENABLED` + `DEEP_AGENT_DRY_RUN_ONLY`; pending approvals survive container restart.
+- [x] **S21.hitl.1 — `interrupt_on` HITL interrupt/resume contract** ✅ DONE
+  - Files: `mcp/deep_agent/runtime.py`, `mcp/server.py`, `web/main.py`, `web/src/routes/agents.tsx`, `web/src/lib/types.ts`, `scripts/smoke_agent_hitl.py` (new), `docs/deep_agent_platform.md`.
+  - Done: a `write_tools` tool pauses the run via deepagents `interrupt_on`; `_extract_interrupt` parses the `HumanInTheLoopMiddleware` `HITLRequest` into a typed `ApprovalRequest` (`tool`, args `payload`, `rationale`, and `required_capability` resolved from the owning profile). `agent_run_resume({run_id, decision, actor, actor_capabilities})` builds the middleware's required `{"decisions": [...]}` payload (one per pending action), enforces the resuming actor's Stage-19 capability before approve/edit (`PermissionDeniedError` → web proxy 403), and downgrades approve→no-write reject when `DEEP_AGENT_DRY_RUN_ONLY` is on (write tools also keep their own `*_WRITES_ENABLED` gate). Pending approvals survive an MCP restart (run record + checkpoint both in Mongo). The `/agents` UI surfaces the required capability and disables Approve for users who lack it. **Verified live** (mcp rebuilt + recreated): pause→typed approval (`jira_apply_staged`/`canApplyJira`), approve-without-cap refused, approve-with-cap-under-dry-run applied nothing, and a paused approval survived `docker compose restart mcp` and resumed cleanly (`scripts/smoke_agent_hitl.py`); `smoke_agent.sh` + `smoke_ask_data.sh` still pass.
   - Depends on: S21.runtime.1.
 
 - [ ] **S21.agent.1 — Implement the baseline system agents**

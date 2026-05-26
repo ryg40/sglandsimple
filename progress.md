@@ -4,6 +4,23 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-26 (claude code) — Stage 21: HITL interrupt/resume contract (S21.hitl.1)
+
+Worktree `../wt-s21-hitl` (branch `s21-hitl`) off HEAD `ec5a3ec`.
+
+**S21.hitl.1 DONE.** The runtime had the HITL *scaffolding* (ApprovalRequest, checkpointer, resume skeleton) but two real bugs blocked it, found by reading the installed `langchain.agents.middleware.human_in_the_loop` source: (1) `_extract_interrupt` read `val["tool"]`/`val["rationale"]`, but deepagents 0.6.3 interrupts with a `HITLRequest` = `{action_requests: [{name, args, description}], review_configs: [...]}`, so the approval payload came out empty; (2) `agent_run_resume` sent `Command(resume="reject"|decision)`, but the middleware consumes `interrupt(req)["decisions"]` — a list of `{"type": "approve"|"reject"|"edit", ...}`, one per action.
+
+Fixes in `mcp/deep_agent/runtime.py`:
+- `_extract_interrupt` parses the `HITLRequest` → typed `ApprovalRequest` (`tool`, args `payload`, `rationale`); added `required_capability` (resolved via `_capability_for_tool` from the owning profile's `write_tools`/`required_capability`) and `action_count`.
+- `_normalize_decision` + `_build_resume_decisions` translate approve/reject/edit into the middleware's `{"decisions": [...]}` shape (one per pending action).
+- `agent_run_resume(run_id, decision, actor, actor_capabilities)`: enforces the capability gate before approve/edit (`PermissionDeniedError`, distinct from ValueError); when `DEEP_AGENT_DRY_RUN_ONLY` is on, downgrades approve→no-write reject (read fresh per-resume via `_dry_run_only()`).
+- `mcp/server.py`: resume tool gains `actor_capabilities`; PermissionDenied → envelope `code:"forbidden"`.
+- `web/main.py`: resume proxy passes `sorted(user.capabilities)`; maps `code:"forbidden"` → HTTP 403.
+- `web/src/routes/agents.tsx` + `types.ts`: approval panel shows `required_capability`, disables Approve when the user lacks it.
+- `scripts/smoke_agent_hitl.py` (new); `docs/deep_agent_platform.md` §7 updated to the implemented contract.
+
+**Verified LIVE** (rebuilt sglandsimple-mcp from the worktree, recreated container, healthy): pause→`waiting_approval` with `tool=jira_apply_staged`/`cap=canApplyJira`; approve-without-cap → forbidden; approve-with-cap under dry-run → applied nothing ("write wasn't applied because dry-run"); a separate paused run survived `docker compose restart mcp` and resumed (reject→`rejected`) cleanly. `smoke_agent.sh` and `smoke_ask_data.sh` (3/3) still pass. `py_compile` + `npm run build` clean.
+
 ## Session 2026-05-26 (claude code) — Stage 26: chat runtime visibility (S26.chat-runtime.1)
 
 Worked in worktree `../wt-s26` (branch `s26-chat-runtime`) branched from HEAD `08147da`, per COORDINATION.md rule 2 (PiAgent worktrees active).

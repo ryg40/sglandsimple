@@ -567,6 +567,10 @@ export interface AgentApprovalRequest {
   tool?: string;
   payload?: Record<string, unknown>;
   rationale?: string;
+  /** Stage-19 capability the approver must hold to approve this write (S21.hitl.1). */
+  required_capability?: string;
+  /** Number of pending tool actions in the interrupt. */
+  action_count?: number;
 }
 
 export interface AgentRunRecord {
