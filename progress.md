@@ -4,6 +4,10 @@
 **Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `d8bd928` (`docs(S20): add task to dedupe optimistic + echoed standup messages`).
 
+## Session 2026-05-26 (pi agent, yolo) — S21.context.1 (context packs)
+
+**S21.context.1 DONE.** Added `mcp/deep_agent/context.py`: named, versioned `ContextPack`s (`jira_story_template` v1, `standup_labels` v1) sourced from existing Stage-20 material (`build_story_template_context`, `ACCEPTANCE_CRITERIA_FORMAT`, `DEFAULT_STANDUP_LABELS`) — no duplicated prompts. `render_packs()` emits a compact block per pack; unknown packs raise; `validate_profile_packs()` cross-checks profiles. Stage-24 convergence seam `_try_standup_templates_store()` prefers the shared store, falls back to in-repo. Verified in-container: packs render, unknown rejects, all profile pack refs clean. Next: S21.orch.1.
+
 ## Session 2026-05-26 (pi agent, yolo) — S21.profile.1 (agent profile schema + loader)
 
 **S21.profile.1 DONE.** Added `mcp/deep_agent/profiles.yaml` (orchestrator + 8 one-per-system agents: atlassian/mongo/github/servicenow/aws/audit/docs/standup, referencing real MCP + connector tool names) and `mcp/deep_agent/profiles.py` (Pydantic schema + fail-fast loader). Validation enforces: write_tools ⊆ allowed_tools, no reserved runtime tools, read_only⇒no writes, write_tools⇒a Stage-19 capability, graph-backed⇒no allowed_tools, unique names. `interrupt_on()` builds the deepagents per-tool HITL map; `graph:` marks mongo→ask_data / docs→docs_agent as future CompiledSubAgents; `DEEP_AGENT_PROFILES_FILE` honored; `validate_against_catalog()` defers live-tool checks to runtime. Module imports only pydantic+yaml (no deepagents at load). Verified in-container: 8 agents load, interrupt_on correct, 5/5 negative cases reject, catalog check flags unknown tools. Added `DEEP_AGENT_PROFILES_FILE` to `.env.example`. Next: S21.context.1.
