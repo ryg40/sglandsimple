@@ -4,6 +4,16 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility PLANNED. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-26 (pi agent) — Stage 30 planned (multi-agent hygiene enforcement) + gitblockhook.md + S29 web deploy
+
+**Why:** the parallel **PiAgent** session worked the shared main tree instead of its own worktree (COORDINATION.md rule 2) and left a broken `chat-assistant.tsx` uncommitted that broke `npm run build`. Prose rules didn't hold; need mechanism.
+
+**Added Stage 30 to `IMPLEMENT.md`** (planning): S30.cc-hooks.1 (Claude Code SessionStart + PreToolUse deny of broad git forms), S30.git-hook.1 (shared `pre-commit` syntax guard via `core.hooksPath` — the cross-agent backstop that binds PiAgent too), S30.allowlist.1 (tighten the blanket `Bash(git add *)` grant). Documented the two-layer architecture: `.claude/` hooks are Claude-Code-only AND gitignored here (`.gitignore:15`), so the cross-agent enforcement must be the tracked git hook.
+
+**Delivered `gitblockhook.md`** (repo root) per user request: a single self-contained doc with all scripts/settings inlined (`.claude/settings.json`, `block-broad-git.sh`, `session-start.sh`, `scripts/git-hooks/pre-commit`, `scripts/install-git-hooks.sh`), verify steps, a file manifest, and a "what PiAgent must build itself" section. The user will have PiAgent build from this. I also created the live `.claude/` hooks locally for this session (gitignored, tested: 5 deny forms deny, 4 legit forms allow); they are not committed.
+
+**Resumed prior work:** PiAgent finished + pushed its WIP as `c77fc1d feat(S22): newest-first feed…` on top of my `444bf51`. Local==remote. `npm run build` now clean. Confirmed my S29 changes survived the merge (`/api/standup/gates` + toggle UI present). **Rebuilt + redeployed the `web` container** (was blocked by PiAgent's broken file): healthy on :5452, `/` → 200, `GET /api/standup/gates` → 401 unauth (auth gating verified). S29 admin toggle is now live.
+
 ## Session 2026-05-26 (pi agent) — Stage 29 planned + S29.gate-toggle.1 implemented
 
 **Answered the user's question first:** traced the apply path end-to-end. `jira_edit` proposals DO execute live when all three gates open (`web/standup_ws.py::_apply_proposal_submit` → MCP `jira_apply_staged` → `mcp/connectors/jira.py::_live_update_issue` hits hosted Atlassian). But `new_jira_work`/comments hit the "no supported production apply tool" branch — approved, never executed. And proposals never get cleared (no delete/dismiss anywhere in `standup_store.py`). So: scaffold needed for create/comment + lifecycle.

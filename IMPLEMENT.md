@@ -73,7 +73,7 @@ Full narrative + checklists for each of these live in `IMPLEMENT-ARCHIVE.md`. On
 
 # Open work
 
-The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — in progress), **26** (chat runtime visibility — planned), **27** (standup view layout — **DONE**, retained until archive), **28** (standup multi-session chat + AI extraction — planned), and **29** (standup approvals lifecycle + broader apply + admin gate toggle — planned). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), **23** (Confluence wire-up + cross-system enrichment), **24** (standup Epics + Templates reference rail), and **25** (standup production approvals viewport) are complete but retained here until the next archive pass.
+The remaining sections below are the stages with unfinished tasks: **3** (manual external-client smoke), **5** (TBD — shelved), **20** (standup chat dedup followup), **21** (Deep Agent platform — in progress), **26** (chat runtime visibility — planned), **27** (standup view layout — **DONE**, retained until archive), **28** (standup multi-session chat + AI extraction — planned), **29** (standup approvals lifecycle + broader apply + admin gate toggle — planned), and **30** (multi-agent worktree/commit hygiene enforcement — planned). Stages **6** (followups), **13**, **14**, **15**, **18** (architecture diagram v2), **19** (web auth/RBAC), **22** (UX/chat polish + Wrangler derived fields), **23** (Confluence wire-up + cross-system enrichment), **24** (standup Epics + Templates reference rail), and **25** (standup production approvals viewport) are complete but retained here until the next archive pass.
 
 ---
 
@@ -1449,6 +1449,33 @@ Reuse existing infrastructure; add only thin read tools/proxies:
   - Done when: an admin (`canAdminAuth`) sees a toggle in the config/trace card that flips the web process's `STANDUP_DRY_RUN_ONLY` at runtime (no restart) and the change is reflected in the next Submit's gating and audited (actor + before/after + timestamp); the UI **explicitly states** that `WORKFLOW_WRITES_ENABLED` and `JIRA_WRITES_ENABLED` are MCP-side, independent, and not changed by this toggle (so flipping dry-run alone does not enable live writes unless MCP was started with those gates on); non-admins get a 403 from the POST endpoint and a read-only display in the UI; unauthenticated requests get 401; the effective-state GET never leaks secrets; `python3 -m py_compile web/*.py` and `cd web && npm run build` pass.
   - Git handoff: before coding, confirm HEAD; stage by explicit path only (`git add web/standup_ws.py web/main.py web/src/lib/queries.ts web/src/lib/types.ts web/src/routes/standup.tsx docs/standup.md CHANGELOG.md IMPLEMENT.md progress.md` as applicable — never `git add -A`/`.`/`commit -a`); inspect `git status --short` + `git diff --cached --stat`; commit `feat(S29): admin toggle for standup dry-run gate`; push + merge via PR/fast-forward after build passes.
   - Depends on: S19 (auth/RBAC, `canAdminAuth`), S25.approver.1.
+
+---
+
+## Stage 30 — Enforce multi-agent worktree & commit hygiene (mechanism, not prose)
+
+**Goal:** Stop the recurring collisions where a second agent works the main tree instead of its own worktree (COORDINATION.md rule 2) and where broad `git add -A`/`commit -a` sweeps another agent's unstaged edits into the wrong commit (Incident 2). Prose has not held — these rules live only in `COORDINATION.md` and depend on each agent reading, remembering, and self-policing. This stage moves enforcement to **mechanism**: hooks that block or warn at the moment of the action.
+
+> **Two-agent reality (2026-05-26): the enforcement must catch BOTH agents.** This repo is worked by a Claude Code session *and* a separate **PiAgent** session. Claude Code hooks in `.claude/settings.json` (`SessionStart`/`PreToolUse`) only fire for Claude Code — they will not intercept PiAgent's git commands. Therefore the cross-agent backstop **must** be a **git-level hook** (`pre-commit`, wired via a tracked `core.hooksPath` so it's shared, not a local `.git/hooks/` file), because git runs it no matter which agent commits. The Claude Code hooks are the early, agent-specific layer; the git hook is the layer that also binds PiAgent. Neither layer may break PiAgent's normal flow (PLANTMUX tmux pane management is unrelated and must be left alone).
+
+### Task checklist — Stage 30
+
+- [ ] **S30.cc-hooks.1 — Claude Code SessionStart + PreToolUse guards** ✅ see implementation note
+  - Files: `.claude/settings.json` (add a `hooks` block — additive; do not disturb the existing `permissions`), `.claude/hooks/session-start.sh`, `.claude/hooks/block-broad-git.sh`, `COORDINATION.md` (document the hooks), `IMPLEMENT.md`, `progress.md`.
+  - Done when: a `SessionStart` (matcher `startup`+`resume`) hook injects `additionalContext` reminding the agent of the worktree rule + "stage by name, never `git add -A`/`.`/`commit -a`" and to read COORDINATION.md before editing shared files; a `PreToolUse` hook on `Bash` denies (via `hookSpecificOutput.permissionDecision:"deny"` with a `permissionDecisionReason`) any command matching `git add -A` / `git add .` / `git add --all` / `git commit -a`/`-am`, telling the agent to stage explicit paths; hooks use `${CLAUDE_PROJECT_DIR}` paths and the scripts are executable; the deny matcher does not false-trip on legitimate `git add <path>`; hooks are inert/harmless for PiAgent (they simply never fire); `bash -n` on both scripts passes and a manual stdin test (`echo '{"tool_input":{"command":"git add -A"}}' | .claude/hooks/block-broad-git.sh`) returns a deny decision while `git add web/x.tsx` returns allow/exit 0.
+  - Git handoff: stage by explicit path only (`git add .claude/settings.json .claude/hooks/session-start.sh .claude/hooks/block-broad-git.sh COORDINATION.md IMPLEMENT.md progress.md`); inspect `git status --short` + `git diff --cached --stat`; commit `chore(S30): claude code worktree/commit hygiene hooks`.
+  - Depends on: —.
+
+- [ ] **S30.git-hook.1 — Cross-agent `pre-commit` guard (binds PiAgent too)**
+  - Files: `scripts/git-hooks/pre-commit` (new, tracked + executable), `scripts/install-git-hooks.sh` (sets `git config core.hooksPath scripts/git-hooks`), `COORDINATION.md` (one-time install step), `CHANGELOG.md` (dev-tooling note), `IMPLEMENT.md`, `progress.md`.
+  - Done when: a tracked `pre-commit` hook (shared via `core.hooksPath`, so it runs for **any** committer incl. PiAgent) refuses a commit when the staged set includes a file that fails a cheap syntax check (`python3 -m py_compile` for staged `*.py`; `npx tsc -b --noEmit` or at minimum `node --check`/a tsc pass for staged web TS — scoped so it does not run the whole 3s vite build on every commit if avoidable) — i.e. it would have caught the broken `chat-assistant.tsx` before it landed; the hook prints which staged file failed and how to skip in a true emergency (`git commit --no-verify`); install is one command and documented; the hook is a no-op when no relevant files are staged; running it on a clean staged set passes; on a deliberately-broken staged file it exits non-zero and blocks.
+  - Git handoff: stage by explicit path only (`git add scripts/git-hooks/pre-commit scripts/install-git-hooks.sh COORDINATION.md CHANGELOG.md IMPLEMENT.md progress.md`); inspect `git status --short` + `git diff --cached --stat`; commit `chore(S30): shared pre-commit syntax guard (core.hooksPath)`.
+  - Depends on: —.
+
+- [ ] **S30.allowlist.1 — Tighten the git permission allowlist + claim convenience (optional polish)**
+  - Files: `.claude/settings.local.json` (replace blanket `Bash(git add *)` with explicit-path patterns + rely on the deny hook; keep other git grants), optionally a `/claim-stage` helper that creates `../wt-S<n>` from HEAD + updates the COORDINATION.md owner table + drops a lock, `COORDINATION.md`, `IMPLEMENT.md`, `progress.md`.
+  - Done when: the broad `Bash(git add *)` grant no longer silently permits `git add -A` (the deny hook is the guard, but the allowlist should not pre-authorize the dangerous form); legitimate stage-by-name still works without new prompts where reasonable; if the claim helper is added, one command creates the worktree + records ownership; no change degrades PiAgent.
+  - Depends on: S30.cc-hooks.1.
 
 ---
 
