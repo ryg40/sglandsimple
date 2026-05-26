@@ -1003,43 +1003,57 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
 
 ### Task checklist — Stage 21
 
+> **Design decisions locked 2026-05-26 (see `docs/deep_agent_platform.md`):**
+> (1) **Adopt the LangChain `deepagents` SDK** (`create_deep_agent` + `subagents=[...]`/`CompiledSubAgent`) as the runtime rather than extending the Stage-4 hand-rolled planner/builder — it provides delegation (`task`), isolated subagent context, per-subagent `tools`/`model`, and per-tool HITL (`interrupt_on`) on the LangGraph runtime we already use. (2) **One agent per external system**, with read/write gated **per-tool** via `interrupt_on` + `write_policy` (not separate reader/writer agents). (3) Existing graphs (`ask_data`, `docs_agent`) are wrapped as `CompiledSubAgent`, not rewritten. **Gating cost:** `deepagents` needs `langchain>=1.3 / langchain-core>=1.4`; we're on `0.3.28` — a 0.3→1.x upgrade is required first (`S21.upgrade.1`). The earlier per-profile-allowlist-on-Stage-4 design is the recorded fallback if the upgrade is too disruptive.
+> **Roster (one per system):** orchestrator (router), atlassian_agent (Jira+Confluence), mongo_agent (`ask_data` wrap, read-only), github_agent (review+deploy), servicenow_agent (read + gated writes), aws_agent (describe/read), audit_agent (cross-system reads + Archer write), docs_agent + standup_agent (reuse existing). New environments (WAF/Splunk/Datadog) are added as config rows — see §14 of the design doc.
+
 - [x] **S21.arch.1 — Write Deep Agent platform design doc** ✅ DONE
   - Files: `docs/deep_agent_platform.md` (new), `IMPLEMENT.md`.
-  - Done: `docs/deep_agent_platform.md` grounds the platform in the real Stage-4 code (`mcp/deep_agent/{models,planner,builder,catalog,budget}.py`, `deep_agent_plans`, `checkpointer_context`) and names the central seam — replacing `catalog.py`'s single global `_EXCLUDED` denylist with a **per-profile allowlist**. Covers the profile model (`profiles.yaml` shape + the 7 baseline profiles with non-overlapping scopes and Stage-19 capability gates), context packs, the typed HITL interrupt/resume contract (reusing the Stage-14 docs-agent checkpointed-`StateGraph` pattern; survives restart), the `agent_run_*` runtime API + `/api/agents/*` proxies, security/audit/observability, the `DEEP_AGENT_RUNTIME_MODE` compose→sidecar→remote/ECS/K8s/Bedrock deployment path, the on-rails future direction, the §21h env surface, the §21i verification intent, and the `S21.*` task map. Cross-references `docs/deep_agent.md` rather than duplicating Stage-4 detail.
+  - Done: `docs/deep_agent_platform.md` selects the `deepagents` SDK (with the SDK→goal mapping table and the verbatim subagent schema), the one-agent-per-system roster with per-tool HITL, the LangChain 1.x upgrade as the gating risk, the `CompiledSubAgent` reuse of `ask_data`/`docs_agent`, the `profiles.yaml` shape, context packs, `interrupt_on` HITL resume, the `agent_run_*` runtime API + `/api/agents/*` proxies, security/audit/observability, the `DEEP_AGENT_RUNTIME_MODE` deployment path (incl. Bedrock), the extensibility recipe, verification intent, and the task map. §14 adds a **contributor's guide** justifying every agent + implementation decision from a learning perspective (for varied-experience adopters), with a step-by-step "add a new agent" recipe. Cross-references `docs/deep_agent.md`.
 
-- [ ] **S21.profile.1 — Define agent profile schema and config**
-  - Files: `mcp/deep_agent/profiles.py` (new) or config loader, `mcp/deep_agent/profiles.yaml`, `.env.example`.
-  - Done when: profiles declare name, description, allowed tools, context packs, model role/provider, budgets, capabilities required, write policy, and dry-run/read-only flags; invalid profiles fail at startup.
+- [ ] **S21.upgrade.1 — Upgrade to LangChain 1.x + install `deepagents`**
+  - Files: `mcp/requirements.txt`, `mcp/Dockerfile`, existing graph modules (`mcp/ask_data.py`, `mcp/docs_agent.py`, `mcp/web_research.py`, `mcp/deep_agent/*`, `mcp/llm.py`, `mcp/checkpointer.py`).
+  - Done when: `langchain`/`langchain-core`/`langgraph`/`langgraph-checkpoint-mongodb`/`langchain-openai` are bumped to versions compatible with `deepagents` (`langchain-core>=1.4`, `langchain>=1.3`) and `deepagents` is added; `mcp` image builds; **all existing smokes regress green** (`scripts/smoke_ask_data.sh`, docs-agent HITL run, `scripts/smoke_deep_agent.sh`, `scripts/smoke_web_research.sh` if present); any 0.3→1.x API breaks (imports, `structured`/checkpointer interfaces) are fixed. If the upgrade is judged too disruptive, record that and fall back to the Stage-4 per-profile-allowlist design instead.
   - Depends on: S21.arch.1.
 
-- [ ] **S21.policy.1 — Enforce per-profile tool allowlists**
-  - Files: `mcp/deep_agent/catalog.py`, `mcp/deep_agent/planner.py`, runtime dispatcher.
-  - Done when: planner and executor can only see/call tools allowed by the selected profile; attempts to call outside profile fail closed and are audited.
+- [ ] **S21.profile.1 — Define agent profile schema + `profiles.yaml` loader**
+  - Files: `mcp/deep_agent/profiles.py` (new), `mcp/deep_agent/profiles.yaml` (new), `.env.example`.
+  - Done when: a profile declares `name`, `description`, `model`, `allowed_tools`, `write_tools`, `write_policy` (`read_only`|`dry_run_only`|`write_capable`), `required_capability` (nullable, Stage-19), `context_packs`, and budgets; the loader compiles each profile into a `deepagents` subagent dict (`tools`=resolved MCP callables, `interrupt_on`={t:True for t in write_tools}, `model`, `system_prompt`) or a `CompiledSubAgent` for graph-backed agents; invalid profiles fail fast at startup. `DEEP_AGENT_PROFILES_FILE` honored.
+  - Depends on: S21.upgrade.1.
+
+- [ ] **S21.context.1 — Context packs for the system agents**
+  - Files: `mcp/deep_agent/context.py` (new), Stage-14 docs queries/templates, Stage-9 Jira template, `mcp/standup_agent.py` story context, profile config.
+  - Done when: each agent loads only its compact, versioned context pack (templates, schemas, examples, runbook links) — sourced from existing material — mapped onto the subagent `skills`/`system_prompt`; no unrelated docs leak into a subagent's context.
   - Depends on: S21.profile.1.
 
-- [ ] **S21.context.1 — Add context packs for service-specific agents**
-  - Files: `mcp/deep_agent/context.py` (new), Stage-14 Docs queries/templates, profile config.
-  - Done when: Jira, Docs, Audit, Workflow, Auth, Architecture, and Standup profiles can load compact versioned context packs (templates, schemas, examples, runbook links) without dumping unrelated docs into prompt context.
-  - Depends on: S21.profile.1.
+- [ ] **S21.orch.1 — Orchestrator + per-tool allowlist enforcement**
+  - Files: `mcp/deep_agent/runtime.py` (new), `mcp/deep_agent/catalog.py`, `mcp/server.py`.
+  - Done when: `create_deep_agent(...)` builds a thin router orchestrator (only `task` + `write_todos`, no system tools) over the compiled subagents from S21.profile.1; the orchestrator routes a goal to a subagent via the `task` tool; a subagent can only see/call its `allowed_tools` (a tool call outside the allowlist fails closed and is recorded as a policy event); the Stage-4 recursion guard (no agent calls `task`/agent-runtime tools recursively) holds.
+  - Depends on: S21.profile.1, S21.context.1.
 
-- [ ] **S21.runtime.1 — Add typed agent runtime API/tools**
-  - Files: `mcp/server.py`, `mcp/deep_agent/runtime.py` (new), `web/main.py`, `web/src/lib/types.ts`, `web/src/lib/queries.ts`.
-  - Done when: `agent_profiles_list`, `agent_run_start`, `agent_run_status`, `agent_run_resume`, `agent_run_cancel`, and `agent_run_artifacts` exist as MCP tools and web proxies with typed request/response models.
-  - Depends on: S21.policy.1, S21.context.1.
+- [ ] **S21.runtime.1 — Typed agent runtime API/tools**
+  - Files: `mcp/server.py`, `mcp/deep_agent/runtime.py`, `web/main.py`, `web/src/lib/types.ts`, `web/src/lib/queries.ts`.
+  - Done when: `agent_profiles_list`, `agent_run_start` (`{agent?, goal, context_refs, mode}` — omit `agent` to let the orchestrator route), `agent_run_status`, `agent_run_resume`, `agent_run_cancel`, and `agent_run_artifacts` exist as MCP tools + `/api/agents/*` proxies with typed request/response models (no `any`); runs persisted to `DEEP_AGENT_RUN_COLLECTION`.
+  - Depends on: S21.orch.1.
 
-- [ ] **S21.hitl.1 — Implement reusable HITL interrupt/resume contract**
-  - Files: `mcp/deep_agent/runtime.py`, `mcp/checkpointer.py`, workflow nodes that produce approvals.
-  - Done when: write-capable profiles can pause with typed approval payloads, persist pending state, resume after approve/reject/edit, and survive container restarts.
+- [ ] **S21.hitl.1 — `interrupt_on` HITL interrupt/resume contract**
+  - Files: `mcp/deep_agent/runtime.py`, `mcp/checkpointer.py`.
+  - Done when: a write tool listed in a profile's `write_tools` pauses the run via `interrupt_on`, persists a typed `ApprovalRequest`, and `agent_run_resume` (`{run_id, decision}`) checks the resuming actor's Stage-19 capability, then on approve applies only approved proposals through existing staged-write paths (e.g. Stage-16 `jira_apply_staged`) still subject to `JIRA_WRITES_ENABLED` + `DEEP_AGENT_DRY_RUN_ONLY`; pending approvals survive container restart.
   - Depends on: S21.runtime.1.
 
-- [ ] **S21.agent.1 — Implement baseline service-specific agents**
-  - Files: `mcp/deep_agent/profiles.yaml`, service-specific prompt/context modules, tests/smokes.
-  - Done when: Jira, Docs, Audit, Workflow, Auth, Architecture, and Standup profiles each run a simple smoke goal using only their allowed tools and produce typed outputs.
+- [ ] **S21.agent.1 — Implement the baseline system agents**
+  - Files: `mcp/deep_agent/profiles.yaml`, per-agent context modules, `CompiledSubAgent` wrappers for `ask_data`/`docs_agent`, smokes.
+  - Done when: orchestrator + atlassian/mongo/github/servicenow/aws/audit/docs/standup agents are defined with non-overlapping tool scopes; each runs a simple smoke goal using only its allowed tools and produces typed output; mongo_agent is read-only (no HITL); write agents pause at `interrupt_on`; `ask_data`/`docs_agent` run as `CompiledSubAgent`.
   - Depends on: S21.hitl.1.
 
-- [ ] **S21.ui.1 — Add Deep Agent operations/admin UI**
+- [ ] **S21.extend.1 — Prove the config-only "add an agent" path**
+  - Files: `mcp/deep_agent/profiles.yaml`, `docs/deep_agent_platform.md` (§14 recipe), a stub read agent (e.g. Datadog/Splunk read).
+  - Done when: a new read-only agent for a new environment is added by a `profiles.yaml` row + wiring its (possibly stubbed/mock) MCP read tools, with **no change to existing agents or orchestrator routing code**; it appears in `agent_profiles_list` and runs a smoke goal — demonstrating the modularity/extensibility goal end-to-end.
+  - Depends on: S21.agent.1.
+
+- [ ] **S21.ui.1 — Deep Agent operations/admin UI**
   - Files: `web/src/routes/agents.tsx` (new), `web/src/App.tsx`, `web/src/components/app-sidebar.tsx`.
-  - Done when: admins can list profiles, start a run, inspect status/tool calls/artifacts, see pending approvals, and resume/cancel runs.
+  - Done when: admins can list agents, start a run, inspect status/tool calls/artifacts, see pending approvals, and resume/cancel runs.
   - Depends on: S21.runtime.1.
 
 - [ ] **S21.deploy.1 — Containerize/runtime deployment path**
@@ -1054,7 +1068,7 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
 
 - [ ] **S21.bedrock.1 — Design/implement Bedrock provider adapter path**
   - Files: `mcp/llm.py`, `mcp/deep_agent/provider.py` (new), `.env.example`, docs.
-  - Done when: planner/builder roles can be configured for Bedrock model IDs or the Bedrock path is explicitly stubbed with interface + envs + IAM requirements; OpenAI-compatible path remains unchanged.
+  - Done when: a profile's `provider: bedrock` maps that agent's `model` to a Bedrock model ID + region + IAM, or the Bedrock path is explicitly stubbed with interface + envs + IAM requirements; the OpenAI-compatible path remains unchanged.
   - Depends on: S21.deploy.1.
 
 - [ ] **S21.obs.1 — Add runtime observability and metrics**
@@ -1064,12 +1078,12 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
 
 - [ ] **S21.security.1 — Add redaction and policy audit trail**
   - Files: runtime dispatcher, audit helpers, docs.
-  - Done when: tool inputs/outputs are redacted for secrets, denied tool calls are persisted as policy events, approvals include actor/roles/groups, and dry-run/write-capable profile flags are enforced.
+  - Done when: tool inputs/outputs are redacted for secrets, denied tool calls (outside an agent's allowlist) are persisted as policy events, approvals include actor/roles/groups, and `read_only`/`dry_run_only`/`write_capable` policy flags are enforced.
   - Depends on: S21.hitl.1.
 
 - [ ] **S21.verify.1 — Deep Agent platform smoke suite**
   - Files: `scripts/smoke_deep_agent_platform.sh` or `.py`, existing `scripts/smoke_deep_agent.sh` updates.
-  - Done when: smoke lists profiles, runs Jira and Docs profile dry-run goals, validates HITL pause/resume, verifies denied tool-call behavior, checks persistence, and confirms no live external writes occur.
+  - Done when: smoke lists agents, has the orchestrator route a goal to a subagent, runs Atlassian (dry-run) and Mongo (read-only) agent goals, validates `interrupt_on` HITL pause/resume, verifies a denied/out-of-allowlist tool call fails closed, checks persistence, and confirms no live external writes occur.
   - Depends on: S21.agent.1, S21.security.1.
 
 - [ ] **S21.verify.2 — Deployment and restart verification**

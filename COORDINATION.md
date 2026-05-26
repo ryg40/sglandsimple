@@ -18,7 +18,7 @@ Update this table when you start/finish. One owner per stage.
 | 22 (UX/chat polish + Wrangler derived fields) | pi orchestrator | main tree | **COMPLETE** — chat, global assistant, Wrangler derived fields, banner |
 | 23 (Confluence wire-up + cross-system enrichment + teaching docs) | pi orchestrator + gpt-5.4 workers | main tree + isolated subagent worktrees | **COMPLETE** — Confluence live gate, overlap data, teaching docs, smoke verified |
 | 24 (standup Epics + Templates reference rail) | pi agent | main tree | **PLANNED** — tasks added to IMPLEMENT.md; no code yet |
-| 21 (Deep Agent platform) | pi agent | main tree | **IN PROGRESS** — S21.arch.1 design doc done (`docs/deep_agent_platform.md`); profile/runtime/HITL tasks open |
+| 21 (Deep Agent platform) | pi agent | main tree | **IN PROGRESS** — S21.arch.1 design done; decided to adopt `deepagents` SDK + one-agent-per-system roster; checklist retasked (upgrade→profile→context→orch→runtime→hitl→agent→extend). Code not started. |
 | 5 (Copilot upstream) | — | — | **SHELVED 2026-05-22** per user |
 
 > **Single agent working the main tree.** The parallel agent sessions have completed. All work is committed on `stage-14-docs-wiki`. Follow the IMPLEMENT.md commit protocol below for any new edits.

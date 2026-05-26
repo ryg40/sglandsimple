@@ -4,6 +4,15 @@
 **Stages 0–2, 4, 6–20, 22, and 23 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 remains TBD. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `d8bd928` (`docs(S20): add task to dedupe optimistic + echoed standup messages`).
 
+## Session 2026-05-26 (pi agent) — S21 design revised to deepagents SDK + roster + contributor guide
+
+Revisited S21.arch.1 against the LangChain `deepagents` overview (fetched the overview + subagents pages) and our current deps. User decisions: **adopt `deepagents`** as the runtime, and **one agent per external system** (read/write gated per-tool via `interrupt_on` + `write_policy`, not separate reader/writer agents).
+
+- Rewrote `docs/deep_agent_platform.md`: SDK→goal mapping (subagent `tools`/`model`/`system_prompt`/`interrupt_on`/`skills`, the built-in `task` delegation + isolated context, `CompiledSubAgent` to wrap existing graphs); the **one-per-system roster** (orchestrator router + atlassian/mongo/github/servicenow/aws/audit/docs/standup); the **gating cost** — `deepagents 0.6.3` needs `langchain>=1.3`/`langchain-core>=1.4` but we're pinned at `0.3.28`/`langgraph 0.2.62`, so a 0.3→1.x upgrade is required first; Stage-4 fallback recorded. Added **§14 "contributor's guide"** per user request: notes + justifies every platform/agent/implementation decision from a learning perspective for varied-experience adopters, plus a step-by-step "add a new agent (WAF/Splunk/Datadog)" recipe.
+- Retasked the Stage-21 checklist: added `S21.upgrade.1` (LangChain 1.x + deepagents, gated by existing smokes regressing green), reframed `profile.1`/`context.1`, replaced `policy.1` with `S21.orch.1` (orchestrator + per-tool allowlist), reframed `hitl.1` to `interrupt_on`, `agent.1` to the system roster + `CompiledSubAgent` reuse, added `S21.extend.1` (prove config-only agent add), and fixed `bedrock.1`/`security.1`/`verify.1` wording to the new model. Added a decision-banner above the checklist.
+
+New Stage-21 dependency chain: arch.1 → upgrade.1 → profile.1 → context.1 → orch.1 → runtime.1 → hitl.1 → agent.1 → extend.1; ui/deploy/bedrock/obs/security/verify hang off as before. Docs/planning only; no build run.
+
 ## Session 2026-05-26 (pi agent) — S21.arch.1 (Deep Agent platform design doc)
 
 Started Stage 21. **S21.arch.1 DONE** — wrote `docs/deep_agent_platform.md`, the design doc that gates the rest of the `S21.*` chain. Grounded it in the actual Stage-4 code (read `mcp/deep_agent/{__init__,models,planner,catalog}.py` + the server tool wiring) rather than the spec's idealized shape:

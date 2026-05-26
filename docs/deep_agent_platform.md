@@ -1,242 +1,341 @@
 # Deep Agent platform (Stage 21) — design
 
-> **Status:** design doc for Stage 21 (`S21.arch.1`). The code described under
-> "Target architecture" is the *plan*; only the Stage-4 baseline it builds on
-> exists today. This doc is the contract the rest of the `S21.*` tasks
-> implement against. For the Stage-4 primitive itself, see
-> [`deep_agent.md`](deep_agent.md); this doc does not repeat it.
+> **Status:** design doc for Stage 21 (`S21.arch.1`). Decisions locked
+> 2026-05-26: **adopt the LangChain `deepagents` SDK** as the runtime, and
+> use **one agent per external system** (read/write gated per-tool, not
+> separate reader/writer agents). The code described under "Target
+> architecture" is the plan; only the Stage-4 baseline exists today. For the
+> Stage-4 primitive, see [`deep_agent.md`](deep_agent.md).
 
 ## 1. What this stage is
 
 Stage 4 shipped a single planner→builder subagent pair (`plan_task` /
-`run_plan` / `deep_agent`). It works, but it is **one generic agent with one
-global tool catalog**: any plan can call any non-excluded MCP tool, there is
-no per-task scope, no first-class human-in-the-loop (HITL) gate, no run
-registry the UI can drive, and no deployment story beyond "it runs inside the
-`mcp` container."
+`run_plan` / `deep_agent`) — **one generic agent with one global tool
+catalog**. Any plan can call any non-excluded MCP tool; there is no per-task
+scope, no isolated context per subtask, no first-class HITL gate, and no
+deployment story beyond "runs inside `mcp`."
 
-Stage 21 turns that primitive into a **platform**: a small set of
-**service-specific agents**, each with a strict tool allowlist, a context
-pack, a model/budget profile, and a write policy; a **supervising
-orchestrator** that routes a goal to the right agent; **typed HITL approval
-gates** that survive restart; a **runtime API** (`agent_run_*`) that web, MCP,
-and background callers share; and a **deployment path** (compose → ECS/Fargate
-or K8s, optional Bedrock provider).
+Stage 21 turns that into a **platform**: a lightweight **orchestrator** that
+routes a goal to one of a small set of **system-specific agents**, each with
+(a) a strict tool allowlist, (b) its own — typically **smaller/cheaper** —
+model, (c) an isolated context window, and (d) per-tool HITL gates on its
+write tools. The orchestrator stays small and just coordinates; the heavy
+context lives only inside the subagent that needs it.
 
-The guiding principle is the one already enforced everywhere in this repo:
-**all graph code stays server-side, all production writes are dry-run until an
-explicit HITL approval, and least privilege is the default** — a Jira agent
-never sees AWS credentials or the docs-sync tool.
+The four goals driving every choice below:
 
-## 2. Relationship to Stage 4 (what we keep, what we change)
+1. **Minimize context** — the orchestrator holds routing + a one-line
+   description of each agent; each subagent gets only its own
+   system_prompt + context pack, in an isolated window.
+2. **Use lesser models for execution/research/review** — per-subagent `model`
+   override; the orchestrator can run a small router model, subagents run the
+   cheapest model that does their job.
+3. **Limited, focused access** — each agent's `tools` is an explicit allowlist
+   of *its* MCP tools (and the workflows/templates/scripts it drives), nothing
+   else. Write tools are individually HITL-gated.
+4. **Modular, low-interdependence, extensible** — adding a new app environment
+   (WAF, Splunk, Datadog, …) is "write one agent definition + wire its MCP
+   tools," with no change to existing agents or the orchestrator routing model.
 
-Stage 4 lives in `mcp/deep_agent/` and gives us the primitives to reuse:
+## 2. SDK decision — adopt `deepagents`
 
-| Stage-4 piece | File | Stage-21 disposition |
+We build on LangChain's **`deepagents`** SDK
+(`create_deep_agent(...)`), not a hand-rolled harness, because it provides
+exactly the primitives these goals need, on the **LangGraph runtime we already
+use** (durable execution, checkpointing, streaming, HITL):
+
+| deepagents primitive | What it gives us | Maps to goal |
 | --- | --- | --- |
-| `Plan` / `Step` / `StepResult` Pydantic models | `deep_agent/models.py` | **Keep.** Add `RunRecord`, `Proposal`, `ApprovalRequest`, `ApprovalDecision` typed models alongside. |
-| Planner: goal → `Plan` (one structured LLM call, validated against the live catalog) | `deep_agent/planner.py` | **Keep, parameterize.** The planner now receives a *profile-scoped* catalog, not the global one. |
-| Builder: execute steps, re-plan on failure, summarize | `deep_agent/builder.py` | **Keep, parameterize.** Step dispatch is gated by the profile allowlist + policy. |
-| Tool catalog with a single global `_EXCLUDED` denylist | `deep_agent/catalog.py` | **Change — this is the central seam.** See §3. |
-| Planner/builder role split via `structured(..., role=)` | `mcp/llm.py` | **Keep.** Add an optional provider dimension (`openai` / `bedrock`) per profile. |
-| Mongo persistence of plans | `deep_agent_plans` collection | **Extend.** Add `deep_agent_runs` (run metadata/traces/artifacts) + `deep_agent_checkpoints` for resumable HITL. |
-| Token budget / step / runtime caps | `deep_agent/budget.py` | **Keep, per-profile.** Budgets move into the profile. |
-| Checkpointer | `checkpointer.py` (`checkpointer_context`) | **Keep.** It already backs `ask_data`/`docs_agent`; reuse for HITL interrupt/resume. |
+| `subagents=[...]` (dict or `CompiledSubAgent`) | One definition per system-specific agent | modularity |
+| built-in **`task` tool** | Orchestrator delegates to a subagent that runs in an **isolated context window** | minimize context |
+| subagent `tools` (`list[Callable]`) — "overrides inherited tools entirely" | Per-agent allowlist of MCP tools | limited access |
+| subagent `model` (`str` \| `BaseChatModel`) — "overrides the main agent's model" | Cheaper model per agent | lesser models |
+| subagent `system_prompt` — "does not inherit from main agent" | Focused, minimal prompt per agent | minimize context |
+| `interrupt_on` (`dict[str, bool]`) | **Per-tool HITL** — gate exactly the write tools | safety |
+| subagent `skills` / `middleware` — do not inherit | Versioned context packs, scoped middleware | modularity |
+| `CompiledSubAgent(name, description, runnable)` | Wrap an **existing compiled LangGraph** as a subagent | reuse |
+| built-in `write_todos` planning + filesystem tools | Orchestrator planning + `/sandbox` artifacts | reuse Stage-4 sandbox |
 
-**The one structural change that everything else hangs off:** today
-`deep_agent/catalog.py` exposes *one* catalog to *every* plan, filtered only by
-a hardcoded `_EXCLUDED = {"plan_task", "run_plan", "deep_agent", "chat",
-"summarize_text", "echo"}` recursion guard. Stage 21 replaces "one global
-denylist" with "**one allowlist per profile**": the catalog functions
-(`tool_names`, `catalog_markdown`, `focused_catalog_markdown`) take a profile
-(or its allowed-tool set) and return only those tools. The recursion guard
-stays as a floor that no profile can override. This is what makes a
-"Jira agent" actually a Jira agent and not a fully-capable agent that happens
-to be asked a Jira question.
+The `subagent` dict schema we target (verbatim field names): `name`,
+`description`, `system_prompt`, `tools`, `model`, `middleware`, `interrupt_on`,
+`skills`, `response_format`, `permissions`.
 
-## 3. Profile model
+### 2.1 The gating cost — LangChain 1.x upgrade
 
-A **profile** is the unit of scope. It is declarative config (`profiles.yaml`,
-loaded by `deep_agent/profiles.py`, validated at startup — invalid profiles
-fail fast). Shape:
+**`deepagents` 0.6.3 requires `langchain>=1.3.0` and `langchain-core>=1.4.0`.**
+We are pinned at `langchain-core==0.3.28`, `langchain-openai==0.2.14`,
+`langgraph==0.2.62`, `langgraph-checkpoint-mongodb==0.1.0`. Adoption therefore
+requires a **0.3 → 1.x dependency upgrade** that touches every existing graph:
+`ask_data`, `docs_agent`, `web_research`, the Stage-4 planner/builder, and the
+Mongo checkpointer. This is the single biggest risk in the stage and gets its
+own task (`S21.upgrade.1`) ahead of any agent work, with the existing smokes
+(`smoke_ask_data.sh`, docs-agent HITL, `smoke_deep_agent.sh`) as the
+regression gate. If the upgrade proves too disruptive, the fallback is to keep
+the Stage-4 hand-rolled harness and add a per-profile allowlist (the
+previous design); that fallback is recorded but **not** the chosen path.
+
+## 3. Relationship to Stage 4 (keep / change)
+
+| Stage-4 piece | File | Disposition under deepagents |
+| --- | --- | --- |
+| `Plan`/`Step`/`StepResult` models | `deep_agent/models.py` | Keep for the existing `plan_task`/`run_plan` tools; new agents use deepagents' own loop, not `Plan`. Add `RunRecord`/`Proposal`/`ApprovalRequest` typed models. |
+| Planner/builder LLM split via `structured(role=)` | `deep_agent/planner.py`, `builder.py`, `mcp/llm.py` | Becomes per-subagent `model`; orchestrator = router model, subagents = cheaper models. The `PLANNER_*`/`BUILDER_*` env seam still feeds model selection. |
+| Global tool catalog + `_EXCLUDED` denylist | `deep_agent/catalog.py` | **Superseded** by per-subagent `tools` allowlists. The recursion guard (no agent may call `task`/agent-runtime tools recursively) stays as a floor. |
+| Mongo persistence of plans | `deep_agent_plans` | Add `deep_agent_runs` (run metadata/traces/artifacts) + reuse the checkpointer collection for HITL resume. |
+| Budget/step/runtime caps | `deep_agent/budget.py` | Per-agent budgets; deepagents middleware can carry them. |
+| Sandbox fs/shell tools | Stage-4 sandbox | Reuse via deepagents' built-in filesystem tools pointed at `/sandbox`. |
+| `ask_data`, `docs_agent` graphs | `mcp/ask_data.py`, `mcp/docs_agent.py` | **Wrap as `CompiledSubAgent`** — do not rewrite. The mongo agent and docs agent are existing graphs exposed to the orchestrator. |
+
+The existing `plan_task`/`run_plan`/`deep_agent` MCP tools remain for backward
+compatibility; the new platform is additive.
+
+## 4. Agent roster (one per system, read/write gated per-tool)
+
+The orchestrator is a thin router. Below it, one agent per system; each agent's
+**write tools** are listed under `interrupt_on` (HITL) and respect
+`write_policy` + the existing connector write gates. Read-only agents have no
+`interrupt_on` entries and a `read_only` policy.
+
+| Agent | Model tier | Tools (allowlist) | Write policy | HITL (`interrupt_on`) |
+| --- | --- | --- | --- | --- |
+| **orchestrator** | small router | `task` (delegate only) + `write_todos` | n/a (no external writes) | — |
+| **atlassian_agent** | mid | `jira_stage_edits`, `jira_validate_staged`, `jira_revert_staged`, `jira_apply_staged`, Confluence read + `confluence_update_page`, `docs_search` | dry_run_only | `jira_apply_staged`, `confluence_update_page` |
+| **mongo_agent** | small/mid | `CompiledSubAgent` wrapping `ask_data` (read-only via `validate_spec`) + `mongo_query` reads | read_only | — |
+| **github_agent** | mid | GitHub read (PR/review context) + review-comment + deploy-trigger tools | dry_run_only | deploy/merge tools |
+| **servicenow_agent** | small/mid | ServiceNow read (incidents/changes) + record-write tools | dry_run_only | record-write tools |
+| **aws_agent** | small/mid | AWS *describe*/read via AWS MCP connector (no mutate) | read_only | — |
+| **audit_agent** | mid | report tools + Archer/SNOW/Snowflake/Mongo **reads** + `docs_search` | dry_run_only | Archer update |
+| **docs_agent** | mid | `CompiledSubAgent` wrapping the Stage-14 docs agent (`docs_*`, `docs_sync`) | dry_run_only | doc apply / `docs_sync` live |
+| **standup_agent** | mid | standup session data + Jira/docs templates (reuse `mcp/standup_agent.py`) | dry_run_only | proposal apply |
+
+Notes on the user's read/write instinct: rather than a `servicenow_reader` +
+`servicenow_writer` pair, ServiceNow is **one** `servicenow_agent` whose write
+tools are the only ones in its `interrupt_on` set and gated by
+`write_policy=dry_run_only` + `CONN_SERVICENOW_ENABLED`/`WORKFLOW_WRITES_ENABLED`.
+Same identity, same context pack, write path behind HITL — fewer agents, same
+least-privilege boundary. (If a future system needs hard credential separation
+between read and write, the roster table is the one place that changes.)
+
+### 4.1 Extensibility — adding WAF / Splunk / Datadog later
+
+A new environment is a new row: write `{name, description, system_prompt,
+tools: [<that system's MCP tools>], model, interrupt_on, skills}` and register
+it in `profiles.yaml`. No existing agent changes; the orchestrator picks it up
+from its `description`. This is the modularity goal made concrete — the roster
+is data, not code branches.
+
+## 5. Profile config
+
+Agents are declared in `profiles.yaml` (loaded + validated at startup; invalid
+profiles fail fast) and compiled into deepagents `subagents`:
 
 ```yaml
-- name: jira_agent
-  description: Jira issue triage and staged edits.
-  model_role: builder            # planner | builder; maps to PLANNER_*/BUILDER_*
-  provider: openai               # openai | bedrock
-  allowed_tools:                 # the per-profile allowlist (replaces global _EXCLUDED)
-    - jira_stage_edits
-    - jira_validate_staged
-    - jira_revert_staged
-    - docs_search
-  context_packs: [jira_story_template, standup_labels]
-  write_policy: dry_run_only     # read_only | dry_run_only | write_capable
-  required_capability: canApplyJira   # Stage-19 capability gate (may be null)
-  budget_tokens: 70000
-  max_steps: 25
-  max_seconds: 900
+- name: servicenow_agent
+  description: Read ServiceNow incidents/changes; stage record writes (HITL).
+  model: "openai:<small-mid-model>"
+  allowed_tools: [servicenow_search, servicenow_get, servicenow_update_record]
+  write_tools:   [servicenow_update_record]   # -> interrupt_on + write_policy
+  write_policy:  dry_run_only                  # read_only | dry_run_only | write_capable
+  required_capability: canUpdateArcher         # Stage-19 gate (nullable)
+  context_packs: [servicenow_basics]
+  budget_tokens: 40000
+  max_steps: 15
 ```
 
-Baseline profiles (§21b of the plan), each with a non-overlapping allowlist:
+The loader translates each profile into a deepagents subagent dict
+(`tools`=resolved MCP callables for `allowed_tools`, `interrupt_on`={t: True
+for t in write_tools}, `model`, `system_prompt`=template+context pack). Existing
+graphs (`ask_data`, `docs_agent`) are emitted as `CompiledSubAgent` instead.
 
-| Profile | Write policy | Allowed-tool theme | Stage-19 capability |
-| --- | --- | --- | --- |
-| `jira_agent` | `dry_run_only` | Jira staging tools, Jira templates, docs search | `canApplyJira` |
-| `docs_agent` | `dry_run_only` | `docs_*`, `docs_sync` (gated) | `canManageDocs` |
-| `architecture_agent` | `read_only` | architecture graph, docs/runbooks, connector summaries | — |
-| `audit_agent` | `dry_run_only` | report tools, Archer/SNOW/Snowflake/Mongo *reads*, docs search | `canUpdateArcher` |
-| `workflow_agent` | `dry_run_only` | Stage-9 workflow tools + connector registry | `canRunWorkflow` |
-| `auth_agent` | `read_only` | auth lookup/explain tools only | `canAdminAuth` |
-| `standup_agent` | `dry_run_only` | standup session data, Jira/docs templates | `canApproveStandupActions` |
+## 6. Context packs
 
-`write_policy` and `required_capability` are enforced **twice**: at planner
-catalog-construction time (the agent literally cannot see a tool outside its
-allowlist) and again at builder dispatch time (a fabricated step name fails
-closed and is recorded as a policy event). Defense in depth — the same posture
-as the web layer enforcing route permissions even when the UI hides nav items.
+Per-agent, versioned bundles (`deep_agent/context.py`) of templates / schemas /
+examples / runbook links, sourced from existing material (Stage-9 Jira
+template, `mcp/standup_agent.py` story context, Stage-14 `docs_*`, Stage-18
+inventory template). Mapped onto the subagent `skills` field where it fits.
+Keeps each subagent's prompt minimal — only its own pack, never the whole
+corpus.
 
-## 4. Context packs
+## 7. HITL interrupt/resume
 
-Profiles reference **context packs** (`deep_agent/context.py`): compact,
-versioned bundles of the templates / schemas / examples / runbook links an
-agent needs, requested by name. This keeps prompts small (the whole reason
-Stage 4 split planner/builder) and avoids dumping the entire Docs Wiki into
-context. Packs are sourced from existing material — the Stage-9 Jira story
-template, `mcp/standup_agent.py`'s deterministic story-template context,
-Stage-14 `docs_*` queries, the Stage-18 architecture inventory template — not
-invented fresh. A pack is `{name, version, blocks[]}`; an agent loads only its
-declared packs.
+Use deepagents' `interrupt_on` for per-tool pauses, backed by the LangGraph
+checkpointer (already proven by the Stage-14 docs agent). A write tool fires →
+the run interrupts with a typed `ApprovalRequest` (payload, target service,
+validation result, rationale, source refs) → `agent_run_resume` with
+`{run_id, decision}` checks the resuming actor's Stage-19 capability →
+on approve, applies only approved proposals through existing staged-write paths
+(e.g. Stage-16 `jira_apply_staged`), still subject to `JIRA_WRITES_ENABLED` and
+`DEEP_AGENT_DRY_RUN_ONLY`. Pending approvals survive container restart
+(`S21.verify.2`).
 
-## 5. HITL interrupt/resume contract
+## 8. Runtime API
 
-Reuse the pattern already proven by the Stage-14 docs agent: a checkpointed
-`StateGraph` that **interrupts** at an apply gate and **resumes** by
-`thread_id` with a typed decision. Generalized here:
+MCP tools + `web/main.py` `/api/agents/*` proxies (typed; no `any` on the TS
+side), shared by web/MCP/background callers:
 
-- A write-capable run reaches an `apply_gate` node and **interrupts**,
-  persisting a typed `ApprovalRequest` (what will be written, to which
-  service, the dry-run payload, the validation result, rationale, source refs).
-- The run's `run_id` + `status="waiting_approval"` is returned to the caller;
-  nothing is written.
-- An approver calls `agent_run_resume` with `{run_id, decision}` where decision
-  is approve / reject / edited-payload. The capability of the resuming actor is
-  checked server-side against the profile's `required_capability`.
-- On approve, the run resumes from the checkpoint and applies *only* approved
-  proposals through the existing staged-write paths (e.g. Stage-16
-  `jira_validate_staged` / `jira_apply_staged`), still subject to
-  `JIRA_WRITES_ENABLED` and `DEEP_AGENT_DRY_RUN_ONLY`.
-- Because state is checkpointed to Mongo, a pending approval **survives a
-  container restart** (verified in `S21.verify.2`).
+`agent_profiles_list`, `agent_run_start` `{agent?, goal, context_refs, mode}`
+(omit `agent` to let the orchestrator route), `agent_run_status`,
+`agent_run_resume`, `agent_run_cancel`, `agent_run_artifacts`.
 
-`DEEP_AGENT_DRY_RUN_ONLY=true` is a global guardrail that suppresses live
-apply for *every* profile regardless of connector write gates — the POC-safe
-default.
+## 9. Security, audit, observability
 
-## 6. Runtime API
+Per-run `actor`/`source`/agent/role-capability-snapshot/correlation-id;
+tool I/O persisted with secret **redaction**; denied tool calls persisted as
+policy events; approvals record actor/groups/roles/original+edited
+payload/validation/apply result; structured logs + a metrics surface (active/
+completed/failed runs, pending approvals, token usage, tool-call counts,
+per-agent latency); admin `/agents` route (admin-only) for profiles, runs,
+traces, pending approvals, resume/cancel.
 
-Added as MCP tools **and** `web/main.py` `/api/agents/*` proxies, so the web UI,
-IDE/MCP clients, and background jobs share one runtime (typed request/response
-models, no `any` on the TS side):
+## 10. Deployment
 
-| Tool | Purpose |
-| --- | --- |
-| `agent_profiles_list` | Profiles, scopes, required capabilities, allowed tools. |
-| `agent_run_start` | Start a typed run `{agent, goal, context_refs, mode}`. |
-| `agent_run_status` | Graph state, current node, tool calls, budget, pending approvals. |
-| `agent_run_resume` | Resume from HITL interrupt (approve/reject/edited payload). |
-| `agent_run_cancel` | Cancel and persist a terminal state. |
-| `agent_run_artifacts` | Fetch proposals/reports/docs/patches/logs for a run. |
+`DEEP_AGENT_RUNTIME_MODE`: `in_mcp` (default/baseline — code in the `mcp`
+container), `sidecar` (`agent-runtime` container), `remote` (ECS/Fargate or
+K8s). Managed blueprints (≥1 in this stage): ECS/Fargate (task role, Secrets
+Manager/SSM, CloudWatch, VPC reach to Mongo + connectors) or K8s
+(Helm/Kustomize, config maps for profiles, HPA on concurrent runs). Optional
+`provider: bedrock` per agent maps model selection to Bedrock IDs + IAM; the
+OpenAI-compatible path is unchanged (may ship stubbed).
 
-An orchestrator entry point (`agent_run_start` with no explicit `agent`, or a
-dedicated supervisor) routes a goal to a profile by intent + UI context, then
-delegates — it does not itself hold a broad tool catalog.
+## 11. Env surface
 
-## 7. Security, audit, observability
-
-- Every run carries `actor`, `source` (`web`/`mcp`/`standup`/`workflow`),
-  profile, role/capability snapshot, and a correlation id.
-- Tool inputs/outputs are persisted with **secret redaction**; denied tool
-  calls are persisted as policy events (not silently dropped).
-- Approvals record actor, groups/roles, timestamp, original proposal, edited
-  proposal, validation result, and apply result.
-- Structured logs for node start/end, tool-call start/end, budget, approvals,
-  failures, retries, cancellations. A `/metrics` (or tool-exposed) surface
-  counts active/completed/failed runs, pending approvals, token usage,
-  tool-call counts, and per-profile latency.
-- An admin UI route (`/agents`, admin-only) lists profiles, starts runs,
-  inspects status/tool-calls/artifacts, shows pending approvals, and
-  resumes/cancels.
-
-## 8. Deployment architecture
-
-`DEEP_AGENT_RUNTIME_MODE` selects where the runtime lives:
-
-- **`in_mcp` (default / baseline):** runtime is code inside the existing `mcp`
-  container — no new service. This is the compose baseline and what the POC
-  ships.
-- **`sidecar`:** an `agent-runtime` container in the same compose stack /
-  task, isolated from the MCP request path, sharing Mongo + checkpointer.
-- **`remote`:** runtime addressed over the network (ECS/Fargate service or K8s
-  deployment).
-
-Managed targets (blueprint-level for at least one in this stage):
-
-- **ECS/Fargate:** task role, secrets from Secrets Manager/SSM, CloudWatch
-  logs, VPC reachability to Mongo/warehouse and connector endpoints.
-- **Kubernetes:** Helm/Kustomize manifests, config maps for profiles, secrets
-  for model/connector creds, HPA on concurrent runs.
-- **Bedrock provider:** `provider: bedrock` on a profile maps `PLANNER_*` /
-  `BUILDER_*` to Bedrock model IDs + region + IAM; the OpenAI-compatible path
-  is unchanged. May ship as a documented stub (`S21.bedrock.1`).
-
-Durability stays on Mongo + checkpointer initially; larger artifacts can move
-to S3 and managed document DB later.
-
-## 9. Advanced direction (post-baseline, on-rails workflows)
-
-Once the multi-agent baseline works, evolve toward **one LangGraph per
-business workflow** (standup follow-up, Jira bulk correction, audit artifact
-pack, docs reconciliation, architecture intake) rather than one generic prompt;
-**node-level tool scoping** (Stage-10 pattern applied consistently); versioned
-**context packs**; explicit **approval contracts** (what/who/expiry/rollback);
-a **policy engine** combining Stage-19 RBAC with workflow policy
-(`dry_run_only`, connector gates, data classification); and **secure
-delegation** (subagents cannot escalate tools, read secrets, or call MCP tools
-outside their profile).
-
-## 10. Env surface
-
-Defined in the Stage-21 §21h table in `IMPLEMENT.md` and the global Env-surface
-table (`DEEP_AGENT_RUNTIME_MODE`, `DEEP_AGENT_PROFILES_FILE`,
+Stage-21 §21h table in `IMPLEMENT.md` + the global Env-surface table
+(`DEEP_AGENT_RUNTIME_MODE`, `DEEP_AGENT_PROFILES_FILE`,
 `DEEP_AGENT_DEFAULT_PROVIDER`, `DEEP_AGENT_BEDROCK_REGION`,
 `DEEP_AGENT_CHECKPOINT_COLLECTION`, `DEEP_AGENT_RUN_COLLECTION`,
-`DEEP_AGENT_ARTIFACT_DIR`, `DEEP_AGENT_REQUIRE_HITL`,
-`DEEP_AGENT_DRY_RUN_ONLY`, `DEEP_AGENT_MAX_PARALLEL_RUNS`,
-`DEEP_AGENT_PROFILE_TIMEOUT_SECONDS`). They are already reserved in
-`compose.yaml` / `.env.example`.
+`DEEP_AGENT_ARTIFACT_DIR`, `DEEP_AGENT_REQUIRE_HITL`, `DEEP_AGENT_DRY_RUN_ONLY`,
+`DEEP_AGENT_MAX_PARALLEL_RUNS`, `DEEP_AGENT_PROFILE_TIMEOUT_SECONDS`). Already
+reserved in `compose.yaml`/`.env.example`.
 
-## 11. Verification intent (Stage-21 acceptance)
+## 12. Verification intent
 
-1. Profile list shows ≥7 agents (Jira, Docs, Audit, Workflow, Auth,
-   Architecture, Standup) with **non-overlapping** tool scopes.
-2. A Jira agent run produces dry-run ticket edits/creates and pauses at HITL.
-3. A Docs agent run suggests a revision and pauses before applying.
-4. A Standup agent run consumes session/chat context and emits Jira proposals
-   with no live writes.
-5. A denied profile/tool call fails closed with a clear policy error
-   (recorded as a policy event).
-6. Checkpoint/resume works across a container restart.
-7. Runtime runs in local compose; ECS/Fargate or K8s blueprint + Bedrock path
+1. Profile list shows the orchestrator + system agents (Atlassian, Mongo,
+   GitHub, ServiceNow, AWS, Audit, Docs, Standup) with **non-overlapping** tool
+   scopes.
+2. Orchestrator routes a goal to the right agent via the `task` tool; the
+   subagent runs in an isolated context.
+3. Atlassian agent produces dry-run Jira edits and pauses at `interrupt_on`.
+4. Mongo agent answers a read-only query (no writes possible).
+5. A denied tool call (outside an agent's allowlist) fails closed + is recorded.
+6. Checkpoint/resume survives container restart.
+7. Runs in local compose; ECS/Fargate or K8s blueprint + Bedrock path
    documented or stubbed.
-8. Observability exposes logs/metrics and an admin trace UI.
+8. Observability exposes logs/metrics + admin trace UI.
+9. A new stub agent (e.g. a Datadog/Splunk read agent) can be added by config
+   alone, proving the extensibility path.
 
-## 12. Task map
+## 13. Task map
 
-`S21.arch.1` (this doc) → `S21.profile.1` (profile schema/config) →
-`S21.policy.1` (per-profile allowlist enforcement) + `S21.context.1` (context
-packs) → `S21.runtime.1` (runtime API) → `S21.hitl.1` (interrupt/resume) +
-`S21.ui.1` (admin UI) → `S21.agent.1` (baseline agents) → `S21.security.1`,
-`S21.obs.1`, `S21.deploy.1` → `S21.deploy.2`, `S21.bedrock.1` → `S21.verify.1`,
-`S21.verify.2`. See the Stage-21 checklist in `IMPLEMENT.md` for the
-authoritative dependency edges.
+`S21.arch.1` (this doc) → `S21.upgrade.1` (LangChain 1.x + deepagents install,
+existing smokes green) → `S21.profile.1` (profile schema/loader →
+deepagents subagents) → `S21.context.1` (context packs) → `S21.orch.1`
+(`create_deep_agent` orchestrator + `task` routing) → `S21.runtime.1`
+(`agent_run_*` API) → `S21.hitl.1` (`interrupt_on` resume) + `S21.ui.1` (admin
+UI) → `S21.agent.1` (baseline system agents, incl. `ask_data`/`docs_agent` as
+`CompiledSubAgent`) → `S21.security.1`, `S21.obs.1`, `S21.deploy.1` →
+`S21.deploy.2`, `S21.bedrock.1` → `S21.verify.1`, `S21.verify.2`. The Stage-21
+checklist in `IMPLEMENT.md` is authoritative for dependency edges.
+
+## 14. Why each decision — a contributor's guide
+
+> This section exists because the platform is meant to be **extended by people
+> of varied experience levels**. If you are here to add a new agent (WAF,
+> Splunk, Datadog, a new workflow) you should be able to copy a pattern and
+> understand *why* it's shaped that way. Each decision below states the choice,
+> the reason, and what you do with it as a contributor.
+
+### Platform-level decisions
+
+- **Adopt `deepagents` instead of hand-rolling.** *Why:* the delegation
+  (`task`), isolated subagent context, per-subagent `tools`/`model`, and
+  per-tool HITL (`interrupt_on`) are exactly our four goals, already built and
+  maintained upstream on the LangGraph runtime we use. Hand-rolling them is
+  surface area we'd own forever. *Contributor takeaway:* you define agents as
+  **data** (a dict / YAML row), not by writing graph code — that's what keeps
+  the barrier to adding an agent low.
+
+- **One agent per system, write tools gated per-tool — not separate
+  reader/writer agents.** *Why:* a reader/writer split doubles the agent count
+  and the routing decisions for a safety boundary that `interrupt_on` +
+  `write_policy` already give you inside one agent. Fewer agents = less to learn
+  and less to break. *Contributor takeaway:* put a system's read and write tools
+  in one agent; list only the **write** tools under `interrupt_on`. Reach for a
+  separate writer agent **only** if a system needs hard credential separation
+  (note it in the roster table — the one place that decision lives).
+
+- **A thin orchestrator that only routes.** *Why:* if the orchestrator held
+  tools or domain context, every task would pay for context it doesn't use, and
+  routing logic would tangle with execution logic. Keeping it to `task` +
+  `write_todos` means the expensive context lives only in the one subagent that
+  needs it (the "minimize context" goal, made structural). *Contributor
+  takeaway:* never add a system tool to the orchestrator; add it to a subagent
+  and let the orchestrator route by the subagent's `description`. **The
+  `description` is load-bearing** — write it as "when to delegate here," because
+  that string is the entire basis on which routing happens.
+
+- **Cheaper model per subagent.** *Why:* a ServiceNow read or an AWS describe
+  doesn't need the frontier model; paying for it on every step is the most
+  common silent cost in multi-agent systems. *Contributor takeaway:* start a
+  new agent on the **smallest** model that passes its smoke; only raise the tier
+  if its outputs are actually wrong. The orchestrator router can be small too —
+  routing is a classification task.
+
+- **Wrap existing graphs as `CompiledSubAgent` rather than rewriting.** *Why:*
+  `ask_data` and `docs_agent` are tested, HITL-correct LangGraph workflows.
+  Rewriting them as prompt-driven subagents would discard that and risk
+  regressions. *Contributor takeaway:* if your "agent" is really a fixed,
+  multi-step procedure (not open-ended tool use), build it as a compiled
+  LangGraph and register it as a `CompiledSubAgent` — it's more reliable and
+  cheaper than a free-form agent for on-rails work.
+
+- **Profiles in `profiles.yaml`, validated at startup.** *Why:* config-as-data
+  means a non-expert can add an agent without touching Python, and a malformed
+  profile fails loudly at boot instead of mid-run. *Contributor takeaway:* this
+  file is your main entry point — adding an environment is usually a new YAML
+  row plus wiring its MCP tools.
+
+- **The LangChain 1.x upgrade is its own task, gated by existing smokes.**
+  *Why:* `deepagents` forces a dependency jump that touches every existing
+  graph; bundling it with feature work would make a failure impossible to
+  bisect. *Contributor takeaway:* don't start agent work until `S21.upgrade.1`
+  is green — building on a half-migrated base wastes your time.
+
+### Per-agent justifications
+
+Each agent is scoped to *one system's vocabulary and credentials* so its prompt
+stays small, its blast radius is one system, and its tools can't be confused
+with another's. Read-only by default; writes behind HITL.
+
+- **orchestrator** — exists so subagents never need to know about each other;
+  routing is centralized and cheap. Holds no system tools by design.
+- **atlassian_agent** — Jira + Confluence are one Atlassian credential/domain
+  and frequently move together (a story and its doc), so one agent; `apply` and
+  `confluence_update_page` are the only HITL tools because everything else is
+  staging/reads.
+- **mongo_agent** — wraps `ask_data`, which is already read-only via
+  `validate_spec`; no write path means **no HITL needed**, which is the cheapest
+  and safest shape. Models the "data access is read-only and least-privilege" rule.
+- **github_agent** — code review (read + comment) and deploy/merge are different
+  risk levels, so deploy/merge are the HITL tools while review context is free.
+- **servicenow_agent** — the worked example of "one agent, write tool gated"
+  that replaces the user's reader/writer instinct; read is free, record writes
+  pause for approval.
+- **aws_agent** — describe/read only against the AWS MCP; deliberately *no*
+  mutation tools, so it's a pure read agent (the template for future
+  observability agents like Datadog/Splunk).
+- **audit_agent** — spans several systems but **reads** them to assemble
+  evidence; only Archer updates write, behind HITL — shows how a cross-system
+  agent stays safe by being read-mostly.
+- **docs_agent / standup_agent** — reuse existing Stage-14/Stage-20 logic as
+  subagents so the platform composes prior work instead of forking it.
+
+### The recipe for a new agent (e.g. WAF, Splunk, Datadog)
+
+1. Add the system's MCP tools (or a connector) — read tools first.
+2. Add a `profiles.yaml` row: `name`, a **delegation-oriented** `description`,
+   the smallest viable `model`, `allowed_tools`, `write_tools` (→ `interrupt_on`),
+   `write_policy`, `required_capability`, and a small `context_pack`.
+3. Start `read_only`. Add write tools only when needed, and always list them in
+   `write_tools` so they're HITL-gated.
+4. Add a one-goal smoke. No orchestrator or other-agent changes required — that
+   no-other-changes property is the whole point of the architecture.
