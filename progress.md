@@ -446,3 +446,9 @@ User reported that login persisted even in a new incognito browser — no way to
 - **S21.ui.1 DONE** — new canRunWorkflow-gated `/agents` operations page + sidebar item: profile roster, dry-run start form, polling status, result/error/artifact inspection, pending approval approve/reject controls, and cancel action.
 - Updated `IMPLEMENT.md` and `CHANGELOG.md` for observable Stage-21 runtime/UI behavior.
 - Validation: `python3 -m py_compile mcp/deep_agent/runtime.py web/main.py` passed; `cd web && npm run build` passed (Vite chunk-size warning only).
+
+## Session 2026-05-26 — Stage 30 cross-agent git hook
+- **S30.git-hook.1 DONE** — added tracked `scripts/git-hooks/pre-commit` plus `scripts/install-git-hooks.sh`. Installing sets `core.hooksPath=scripts/git-hooks`, so the same commit-time guard applies to Claude Code, PiAgent, and humans in that clone/worktree.
+- The hook checks staged Python files with `python3 -m py_compile` and staged `web/**/*.ts(x)` with `cd web && npx tsc -b --noEmit` when `web/node_modules` exists. It is a no-op when no relevant files are staged and prints the emergency `git commit --no-verify` bypass message on failure.
+- Documented in `COORDINATION.md` that **both Claude Code and PiAgent must observe the rules**; Claude's local `.claude/` hook is only the early layer, while the tracked git hook is the cross-agent backstop.
+- Validation: `bash scripts/install-git-hooks.sh` set `core.hooksPath` to `scripts/git-hooks`; `bash -n scripts/git-hooks/pre-commit scripts/install-git-hooks.sh` passed; `cd web && npx tsc -b --noEmit` passed.

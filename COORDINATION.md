@@ -26,6 +26,17 @@ Update this table when you start/finish. One owner per stage.
 
 > **⚠️ LangChain 1.x rebuild required (2026-05-26, S21.upgrade.1).** `main` now pins the MCP service to the LangChain 1.x line (`deepagents 0.6.3`, `langchain-core 1.4`, `langgraph 1.2`, `langchain-openai 1.2`, `openai 2.x`, `langgraph-checkpoint-mongodb 0.4`). After pulling, **rebuild the mcp image** (`docker compose build mcp && docker compose up -d mcp`) — a stale 0.3 image will fail. The Mongo checkpointer now uses the unified `MongoDBSaver` (its `from_conn_string` is a *sync* context manager). Default `docker compose up` is otherwise unchanged; the new `sandbox` runtime is opt-in (`docker compose --profile sandbox up -d`).
 
+## Shared enforcement (Claude Code + PiAgent)
+
+Both Claude Code and PiAgent must observe these rules. This repo now has a tracked git-hook backstop in `scripts/git-hooks/pre-commit`; install it once per clone/worktree with:
+
+```bash
+bash scripts/install-git-hooks.sh
+git config --get core.hooksPath   # should print scripts/git-hooks
+```
+
+The hook runs for any committer (Claude Code, PiAgent, or human) and blocks commits with staged Python syntax errors or staged web TypeScript errors. Claude Code also has local `.claude/` PreToolUse hooks that deny broad git commands early; PiAgent must use the same rules in its own command guard where available. The git hook is the cross-agent safety net.
+
 ## The golden rules
 
 1. **One agent owns a file at a time.** Before editing a file, check the "File ownership map" below. If another stage already claims it, coordinate (additive-only, or hand off) — do not overwrite.
