@@ -370,3 +370,13 @@ with another's. Read-only by default; writes behind HITL.
    `write_tools` so they're HITL-gated.
 4. Add a one-goal smoke. No orchestrator or other-agent changes required — that
    no-other-changes property is the whole point of the architecture.
+
+**Worked example (S21.extend.1):** `datadog_agent` (a new observability
+environment) was added end-to-end by exactly (a) `mcp/connectors/datadog.py` (a
+read-only mock connector with `datadog_list_monitors`/`datadog_recent_events`),
+(b) one line in `connectors/__init__.py::_CONNECTOR_CLASSES`, and (c) one
+`profiles.yaml` row — **with no change to `runtime.py`, the orchestrator prompt,
+or `server._dispatch_tool`** (connector tools auto-route to the connector's
+`dispatch`). It then appears in `agent_profiles_list` and runs a scoped goal.
+See `scripts/smoke_agent_extend.py`. Enable locally with
+`CONN_DATADOG_ENABLED=true`.

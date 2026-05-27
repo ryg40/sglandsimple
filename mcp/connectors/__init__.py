@@ -15,6 +15,7 @@ from .servicenow import ServiceNowConnector
 from .snowflake import SnowflakeConnector
 from .archer import ArcherConnector
 from .ldap import LdapConnector
+from .datadog import DatadogConnector
 
 _registry: dict[str, Connector] = {}
 
@@ -29,6 +30,7 @@ _CONNECTOR_CLASSES: dict[str, type[Connector]] = {
     "SNOWFLAKE": SnowflakeConnector,
     "ARCHER": ArcherConnector,
     "LDAP": LdapConnector,
+    "DATADOG": DatadogConnector,
 }
 
 

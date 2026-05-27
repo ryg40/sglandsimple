@@ -166,3 +166,23 @@ agents:
     context_packs: [jira_story_template, standup_labels]
     budget_tokens: 50000
     max_steps: 15
+
+  # S21.extend.1 — proof of the config-only "add an agent" path. This entire
+  # agent (a new observability environment) is added by THIS row + the Datadog
+  # connector class/registration — no change to the orchestrator, runtime, or
+  # _dispatch_tool. Read-only.
+  - name: datadog_agent
+    description: >
+      Read Datadog observability: list monitors and their status, and recent
+      events (deploys, monitor triggers). Use to check whether a service is
+      alerting or recently changed. Read-only.
+    model: ""
+    allowed_tools:
+      - datadog_list_monitors
+      - datadog_recent_events
+    write_tools: []
+    write_policy: read_only
+    required_capability: null
+    context_packs: []
+    budget_tokens: 30000
+    max_steps: 12

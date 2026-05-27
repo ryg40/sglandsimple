@@ -4,6 +4,14 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, 25, 31, and 32 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-27 (claude code) — Stage 21: config-only add-an-agent path (S21.extend.1)
+
+Worktree `../wt-s21-extend` (branch `s21-extend`) off `ad8475a`.
+
+**S21.extend.1 DONE.** Proved the platform's extensibility claim concretely: added a brand-new read-only `datadog_agent` (a new observability environment) end-to-end with **only** (a) `mcp/connectors/datadog.py` — a read-only mock connector (`datadog_list_monitors`/`datadog_recent_events`, mock monitors/events keyed to the teaching finding/epic dataset), (b) one line in `connectors/__init__.py::_CONNECTOR_CLASSES`, (c) one `datadog_agent` row in `profiles.yaml`, plus `.env.example` env. **No change to `runtime.py`, the orchestrator prompt, or `server._dispatch_tool`** — connector tools auto-route to the connector's `dispatch` (server.py:1834–1839), which is exactly the no-other-changes property the architecture promises.
+
+Added `scripts/smoke_agent_extend.py` and a §14 worked example in the design doc. **Verified live** (`CONN_DATADOG_ENABLED=true` in local `.env.local`, mcp rebuilt+recreated): `datadog_agent` is the 9th entry in `agent_profiles_list` (read_only, no capability); `datadog_list_monitors` dispatches; a scoped goal ran to `completed` and correctly surfaced the 1 alerting monitor (`rds-postgres-prod-02`, finding-smoke-001/RDS-LOG-1). `smoke_agent_extend.py` PASS; py_compile clean. Unblocks S21.verify.1.
+
 ## Session 2026-05-27 (claude code) — Stage 33: pin standup chat composer to viewport bottom (planned + DONE)
 
 Worktree `../wt-s33` (branch `s33-chat-bottom`) off `e0e23e9`.
