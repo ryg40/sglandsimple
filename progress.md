@@ -4,6 +4,14 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, 25, 31, and 32 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-27 (claude code) — Stage 33: pin standup chat composer to viewport bottom (planned + DONE)
+
+Worktree `../wt-s33` (branch `s33-chat-bottom`) off `e0e23e9`.
+
+**Added + implemented Stage 33 (S33.chat-bottom.1).** Goal: keep the standup chat **text input aligned to the bottom of the browser window, always on-screen without page-scrolling**, so attendees stay focused on the main viewport with the scrum master. The chat already lived in an `<aside>` grid column with an internally-scrolling message list and a trailing `<form>` composer, so the fix was layout-only: made the `<aside>` viewport-anchored on `xl` (`xl:sticky xl:top-5 xl:h-[calc(100vh-2.5rem)] xl:self-start`, `standup.tsx`) and added `xl:min-h-0` to the chat `Card` (`standup-chat.tsx`) so it fills the fixed-height column instead of forcing a 22rem floor — the composer now sits at the bottom edge of the visible window while history scrolls inside the card. Below `xl`, the prior flow layout is retained. No change to chat send/presence/summarize/websocket logic; Stage-27 Widen/Collapse still works (it changes column width, not sticky behavior). `cd web && npm run build` passes.
+
+(Note: while planning this, observed the PiAgent session had already shipped Stage 31, Stage 32, and S32.github-history.1 to main — Stage 33 sits cleanly after them.)
+
 ## Session 2026-05-27 (pi) — Stage 32 follow-up planning: GitHub history → applications
 
 Added new backlog task **S32.github-history.1** to `IMPLEMENT.md`: identity enrichment should use the resolved LDAP user email/uid to check read-only GitHub history for commits/repo interactions, list repos the user has touched, and map those repos to applications/environments via internal app environment data where available. First acceptable slice is repo listing with app mapping marked `unknown` when app data is missing; disabled/missing GitHub data must degrade cleanly.

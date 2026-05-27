@@ -624,7 +624,7 @@ export function StandupChat({
   }
 
   return (
-    <Card className="flex min-h-[22rem] flex-1 flex-col overflow-hidden">
+    <Card className="flex min-h-[22rem] flex-1 flex-col overflow-hidden xl:min-h-0">
       <CardHeader className="border-b bg-muted/20 pb-3">
         <div className="flex items-start justify-between gap-3">
           <div>

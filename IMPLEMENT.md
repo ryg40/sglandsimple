@@ -1534,6 +1534,22 @@ Reuse existing infrastructure; add only thin read tools/proxies:
 
 ---
 
+## Stage 33 — Standup chat composer pinned to the viewport bottom (planned)
+
+**Goal:** On `/standup`, the chat **text input must stay aligned to the bottom of the browser window and remain on-screen without scrolling** — so standup attendees keep their eyes on the main viewport with the scrum master while still being able to type at any time. Today the chat lives in an `<aside>` grid column (`web/src/routes/standup.tsx:702`) and the composer (`<form>` at `web/src/components/standup-chat.tsx:715`) is the last child of the card; on tall content / smaller viewports the input can fall below the fold and require scrolling to reach. Make the composer always reachable by making the chat column a viewport-anchored, internally-scrolling region: the message list scrolls inside the card while the header + composer stay fixed, with the composer pinned to the bottom of the visible viewport.
+
+> **Reuse, don't reinvent — and don't regress Stage-27.** The chat card is already a flex column (`flex min-h-0 flex-1 flex-col`) with an internally-scrolling message list (`min-h-0 flex-1 overflow-y-auto`, `standup-chat.tsx:681`) and the composer as the trailing flex child — so the bones are right; the fix is making the chat **column height track the viewport** and stick. Approach: make the `<aside>` (or the chat card) `sticky` to the top with a viewport-derived height (e.g. `sticky top-[<header offset>] h-[calc(100vh-<offset>)]`) so the card fills the visible window and its trailing composer sits at the bottom edge, the list scrolling between. Keep the Stage-27 **Widen/Collapse** toggle working in both states and the `min-h-0`/`overflow` chain intact (don't reintroduce a double scrollbar). CSS/layout only — no change to chat send/presence/websocket logic.
+
+### Task checklist — Stage 33
+
+- [x] **S33.chat-bottom.1 — Pin the standup chat composer to the viewport bottom** ✅ DONE
+  - Files: `web/src/routes/standup.tsx` (make the chat `<aside>`/column viewport-anchored — `sticky` + `h-[calc(100vh-…)]` so it tracks the visible window), `web/src/components/standup-chat.tsx` (ensure the card fills its column and the composer is the pinned trailing element with the message list as the only scroll region), `docs/standup.md`, `CHANGELOG.md`, `IMPLEMENT.md`, `progress.md`.
+  - Done: the chat `<aside>` is now `xl:sticky xl:top-5 xl:h-[calc(100vh-2.5rem)] xl:self-start` so the chat column tracks the visible window; the chat `Card` keeps its flex-column + internally-scrolling message list (`min-h-0 flex-1 overflow-y-auto`) and trailing `<form>` composer, with `xl:min-h-0` added so it fills the fixed-height column rather than forcing a 22rem floor — the composer now sits at the bottom edge of the viewport while history scrolls inside the card. The Stage-27 Widen/Collapse toggle is unaffected (it changes the grid column width, not the sticky behavior); below `xl` the prior flow layout is retained. Layout/CSS only — chat send/presence/summarize/websocket logic untouched; `cd web && npm run build` passes (tsc + vite).
+  - Git handoff: before coding, `git pull --ff-only origin main` (or confirm HEAD); stage by explicit path only (`git add web/src/routes/standup.tsx web/src/components/standup-chat.tsx docs/standup.md CHANGELOG.md IMPLEMENT.md progress.md` — never `git add -A`/`.`/`commit -a`); inspect `git status --short` + `git diff --cached --stat`; commit `feat(S33): pin standup chat composer to viewport bottom`; push + merge via PR/fast-forward after build passes.
+  - Depends on: S20.chat.1 (chat panel), S27.layout.1 (widenable chat + main grid).
+
+---
+
 ## Stage 25 — Standup production approvals viewport
 
 **Goal:** Promote the existing Standup dry-run approval tray into a restricted production-approval workflow for the named approver `simone.patel@lanGarland.com`. The regular `/standup` view can continue to stage proposals in dry-run form, but Simone's auth-resolved approver view should expose an approval viewport that shows **all staged changes**, lets the approver edit any necessary fields before finalizing, and then applies the approved production updates through the existing Stage-16/Stage-20 gates rather than stopping at dry-run validation.

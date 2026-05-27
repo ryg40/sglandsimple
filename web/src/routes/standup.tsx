@@ -699,7 +699,10 @@ export default function Standup() {
           </Card>
         </section>
 
-        <aside className="flex min-h-0 flex-col gap-4">
+        {/* S33: pin the chat column to the viewport so the composer stays on
+            screen without page-scrolling — attendees keep eyes on the main
+            viewport while the message list scrolls inside the card. */}
+        <aside className="flex min-h-0 flex-col gap-4 xl:sticky xl:top-5 xl:h-[calc(100vh-2.5rem)] xl:self-start">
           <StandupChat
             sessionId="daily-standup"
             onAssociationCountChange={setLinkCount}
