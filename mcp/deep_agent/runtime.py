@@ -156,17 +156,84 @@ def _subagent_system_prompt(profile: AgentProfile) -> str:
     return "\n".join(parts)
 
 
+def _last_human_text(messages: list[Any]) -> str:
+    """Pull the task text deepagents' `task` tool handed the subagent.
+
+    deepagents invokes a CompiledSubAgent with ``{"messages": [...]}`` where the
+    last human turn carries the delegated instruction. The native ask_data /
+    docs graphs don't speak `messages`, so the adapter below lifts this text and
+    feeds it to their own input contract."""
+    for m in reversed(messages or []):
+        content = getattr(m, "content", None)
+        role = getattr(m, "type", None) or (m.get("role") if isinstance(m, dict) else None)
+        if content is None and isinstance(m, dict):
+            content = m.get("content")
+        if not content:
+            continue
+        if role in (None, "human", "user"):
+            if isinstance(content, list):
+                return "\n".join(str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in content)
+            return str(content)
+    return ""
+
+
+def _messages_adapter(run, label: str):
+    """Wrap a native graph/coroutine as a deepagents-compatible CompiledSubAgent.
+
+    deepagents requires a CompiledSubAgent's runnable to (a) accept a state with
+    a ``messages`` key and (b) return one (validated in
+    ``deepagents.middleware.subagents``). The native ask_data/docs graphs use
+    their own state shapes (``AskDataState.question`` / ``DocsAgentState``), so
+    this builds a tiny ``messages``-in / ``messages``-out graph whose single node
+    runs ``run(question) -> markdown`` and emits the result as an ``AIMessage``.
+    Without this, the orchestrator→graph delegation hangs/never resolves
+    (the wrapped graph ignores ``messages`` and returns no ``messages`` key)."""
+    from langchain_core.messages import AIMessage
+    from langgraph.graph import END, START, MessagesState, StateGraph
+
+    # MessagesState already declares `messages` with the add_messages reducer at
+    # module load — avoids the forward-ref pitfalls of a locally-defined TypedDict
+    # and satisfies the deepagents CompiledSubAgent `messages` contract.
+    async def _node(state: dict) -> dict:
+        question = _last_human_text(state.get("messages", []))
+        try:
+            text = await run(question)
+        except Exception as e:  # noqa: BLE001 — surface as the agent's final report
+            text = f"[{label}] failed: {type(e).__name__}: {e}"
+        return {"messages": [AIMessage(content=text or f"[{label}] produced no output")]}
+
+    g = StateGraph(MessagesState)
+    g.add_node(label, _node)
+    g.add_edge(START, label)
+    g.add_edge(label, END)
+    return g.compile()
+
+
 def _graph_runnable(name: str):
-    """Return a compiled LangGraph for a graph-backed profile, or None."""
+    """Return a deepagents-compatible compiled graph for a graph-backed profile.
+
+    The native graphs are wrapped in a ``messages``-in/out adapter so the
+    orchestrator's CompiledSubAgent delegation works (see ``_messages_adapter``).
+    """
     # Imported lazily; these modules require the LLM env to import.
     if name == "ask_data":
         import ask_data
 
-        return ask_data.build_graph()
+        async def _run(question: str) -> str:
+            state = await ask_data.run_ask_data(question or "Summarize the available data.")
+            return ask_data.render_markdown(
+                state.final, state.spec_error, question=question
+            )
+
+        return _messages_adapter(_run, "ask_data")
     if name == "docs_agent":
         import docs_agent
 
-        return docs_agent.build_docs_agent_graph()
+        async def _run(_question: str) -> str:
+            result = await docs_agent.run_docs_agent()
+            return json.dumps(result, indent=2, default=str)
+
+        return _messages_adapter(_run, "docs_agent")
     return None
 
 

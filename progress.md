@@ -30,6 +30,18 @@ Added `web/src/components/standup-incoming.tsx`, React Query hook/types, and `/s
 
 Verification: `python3 -m py_compile mcp/*.py web/*.py` and `cd web && npm run build` pass.
 
+## Session 2026-05-27 (claude code) — Stage 21: baseline system agents (S21.agent.1)
+
+Worktree `../wt-s21-agent` (branch `s21-agent`) off `ed2a755`.
+
+**S21.agent.1 DONE — found + fixed the graph-agent hang.** Probing the 8-agent roster end-to-end exposed the long-standing runtime.1 issue: `mongo_agent` (and `docs_agent`) sat at `running` forever. Root cause via the installed deepagents source: a `CompiledSubAgent` runnable **must consume and return a `messages` key** (validated in `deepagents.middleware.subagents`), but `ask_data`'s `AskDataState` (`question`/`answer`) and `docs_agent`'s `DocsAgentState` have none — the orchestrator passed `{messages}` the native graph ignored (nodes read `state.question` → empty), produced no `messages`, and the run never reached a terminal state. `ask_data` standalone runs in ~19s, so it was a contract mismatch, not slowness.
+
+Fix in `mcp/deep_agent/runtime.py`: added `_messages_adapter(run, label)` — a `MessagesState`-in/out `StateGraph` whose single node lifts the delegated task via `_last_human_text(messages)`, runs the native coroutine (`run_ask_data`→`render_markdown`, `run_docs_agent`→json), and returns the result as an `AIMessage`. `_graph_runnable` wraps both graphs through it. (Two false starts first: a function-local `TypedDict` with `Annotated[list, add_messages]` failed forward-ref resolution → `NameError` on `Annotated` then `add_messages`; settled on langgraph's prebuilt `MessagesState`.)
+
+Added `scripts/smoke_agents.py` (roster scopes, read-only behavior, orchestrator routing, write-agent HITL pause; graph agents behind `RUN_GRAPH_AGENTS=1`).
+
+**Verified live** (mcp rebuilt + recreated): full `smoke_agents.py RUN_GRAPH_AGENTS=1` PASS — mongo_agent now completes ~12s ("23 open tickets"), docs_agent completes, aws/servicenow read-only complete scoped (report disabled connectors, no write), orchestrator routes, atlassian pauses at `interrupt_on` (`jira_apply_staged`/`canApplyJira`). No regressions: `smoke_ask_data.sh` 3/3, `smoke_agent.sh`, `smoke_agent_hitl.py`. Unblocks S21.extend.1 and S21.verify.1.
+
 ## Session 2026-05-27 (claude code) — planned Stage 32 (LDAP directory module + identity-driven hub enrichment)
 
 **Added Stage 32 to `IMPLEMENT.md`** (planning only — no code): an enterprise **LDAP directory module** (email/name/groups/manager/hierarchy/position) modeled on a live `python-ldap` + app-ID bind but **faked** for the POC, returning the entities a real bind+search would, against a **200-user fixture** with common enterprise attributes; plus **identity-driven enrichment** that, given a resolved user, searches the Compliance Hub connectors for recent activity, infers their team(s), and pulls team context (Confluence overviews/technical pages, ServiceNow assignment groups) to guide assistance/routing. First consumer is Stage 31.

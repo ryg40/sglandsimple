@@ -84,7 +84,7 @@ previous design); that fallback is recorded but **not** the chosen path.
 | Mongo persistence of plans | `deep_agent_plans` | Add `deep_agent_runs` (run metadata/traces/artifacts) + reuse the checkpointer collection for HITL resume. |
 | Budget/step/runtime caps | `deep_agent/budget.py` | Per-agent budgets; deepagents middleware can carry them. |
 | Sandbox fs/shell tools | Stage-4 sandbox | Reuse via deepagents' built-in filesystem tools pointed at `/sandbox`. |
-| `ask_data`, `docs_agent` graphs | `mcp/ask_data.py`, `mcp/docs_agent.py` | **Wrap as `CompiledSubAgent`** — do not rewrite. The mongo agent and docs agent are existing graphs exposed to the orchestrator. |
+| `ask_data`, `docs_agent` graphs | `mcp/ask_data.py`, `mcp/docs_agent.py` | **Wrap as `CompiledSubAgent`** — do not rewrite. The mongo agent and docs agent are existing graphs exposed to the orchestrator. **Bridged via `runtime._messages_adapter`** (S21.agent.1): deepagents requires a CompiledSubAgent runnable to consume/return a `messages` key, which `AskDataState`/`DocsAgentState` lack; the adapter is a `MessagesState`-in/out graph that lifts the delegated task text, runs the native `run_ask_data`/`run_docs_agent`, and returns the result as an `AIMessage`. Without it the orchestrator→graph delegation hangs at `running`. |
 
 The existing `plan_task`/`run_plan`/`deep_agent` MCP tools remain for backward
 compatibility; the new platform is additive.
