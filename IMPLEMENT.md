@@ -1550,6 +1550,20 @@ Reuse existing infrastructure; add only thin read tools/proxies:
 
 ---
 
+## Stage 34 — Frontend load performance: route code-splitting + vendor chunking
+
+**Goal:** A fresh browser session was slow and "things weren't loading" because the SPA shipped as a **single ~1.7MB JS bundle** (no code-splitting): every route plus heavy libraries (React Flow, Recharts, react-markdown + highlight.js) had to download and parse before first paint, so a cold cache showed a blank screen and could stall. Split the bundle so the initial load pulls only the shell + landing route.
+
+### Task checklist — Stage 34
+
+- [x] **S34.codesplit.1 — Lazy-load routes + split vendor chunks** ✅ DONE
+  - Files: `web/src/App.tsx` (route `React.lazy` + `Suspense`), `web/src/routes/overview.tsx` + `web/src/components/overview-trend-chart.tsx` (lazy chart), `web/vite.config.ts` (`manualChunks`), `CHANGELOG.md`, `IMPLEMENT.md`, `progress.md`.
+  - Done: every route except the eager landing `Overview` is `React.lazy()` behind a `<Suspense>` fallback, so a fresh session downloads the shell + landing route instead of all routes. `vite.config.ts` `manualChunks` splits `vendor-react`, `vendor-flow` (`@xyflow/react`, ~54KB gz — only on `/architecture`), `vendor-charts` (`recharts`, ~109KB gz), `vendor-markdown` (`react-markdown`/`rehype-highlight`/`highlight.js`/`remark-gfm`, ~102KB gz — only on `/docs`,`/chat`), and `vendor-query`. Overview's single AreaChart is extracted to a lazy `overview-trend-chart` so recharts no longer blocks the landing paint. Result: the old single `index-*.js` (~1.7MB / ~500KB gz) is replaced by an `index` chunk of ~116KB gz plus on-demand route/vendor chunks; the build's chunk-size warning is gone. Behavior unchanged; `cd web && npm run build` passes.
+  - Git handoff: stage by explicit path only (`git add web/src/App.tsx web/src/routes/overview.tsx web/src/components/overview-trend-chart.tsx web/vite.config.ts CHANGELOG.md IMPLEMENT.md progress.md` — never `git add -A`/`.`/`commit -a`); inspect `git status --short` + `git diff --cached --stat`; commit `perf(S34): route code-splitting + vendor chunking`; push + merge via PR/fast-forward after build passes.
+  - Depends on: —.
+
+---
+
 ## Stage 25 — Standup production approvals viewport
 
 **Goal:** Promote the existing Standup dry-run approval tray into a restricted production-approval workflow for the named approver `simone.patel@lanGarland.com`. The regular `/standup` view can continue to stage proposals in dry-run form, but Simone's auth-resolved approver view should expose an approval viewport that shows **all staged changes**, lets the approver edit any necessary fields before finalizing, and then applies the approved production updates through the existing Stage-16/Stage-20 gates rather than stopping at dry-run validation.

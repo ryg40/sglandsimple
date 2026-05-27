@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
+import { Loader2 } from "lucide-react";
 import { Routes, Route, useLocation } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -7,17 +8,30 @@ import { AuthProvider } from "@/components/auth-provider";
 import { RequireCapability, Capability } from "@/components/auth-provider";
 import { Forbidden } from "@/components/forbidden";
 import { GlobalAssistant } from "@/components/chat-assistant";
+// Landing route stays eager so "/" paints without a chunk round-trip.
 import Overview from "@/routes/overview";
-import Chat from "@/routes/chat";
-import Sheet from "@/routes/sheet";
-import Wrangler from "@/routes/wrangler";
-import Hub from "@/routes/hub";
-import Workflow from "@/routes/workflow";
-import Architecture from "@/routes/architecture";
-import DocsWiki from "@/routes/docs";
-import Standup from "@/routes/standup";
-import Agents from "@/routes/agents";
-import AuthAdmin from "@/routes/auth-admin";
+// Every other route is code-split (React.lazy) so a fresh session only
+// downloads the shell + the route it lands on, instead of one ~1.7MB bundle
+// containing React Flow (architecture), Recharts, and markdown/highlight.js.
+const Chat = lazy(() => import("@/routes/chat"));
+const Sheet = lazy(() => import("@/routes/sheet"));
+const Wrangler = lazy(() => import("@/routes/wrangler"));
+const Hub = lazy(() => import("@/routes/hub"));
+const Workflow = lazy(() => import("@/routes/workflow"));
+const Architecture = lazy(() => import("@/routes/architecture"));
+const DocsWiki = lazy(() => import("@/routes/docs"));
+const Standup = lazy(() => import("@/routes/standup"));
+const Agents = lazy(() => import("@/routes/agents"));
+const AuthAdmin = lazy(() => import("@/routes/auth-admin"));
+
+function RouteFallback() {
+  return (
+    <div className="flex h-full items-center justify-center p-10 text-muted-foreground">
+      <Loader2 className="mr-2 size-5 animate-spin" />
+      Loading…
+    </div>
+  );
+}
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false);
@@ -35,6 +49,7 @@ export default function App() {
           <div className="flex min-w-0 flex-1 flex-col">
             <Topbar />
             <main className={showGlobalAssistant ? "flex-1 overflow-auto pb-24" : "flex-1 overflow-auto"}>
+              <Suspense fallback={<RouteFallback />}>
               <Routes>
                 {/* Open to all authenticated (and unauthenticated in disabled/trusted_network mode) */}
                 <Route path="/" element={<Overview />} />
@@ -92,6 +107,7 @@ export default function App() {
                 {/* Dedicated 403 page (also used inline by RequireCapability) */}
                 <Route path="/forbidden" element={<Forbidden />} />
               </Routes>
+              </Suspense>
             </main>
             {showGlobalAssistant && <GlobalAssistant />}
           </div>

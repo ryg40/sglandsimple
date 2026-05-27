@@ -1,13 +1,4 @@
-import { useMemo } from "react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useMemo, lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, FileWarning, Layers, ListChecks, GitPullRequest, Plug } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -16,6 +7,8 @@ import { MiniTable } from "@/components/mini-table";
 import { AttentionPanel } from "@/components/attention-panel";
 import { ActivityTable } from "@/components/activity-table";
 import { useOverview, useRecentAudit } from "@/lib/queries";
+
+const OverviewTrendChart = lazy(() => import("@/components/overview-trend-chart"));
 
 const STATUS_DOT: Record<string, string> = {
   healthy: "bg-success",
@@ -209,29 +202,9 @@ export default function Overview() {
                   No activity to chart yet.
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={trend} margin={{ left: -20, right: 8, top: 8 }}>
-                    <defs>
-                      <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                    <XAxis dataKey="day" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                    <Tooltip
-                      contentStyle={{
-                        background: "var(--popover)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 8,
-                        fontSize: 12,
-                        color: "var(--popover-foreground)",
-                      }}
-                    />
-                    <Area type="monotone" dataKey="count" stroke="var(--chart-1)" strokeWidth={2} fill="url(#fill)" />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <Suspense fallback={<div className="h-full w-full animate-pulse rounded-md bg-muted/40" />}>
+                  <OverviewTrendChart trend={trend} />
+                </Suspense>
               )}
             </div>
           </CardContent>

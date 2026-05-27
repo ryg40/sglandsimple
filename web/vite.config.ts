@@ -19,5 +19,20 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Split heavy, route-specific vendor libs into their own cacheable
+        // chunks so the initial load doesn't pull React Flow / Recharts /
+        // markdown+highlight.js. Combined with route-level React.lazy, a fresh
+        // session downloads only the shell + landing route.
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-flow": ["@xyflow/react"],
+          "vendor-charts": ["recharts"],
+          "vendor-markdown": ["react-markdown", "rehype-highlight", "highlight.js", "remark-gfm"],
+          "vendor-query": ["@tanstack/react-query"],
+        },
+      },
+    },
   },
 });

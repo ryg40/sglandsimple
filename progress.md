@@ -4,6 +4,18 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, 25, 31, and 32 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-27 (claude code) — GUI perf (Stage 34) + Mongo auth/data recovery
+
+Worktree `../wt-perf` (branch `perf-codesplit`) off `c1fa5eb`.
+
+**Diagnosed the "bad performance / things not loading in a fresh session" report** as two independent problems:
+
+1. **Bundle bloat (Stage 34, S34.codesplit.1 DONE)** — the SPA built to one ~1.7MB `index-*.js` (no code-splitting): every route + React Flow + Recharts + react-markdown/highlight.js loaded before first paint. Fix: route-level `React.lazy` + `Suspense` in `App.tsx` (Overview stays eager as the landing route), Vite `manualChunks` splitting `vendor-react`/`vendor-flow`/`vendor-charts`/`vendor-markdown`/`vendor-query`, and extracting Overview's AreaChart into a lazy `overview-trend-chart` so recharts doesn't block the landing. Initial payload dropped from ~500KB gz to ~116KB gz + on-demand chunks; chunk-size warning gone; `npm run build` clean.
+
+2. **MongoDB auth failure + empty data (operational repair, NOT a code change)** — the actual cause of "Jira explorer blank" and `docs_list failed: Authentication failed (code 18)`. Mongo logs showed `UserNotFound: Could not find user "app" for db "admin"` — the app user (`MONGO_URL=mongodb://app:app@mongo:27017/enterprise?authSource=admin`) was **missing**, and `enterprise` had **zero collections**. Root cause: `mongo-seed/00-users.js` and the data seeds only run on FIRST init of the `./perm/db` host bind mount; the repeated container recreations this session were against a volume where the `app` user + data had been lost (only `root` remained). Fix (run against the live container, root-auth): recreated the `app` user (`readWrite` on `enterprise`) via the same `createUser` from `00-users.js`, then `scripts/reseed.sh` to reapply all `mongo-seed/*.js`. Verified: `app` authenticates, collections restored (tickets 400, documents 200, employees 29, docs 6, epics 5, …), `docs_list`/`mongo_list_collections`/`jira_list_issues` (6 issues) all return `isError:false`.
+
+> **Recurrence note for future sessions:** if Mongo returns `AuthenticationFailed`/`UserNotFound: app`, the seed init didn't run against the current `./perm/db` volume. Recreate the app user (see `mongo-seed/00-users.js`) and run `scripts/reseed.sh` — do NOT wipe `./perm/db` unless intentional. A startup self-heal (recreate app user + conditional reseed when `enterprise` is empty) is a worthwhile follow-up but was out of scope for the immediate fix.
+
 ## Session 2026-05-27 (claude code) — Stage 21: config-only add-an-agent path (S21.extend.1)
 
 Worktree `../wt-s21-extend` (branch `s21-extend`) off `ad8475a`.
