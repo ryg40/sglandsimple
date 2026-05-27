@@ -7,7 +7,12 @@ import { Topbar } from "@/components/topbar";
 import { AuthProvider } from "@/components/auth-provider";
 import { RequireCapability, Capability } from "@/components/auth-provider";
 import { Forbidden } from "@/components/forbidden";
-import { GlobalAssistant } from "@/components/chat-assistant";
+// GlobalAssistant is a floating widget that pulls react-markdown/highlight.js
+// (~100KB gz). Lazy-load it so that vendor-markdown stays off the cold path —
+// it mounts after first paint inside the route <Suspense>.
+const GlobalAssistant = lazy(() =>
+  import("@/components/chat-assistant").then((m) => ({ default: m.GlobalAssistant })),
+);
 // Landing route stays eager so "/" paints without a chunk round-trip.
 import Overview from "@/routes/overview";
 // Every other route is code-split (React.lazy) so a fresh session only
@@ -109,7 +114,11 @@ export default function App() {
               </Routes>
               </Suspense>
             </main>
-            {showGlobalAssistant && <GlobalAssistant />}
+            {showGlobalAssistant && (
+              <Suspense fallback={null}>
+                <GlobalAssistant />
+              </Suspense>
+            )}
           </div>
         </div>
       </TooltipProvider>
