@@ -1,8 +1,34 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
+**Stages 0–2, 4, 6–20, 22, 23, 24, 25, 31, and 32 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
+
+## Session 2026-05-27 (pi) — Stage 32 follow-up planning: GitHub history → applications
+
+Added new backlog task **S32.github-history.1** to `IMPLEMENT.md`: identity enrichment should use the resolved LDAP user email/uid to check read-only GitHub history for commits/repo interactions, list repos the user has touched, and map those repos to applications/environments via internal app environment data where available. First acceptable slice is repo listing with app mapping marked `unknown` when app data is missing; disabled/missing GitHub data must degrade cleanly.
+
+**S32.github-history.1 DONE.** Extended the GitHub connector sample/read path with `github_user_history` and `GitHubConnector.user_history()`, deriving aliases from email/uid and aggregating commit/PR evidence by repo. `identity_enrichment` now attaches `github_history.repos[]` with interaction kinds, evidence count, latest date, examples, and `application_mapping` from the internal repo→app/environment map (or `unknown` when absent). The Stage-31 incoming ticket identity panel renders compact repo→app/env badges.
+
+Verification: `python3 -m py_compile mcp/*.py mcp/connectors/*.py scripts/seed_ldap_users.py web/*.py`; direct `build_identity_enrichment('maya.chen@lanGarland.com')` returns `payments-api` and `payments-worker` mapped to Payments apps; `cd web && npm run build`.
+
+## Session 2026-05-27 (pi) — Stage 32 LDAP directory + identity enrichment
+
+**S32.ldap.1 + S32.enrich.1 + S32.s31.1 DONE.** Added `mcp/connectors/ldap.py` with `LdapDirectory` fixture mode returning python-ldap-shaped `(dn, attr-bytes)` search results, registered the connector, added `scripts/seed_ldap_users.py`, and generated `mcp/fixtures/ldap_users.json` with 200 fake enterprise users, app-team/DL groups, and a real manager chain up to `enterprise.vp`. Added LDAP env defaults to `.env.example` and `docs/ldap-directory.md`. `LDAP_ENABLED`/`CONN_LDAP_ENABLED` disabled mode degrades cleanly.
+
+Added `mcp/identity_enrichment.py`, MCP tool `identity_enrichment`, web proxy `GET /api/identity/{user}/enrichment`, and TS types/query hook. Enrichment resolves the LDAP user, infers teams from `memberOf`, returns title/manager/team/directory summary, checks existing read-only connector summaries for activity, and creates team routing context without exposing secrets.
+
+Wired Stage 31 incoming tickets to call identity enrichment for reporter/extracted users and render a compact "Who & team context" panel in `web/src/components/standup-incoming.tsx`.
+
+Verification: `python3 -m py_compile mcp/*.py mcp/connectors/*.py scripts/seed_ldap_users.py web/*.py`; fixture round-trip `maya.chen@lanGarland.com → ... → enterprise.vp`; `cd web && npm run build`.
+
+## Session 2026-05-27 (pi) — Stage 31 incoming-ticket triage bubble
+
+**S31.intake.1 + S31.bubble.1 DONE.** Added `mcp/standup_intake.py` plus the `standup_incoming_tickets` MCP tool and authenticated `GET /api/standup/incoming` web proxy. The intake path reads existing Jira list data when available, identifies unassigned/new intake (with optional `STANDUP_INCOMING_DEMO=true` deterministic POC rows), extracts AWS account/RDS/region/app-team/user/email/DL entities, matches against backend-owned standup templates, and returns connector-hub enrichment/health without writes or secret echoing. Extended `web/standup_store.py::parse_links_mentions` to preserve the new entity arrays alongside existing links/mentions/Jira keys.
+
+Added `web/src/components/standup-incoming.tsx`, React Query hook/types, and `/standup` integration. The conditional card is absent for zero tickets and otherwise renders ticket summary/reporter, entity chips, workflow match confidence/rationale, connector source badges, and a dry-run kickoff affordance that uses the existing standup summarize/proposal path rather than adding a new write path. Updated docs/changelog and checked both Stage-31 tasks in `IMPLEMENT.md`.
+
+Verification: `python3 -m py_compile mcp/*.py web/*.py` and `cd web && npm run build` pass.
 
 ## Session 2026-05-27 (claude code) — planned Stage 32 (LDAP directory module + identity-driven hub enrichment)
 

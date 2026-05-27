@@ -29,6 +29,7 @@ from ask_data import run_ask_data
 from connectors import connector_tools, get_connector, init_connectors, list_connectors
 from deep_agent import Plan, run_deep_agent, run_plan_task, run_run_plan
 from workflow.graph import run_compliance_workflow
+from identity_enrichment import build_identity_enrichment, render_markdown as render_identity_enrichment_markdown
 from report.pdf import generate_pdf_report
 from report.ppt import generate_ppt_report
 from topology import build_topology
@@ -36,6 +37,7 @@ from architecture import build_architecture
 from overview import build_overview
 import docs as docsmod
 import standup_agent as standupmod
+import standup_intake as standupintakemod
 import standup_templates as standuptemplatesmod
 from web_research import render_markdown as render_web_research_markdown
 from web_research import run_web_research
@@ -581,6 +583,19 @@ TOOLS.extend([
         "description": "List backend-owned Standup Jira/Confluence prompt templates shared by the Templates panel and Deep Agent context packs. Read-only.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "standup_incoming_tickets",
+        "description": "Stage 31 read-only scan of unassigned/new Jira intake tickets with entity extraction, workflow matching, and connector-hub enrichment.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 10}},
+        },
+    },
+    {
+        "name": "identity_enrichment",
+        "description": "Stage 32 read-only identity enrichment: resolve LDAP fixture user, infer team(s), and gather connector-hub context.",
+        "inputSchema": {"type": "object", "properties": {"identity": {"type": "string"}}, "required": ["identity"]},
+    },
 ])
 
 # Stage 14 — docs wiki CRUD/search/sync/agent tools.
@@ -863,6 +878,63 @@ async def _tool_standup_templates(args: dict[str, Any]) -> dict[str, Any]:
             {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
         ],
         "isError": not payload.get("enabled", False),
+    }
+
+
+async def _tool_standup_incoming_tickets(args: dict[str, Any]) -> dict[str, Any]:
+    jira_issues: list[dict[str, Any]] = []
+    connector_summaries: dict[str, Any] = {}
+    try:
+        jira = get_connector("jira")
+        if jira is not None:
+            listed = await jira.dispatch("jira_list_issues", {})
+            blocks = [c.get("text", "") for c in listed.get("content", []) if c.get("type") == "text"]
+            for text in reversed(blocks):
+                try:
+                    parsed = json.loads(text)
+                    rows = parsed.get("issues") or parsed.get("rows") or parsed
+                    if isinstance(rows, list):
+                        jira_issues = [row for row in rows if isinstance(row, dict)]
+                        break
+                except (TypeError, json.JSONDecodeError):
+                    continue
+    except Exception as e:  # noqa: BLE001
+        connector_summaries["jira"] = {"status": "degraded", "detail": f"{type(e).__name__}: {e}"}
+    for name in ("aws", "servicenow", "github", "mongodb", "jira"):
+        try:
+            conn = get_connector(name)
+            if conn is not None:
+                connector_summaries[name] = await conn.summary()
+        except Exception as e:  # noqa: BLE001
+            connector_summaries[name] = {"status": "degraded", "detail": f"{type(e).__name__}: {e}"}
+    async def _identity_builder(identity: str) -> dict[str, Any]:
+        connectors = {n: get_connector(n) for n in ("servicenow", "github", "mongodb", "confluence") if get_connector(n) is not None}
+        return await build_identity_enrichment(identity, ldap_connector=get_connector("ldap"), connectors=connectors)
+
+    payload = await standupintakemod.build_incoming_tickets(
+        jira_issues,
+        limit=int(args.get("limit") or 10),
+        connector_summaries=connector_summaries,
+        identity_builder=_identity_builder,
+    )
+    return {
+        "content": [
+            {"type": "text", "text": standupintakemod.render_markdown(payload)},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": False,
+    }
+
+
+async def _tool_identity_enrichment(args: dict[str, Any]) -> dict[str, Any]:
+    connectors = {name: get_connector(name) for name in ("servicenow", "github", "mongodb", "confluence") if get_connector(name) is not None}
+    payload = await build_identity_enrichment(str(args.get("identity") or ""), ldap_connector=get_connector("ldap"), connectors=connectors)
+    return {
+        "content": [
+            {"type": "text", "text": render_identity_enrichment_markdown(payload)},
+            {"type": "text", "text": json.dumps(payload, indent=2, default=str)},
+        ],
+        "isError": False,
     }
 
 
@@ -1692,6 +1764,10 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_standup_summarize(args)
     if name == "standup_templates":
         return await _tool_standup_templates(args)
+    if name == "standup_incoming_tickets":
+        return await _tool_standup_incoming_tickets(args)
+    if name == "identity_enrichment":
+        return await _tool_identity_enrichment(args)
     if name == "docs_list":
         return await _tool_docs_list(args)
     if name == "docs_get":

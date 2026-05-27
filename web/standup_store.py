@@ -23,6 +23,12 @@ from urllib.parse import urlparse
 URL_RE = re.compile(r"https?://[^\s<>\]\)\"']+", re.IGNORECASE)
 MENTION_RE = re.compile(r"(?<!\w)@([A-Za-z0-9._-]+)")
 JIRA_KEY_RE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+-\d+)(?![A-Z0-9])")
+AWS_ACCOUNT_RE = re.compile(r"\b(?:aws[-_\s]*account|account)[:#\s-]*([0-9]{12})\b", re.IGNORECASE)
+RDS_INSTANCE_RE = re.compile(r"\b(?:rds|db|database|instance)[:#\s-]*([a-z][a-z0-9-]{4,63})\b", re.IGNORECASE)
+AWS_REGION_RE = re.compile(r"\b(?:us|eu|ap|sa|ca|me|af)-(?:north|south|east|west|central|northeast|southeast|southwest)-\d\b", re.IGNORECASE)
+APP_TEAM_RE = re.compile(r"\b(?:app[-_\s]*team|team)[:#\s-]*([A-Za-z][A-Za-z0-9_-]{2,40})\b", re.IGNORECASE)
+EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+DL_RE = re.compile(r"\b(?:dl|distribution[-_\s]*list)[:#\s-]*([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b", re.IGNORECASE)
 TRAILING_URL_PUNCT = ".,;:!?"
 DEFAULT_MAX_MESSAGES = 500
 
@@ -99,7 +105,18 @@ def parse_links_mentions(body: str) -> dict[str, Any]:
         )
     mentions = _dedupe([m.group(1) for m in MENTION_RE.finditer(body)])
     jira_keys = _dedupe([m.group(1) for m in JIRA_KEY_RE.finditer(body.upper())] + [link.get("jira_key") or "" for link in links])
-    return {"links": links, "mentions": mentions, "jira_keys": jira_keys}
+    return {
+        "links": links,
+        "mentions": mentions,
+        "jira_keys": jira_keys,
+        "aws_accounts": _dedupe(AWS_ACCOUNT_RE.findall(body)),
+        "rds_instances": _dedupe(RDS_INSTANCE_RE.findall(body)),
+        "aws_regions": _dedupe([m.group(0) for m in AWS_REGION_RE.finditer(body)]),
+        "app_team_ids": _dedupe(APP_TEAM_RE.findall(body)),
+        "users": mentions,
+        "emails": _dedupe(EMAIL_RE.findall(body)),
+        "distribution_lists": _dedupe(DL_RE.findall(body)),
+    }
 
 
 def _proposal_validation_state(raw: dict[str, Any], staging: dict[str, Any] | None) -> dict[str, Any]:
@@ -165,6 +182,13 @@ class StandupStore:
                 "links": parsed["links"],
                 "mentions": parsed["mentions"],
                 "jira_keys": parsed["jira_keys"],
+                "aws_accounts": parsed.get("aws_accounts", []),
+                "rds_instances": parsed.get("rds_instances", []),
+                "aws_regions": parsed.get("aws_regions", []),
+                "app_team_ids": parsed.get("app_team_ids", []),
+                "users": parsed.get("users", []),
+                "emails": parsed.get("emails", []),
+                "distribution_lists": parsed.get("distribution_lists", []),
                 "created_at": utc_now(),
             }
             session["messages"].append(message)

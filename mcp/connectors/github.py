@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .base import Connector
+try:
+    from .base import Connector
+except ImportError:  # direct fixture smoke imports outside package
+    class Connector:  # type: ignore[no-redef]
+        pass
 
 
 class GitHubConnector:
@@ -61,6 +65,14 @@ class GitHubConnector:
          "project": "Cert Rotation Automation", "author": "sarah-sre", "committed": "2026-05-22",
          "finding_id": "finding-stale-certs-02", "epic_key": "ALB-ROT", "ticket_refs": ["ALB-ROT-202"],
          "tags": ["epic:ALB-ROT", "tls", "acm"], "pr_number": 421, "checks_state": "pending"},
+        {"sha": "2ac91df", "message": "feat(payments): add RDS onboarding manifest for prod payments", "repo": "payments-api",
+         "project": "Payments Platform", "author": "maya-chen", "committed": "2026-05-23",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-2"],
+         "tags": ["app:payments", "env:prod", "rds"], "pr_number": 430, "checks_state": "passing"},
+        {"sha": "901bc44", "message": "fix(payments): update audit logger retry policy", "repo": "payments-worker",
+         "project": "Payments Platform", "author": "maya-chen", "committed": "2026-05-24",
+         "finding_id": "finding-smoke-001", "epic_key": "RDS-LOG-1", "ticket_refs": ["RDS-LOG-3"],
+         "tags": ["app:payments", "env:stage", "audit"], "pr_number": 431, "checks_state": "passing"},
     ]
 
     def _summary_payload(self, status: str) -> dict:
@@ -75,6 +87,47 @@ class GitHubConnector:
 
     async def summary(self) -> dict:
         return self._summary_payload("disabled" if not self.enabled else "healthy")
+
+    @staticmethod
+    def _github_aliases(identity: str) -> set[str]:
+        raw = str(identity or "").strip().lower()
+        local = raw.split("@", 1)[0]
+        aliases = {raw, local, local.replace(".", "-"), local.replace("_", "-")}
+        return {a for a in aliases if a}
+
+    def user_history(self, identities: list[str]) -> dict[str, Any]:
+        aliases: set[str] = set()
+        for identity in identities:
+            aliases.update(self._github_aliases(identity))
+        rows = [row for row in self._SAMPLE if str(row.get("author", "")).lower() in aliases]
+        by_repo: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            repo = str(row.get("repo") or "unknown")
+            rec = by_repo.setdefault(repo, {
+                "repo": repo,
+                "interaction_kinds": set(),
+                "evidence_count": 0,
+                "most_recent": "",
+                "examples": [],
+                "project": row.get("project"),
+                "epic_key": row.get("epic_key"),
+                "ticket_refs": row.get("ticket_refs") or [],
+                "tags": row.get("tags") or [],
+            })
+            rec["interaction_kinds"].add("commit")
+            if row.get("pr_number"):
+                rec["interaction_kinds"].add("pr")
+            rec["evidence_count"] += 1
+            committed = str(row.get("committed") or "")
+            rec["most_recent"] = max(str(rec.get("most_recent") or ""), committed)
+            rec["examples"].append({"sha": row.get("sha"), "message": row.get("message"), "committed": committed, "pr_number": row.get("pr_number"), "checks_state": row.get("checks_state")})
+        repos = []
+        for rec in by_repo.values():
+            rec["interaction_kinds"] = sorted(rec["interaction_kinds"])
+            rec["examples"] = rec["examples"][:3]
+            repos.append(rec)
+        repos.sort(key=lambda r: str(r.get("most_recent") or ""), reverse=True)
+        return {"status": "disabled" if not self.enabled else "ok", "aliases": sorted(aliases), "repos": repos, "count": len(repos)}
 
     def tools(self) -> list[dict]:
         return [
@@ -118,6 +171,17 @@ class GitHubConnector:
                 },
             },
             {
+                "name": "github_user_history",
+                "description": "Read-only GitHub commit/PR repository history for a user identity/email/uid.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "identities": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["identities"],
+                },
+            },
+            {
                 "name": "github_list_checks",
                 "description": "List checks/status runs on a PR/commit.",
                 "inputSchema": {
@@ -138,6 +202,9 @@ class GitHubConnector:
                 "isError": False,
             }
 
+        if name == "github_user_history":
+            import json
+            return {"content": [{"type": "text", "text": json.dumps(self.user_history(args.get("identities") or []), indent=2, default=str)}], "isError": False}
         if name == "github_search_repos":
             return {"content": [{"type": "text", "text": "[]"}], "isError": False}
         if name == "github_create_branch":

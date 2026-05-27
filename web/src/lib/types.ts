@@ -333,6 +333,82 @@ export interface StandupTemplatesResponse {
   version: string;
   templates: StandupTemplate[];
 }
+
+export interface StandupIncomingEntities {
+  aws_accounts: string[];
+  rds_instances: string[];
+  aws_regions: string[];
+  app_team_ids: string[];
+  users: string[];
+  emails: string[];
+  distribution_lists: string[];
+}
+export interface IdentityEnrichment {
+  identity: string;
+  found: boolean;
+  status: string;
+  directory?: {
+    display_name?: string;
+    email?: string;
+    uid?: string;
+    title?: string;
+    department?: string;
+    division?: string;
+    location?: string;
+    manager?: { display_name?: string; email?: string; title?: string } | null;
+    teams?: string[];
+    groups?: string[];
+  } | null;
+  manager_chain?: Array<Record<string, unknown> | null>;
+  recent_activity?: Record<string, { status: string; summary: string; items: unknown[] }>;
+  team_context?: Record<string, Record<string, unknown>>;
+  github_history?: {
+    status: string;
+    summary?: string;
+    count: number;
+    repos: Array<{
+      repo: string;
+      interaction_kinds?: string[];
+      evidence_count?: number;
+      most_recent?: string;
+      project?: string;
+      application_mapping?: {
+        application: string;
+        environment: string;
+        team: string;
+        confidence: number;
+        rationale: string;
+      };
+    }>;
+  };
+}
+
+export interface StandupIncomingTicket {
+  key: string;
+  summary: string;
+  reporter: string;
+  created?: string | null;
+  status: string;
+  assignee?: string | null;
+  entities: StandupIncomingEntities;
+  workflow_match: {
+    matched: boolean;
+    workflow: string | null;
+    kind?: string;
+    confidence: number;
+    rationale: string;
+  };
+  enrichment: Record<string, { status?: string; summary?: string; items?: unknown[] } | unknown>;
+  identity_enrichment?: IdentityEnrichment | null;
+  proposal: { status: "proposed"; dry_run: true; target_service: string; payload: Record<string, unknown> };
+}
+export interface StandupIncomingResponse {
+  tickets: StandupIncomingTicket[];
+  count: number;
+  limit: number;
+  generated_at: string;
+  read_only: boolean;
+}
 // S29.gate-toggle.1 — effective production-apply gate state for /standup.
 export interface StandupGates {
   dry_run_only: boolean;

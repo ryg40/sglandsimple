@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Activity, BookOpenText, Bot, Check, ChevronDown, ChevronUp, FileText, Layers3, Link2, Radio, ShieldCheck, Sparkles, UsersRound, X } from "lucide-react";
 import { JiraEditableGrid } from "@/components/jira-editable-grid";
+import { StandupIncoming } from "@/components/standup-incoming";
 import {
   StandupChat,
   type StandupAssociation,
@@ -13,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Markdown } from "@/components/markdown";
-import { useConnectors, useSetStandupGates, useStandupEpics, useStandupGates, useStandupTemplates } from "@/lib/queries";
+import { useConnectors, useSetStandupGates, useStandupEpics, useStandupGates, useStandupIncoming, useStandupTemplates } from "@/lib/queries";
 import type { StandupEpic, StandupTemplate } from "@/lib/types";
 
 const GATES = [
@@ -326,6 +327,8 @@ export default function Standup() {
   const gates = useStandupGates();
   const setGates = useSetStandupGates();
   const connectors = useConnectors();
+  const incomingQuery = useStandupIncoming();
+  const incomingTickets = incomingQuery.data?.tickets ?? [];
   const connectorRows = connectors.data?.connectors ?? [];
   const healthyConnectors = useMemo(
     () => connectorRows.filter((connector: any) => connectorStatus(connector) === "healthy").length,
@@ -386,6 +389,15 @@ export default function Standup() {
             <StandupEpicsCard selectedEpicKey={selectedEpic?.epic_key ?? null} onSelectEpic={setSelectedEpic} />
             <StandupTemplatesCard />
           </div>
+
+          {incomingQuery.isError && (
+            <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">Incoming-ticket analysis is unavailable.</p>
+          )}
+          <StandupIncoming
+            tickets={incomingTickets}
+            canSend={Boolean(controls?.canSend)}
+            onKickoff={() => controls?.summarize()}
+          />
 
           <Card>
             <CardHeader className="pb-3">

@@ -33,6 +33,7 @@ import type {
   JiraApplyResult,
   StandupEpicsResponse,
   StandupTemplatesResponse,
+  StandupIncomingResponse,
   StandupGates,
   StandupSetGatesResult,
   DocsTreeResponse,
@@ -46,6 +47,7 @@ import type {
   AgentProfilesResponse,
   AgentRunRecord,
   MeResponse,
+  IdentityEnrichment,
 } from "./types";
 
 export const keys = {
@@ -299,7 +301,9 @@ export const jiraKeys = { issues: ["jira-issues"] as const };
 export const standupKeys = {
   epics: ["standup-epics"] as const,
   templates: ["standup-templates"] as const,
+  incoming: ["standup-incoming"] as const,
   gates: ["standup-gates"] as const,
+  identity: (user: string) => ["identity-enrichment", user] as const,
 };
 
 export function useJiraIssues() {
@@ -357,6 +361,24 @@ export function useStandupTemplates() {
     queryKey: standupKeys.templates,
     queryFn: () => api.get<StandupTemplatesResponse>("/api/standup/templates"),
     staleTime: 60_000,
+  });
+}
+
+export function useIdentityEnrichment(user: string | null) {
+  return useQuery({
+    queryKey: standupKeys.identity(user ?? ""),
+    queryFn: () => api.get<IdentityEnrichment>(`/api/identity/${encodeURIComponent(user!)}/enrichment`),
+    enabled: !!user,
+    staleTime: 60_000,
+  });
+}
+
+export function useStandupIncoming() {
+  return useQuery({
+    queryKey: standupKeys.incoming,
+    queryFn: () => api.get<StandupIncomingResponse>("/api/standup/incoming"),
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
   });
 }
 

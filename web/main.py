@@ -31,6 +31,7 @@ API surface (all JSON):
 - GET  /api/jira/issues        → MCP jira_list_issues (sample + staged overlay)
 - GET  /api/standup/epics      → read-only active epics for the Standup reference rail
 - GET  /api/standup/templates  → MCP standup_templates (shared prompt library)
+- GET  /api/standup/incoming   → MCP standup_incoming_tickets (read-only intake)
 - POST /api/jira/stage         → MCP jira_stage_edits (HIL drafts)
 - POST /api/jira/validate      → MCP jira_validate_staged
 - POST /api/jira/revert        → MCP jira_revert_staged
@@ -49,6 +50,7 @@ API surface (all JSON):
 - POST /api/agents/runs/{id}/cancel → MCP agent_run_cancel
 - GET  /api/agents/runs/{id}/artifacts → MCP agent_run_artifacts
 - GET  /api/auth/diagnostics   → auth internals for sg_sec_admin users (S19.admin.1)
+- GET  /api/identity/{user}/enrichment → MCP identity_enrichment (read-only)
 """
 
 from __future__ import annotations
@@ -713,6 +715,23 @@ async def api_standup_epics() -> JSONResponse:
 async def api_standup_templates() -> JSONResponse:
     """Stage 24: backend-owned prompt library shared by UI and Deep Agent context packs."""
     res = await _mcp_tool("standup_templates", {})
+    payload = _extract_json_block(res)
+    return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
+
+
+@app.get("/api/standup/incoming", dependencies=[Depends(_guard_user)])
+async def api_standup_incoming(limit: int = 10) -> JSONResponse:
+    """Stage 31: read-only incoming unassigned Jira intake analysis."""
+    safe_limit = max(1, min(int(limit or 10), 25))
+    res = await _mcp_tool("standup_incoming_tickets", {"limit": safe_limit})
+    payload = _extract_json_block(res)
+    return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
+
+
+@app.get("/api/identity/{user}/enrichment", dependencies=[Depends(_guard_user)])
+async def api_identity_enrichment(user: str) -> JSONResponse:
+    """Stage 32: authenticated read-only identity/team/context enrichment."""
+    res = await _mcp_tool("identity_enrichment", {"identity": user})
     payload = _extract_json_block(res)
     return JSONResponse(payload, status_code=400 if res.get("isError") else 200)
 
