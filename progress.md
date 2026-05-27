@@ -4,6 +4,10 @@
 **Stages 0–2, 4, 6–20, 22, 23, 24, and 25 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
 
+## Session 2026-05-27 (claude code) — Stage 20 closeout (S20.chat.2)
+
+**S20.chat.2 DONE — verified already-fixed, no code change.** Traced the optimistic/echo duplicate end to end: the dedup is handled by **client-id reconciliation** that is already wired through all three layers — send carries the optimistic `id` (`standup-chat.tsx:610`) → server reads it as `client_message_id` (`standup_ws.py:410`) → persisted (`standup_store.py:164`) and echoed → `normalizeMessage` lifts it to `clientMessageId` → `mergeMessages` builds `clientToServerId` and drops the local `pending` row when its echo arrives, marking the survivor `pending:false`/`deliveryStatus:"sent"`. User confirms the dupe no longer reproduces in current builds. Closed as a docs/checkbox flip only (the user-facing fix is already in the CHANGELOG: "sender-side optimistic messages are acknowledged in place"). `cd web && npm run build` clean; `scripts/smoke_standup_ws.py` passes (join/chat-echo/RBAC/dry-run approval/snapshot). **Stage 20 now fully complete.**
+
 ## Session 2026-05-26 (claude code) — Stage 21: HITL interrupt/resume contract (S21.hitl.1)
 
 Worktree `../wt-s21-hitl` (branch `s21-hitl`) off HEAD `ec5a3ec`.
