@@ -36,6 +36,7 @@ import type {
   StandupIncomingResponse,
   StandupGates,
   StandupSetGatesResult,
+  StandupSessionsResponse,
   DocsTreeResponse,
   Doc,
   DocUpsertResult,
@@ -303,6 +304,7 @@ export const standupKeys = {
   templates: ["standup-templates"] as const,
   incoming: ["standup-incoming"] as const,
   gates: ["standup-gates"] as const,
+  sessions: ["standup-sessions"] as const,
   identity: (user: string) => ["identity-enrichment", user] as const,
 };
 
@@ -378,6 +380,16 @@ export function useStandupIncoming() {
     queryKey: standupKeys.incoming,
     queryFn: () => api.get<StandupIncomingResponse>("/api/standup/incoming"),
     refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+// S35 — persisted standup session history for New/Previous/Next controls.
+export function useStandupSessions() {
+  return useQuery({
+    queryKey: standupKeys.sessions,
+    queryFn: () => api.get<StandupSessionsResponse>("/api/standup/sessions"),
+    refetchInterval: 30_000,
     placeholderData: (prev) => prev,
   });
 }

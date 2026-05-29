@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Activity, BookOpenText, Bot, Check, ChevronDown, ChevronUp, FileText, Layers3, Link2, Radio, ShieldCheck, Sparkles, UsersRound, X } from "lucide-react";
 import { JiraEditableGrid } from "@/components/jira-editable-grid";
 import { StandupIncoming } from "@/components/standup-incoming";
@@ -14,8 +14,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Markdown } from "@/components/markdown";
-import { useConnectors, useSetStandupGates, useStandupEpics, useStandupGates, useStandupIncoming, useStandupTemplates } from "@/lib/queries";
-import type { StandupEpic, StandupTemplate } from "@/lib/types";
+import { useConnectors, useSetStandupGates, useStandupEpics, useStandupGates, useStandupIncoming, useStandupSessions, useStandupTemplates } from "@/lib/queries";
+import type { StandupEpic, StandupSessionSummary, StandupTemplate } from "@/lib/types";
 
 const GATES = [
   { label: "Proposal approval", value: "RBAC gated", variant: "success" as const, detail: "Approve/Reject in the tray require the canApproveStandupActions capability (admin); others are read-only." },
@@ -24,9 +24,22 @@ const GATES = [
 ];
 
 function proposalStatusVariant(status: string) {
-  if (status === "approved") return "success" as const;
-  if (status === "rejected") return "destructive" as const;
+  if (status === "approved" || status === "implemented") return "success" as const;
+  if (status === "rejected" || status === "failed") return "destructive" as const;
+  if (status === "blocked") return "outline" as const;
   return "warning" as const;
+}
+
+function makeSessionId() {
+  const suffix = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID().slice(0, 8)
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  return `standup-${suffix}`;
+}
+
+function proposalVisibleInActiveQueue(proposal: StandupProposal) {
+  const status = String(proposal.status);
+  return !proposal.archived && !proposal.implementation_status && (status === "proposed" || status === "approved");
 }
 
 function payloadText(payload: Record<string, unknown> | undefined) {
@@ -314,6 +327,8 @@ function StandupTemplatesCard() {
 export default function Standup() {
   const [configOpen, setConfigOpen] = useState(false);
   const [chatExpanded, setChatExpanded] = useState(false);
+  const [sessionId, setSessionId] = useState("daily-standup");
+  const [showProposalHistory, setShowProposalHistory] = useState(false);
   const [linkCount, setLinkCount] = useState(0);
   const [associations, setAssociations] = useState<StandupAssociation[]>([]);
   const [trace, setTrace] = useState<StandupTraceState | null>(null);
@@ -324,12 +339,49 @@ export default function Standup() {
   const canApprove = hasCapability(Capability.CAN_APPROVE_STANDUP);
   const canAdmin = hasCapability(Capability.CAN_ADMIN_AUTH);
   const proposals = controls?.proposals ?? [];
+  const visibleProposals = showProposalHistory ? proposals : proposals.filter(proposalVisibleInActiveQueue);
+  const approvedPendingIds = proposals
+    .filter((proposal) => String(proposal.status) === "approved" && !proposal.implementation_status && !proposal.archived)
+    .map((proposal) => proposal.id);
   const gates = useStandupGates();
   const setGates = useSetStandupGates();
   const connectors = useConnectors();
   const incomingQuery = useStandupIncoming();
+  const sessionsQuery = useStandupSessions();
+  const sessions = sessionsQuery.data?.sessions ?? [];
+  const sessionRows = useMemo(() => {
+    const byId = new Map<string, StandupSessionSummary>();
+    for (const row of sessions) byId.set(row.session_id, row);
+    if (!byId.has(sessionId)) {
+      byId.set(sessionId, {
+        session_id: sessionId,
+        title: sessionId === "daily-standup" ? "Daily standup" : `Standup ${sessionId}`,
+        sprint: "",
+        status: "active",
+        started_at: null,
+        updated_at: null,
+        message_count: 0,
+        proposal_count: 0,
+        active_proposal_count: 0,
+        implemented_proposal_count: 0,
+      });
+    }
+    return Array.from(byId.values());
+  }, [sessionId, sessions]);
+  const currentSessionIndex = sessionRows.findIndex((session) => session.session_id === sessionId);
+  const currentSession = sessionRows[currentSessionIndex] ?? sessionRows[0];
+  const canGoNext = currentSessionIndex > 0;
+  const canGoPrevious = currentSessionIndex >= 0 && currentSessionIndex < sessionRows.length - 1;
   const incomingTickets = incomingQuery.data?.tickets ?? [];
   const connectorRows = connectors.data?.connectors ?? [];
+
+  useEffect(() => {
+    setControls(null);
+    setPayloadDrafts({});
+    setAssociations([]);
+    setLinkCount(0);
+  }, [sessionId]);
+
   const healthyConnectors = useMemo(
     () => connectorRows.filter((connector: any) => connectorStatus(connector) === "healthy").length,
     [connectorRows],
@@ -351,10 +403,24 @@ export default function Standup() {
         </div>
         <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs text-muted-foreground">
           <UsersRound className="size-4 text-primary" />
-          <span>Session: daily-standup</span>
+          <span>Session:</span>
+          <select
+            className="max-w-[14rem] rounded border bg-background px-2 py-1 text-xs text-foreground"
+            value={sessionId}
+            onChange={(event) => setSessionId(event.target.value)}
+            aria-label="Standup chat session"
+          >
+            {sessionRows.map((session) => (
+              <option key={session.session_id} value={session.session_id}>
+                {session.title || session.session_id} ({session.message_count}/{session.proposal_count})
+              </option>
+            ))}
+          </select>
           <Badge variant={canApprove ? "success" : "outline"} className="text-[10px]">
             {canApprove ? "approver" : "read-only"}
           </Badge>
+          {sessionsQuery.isFetching && <Badge variant="outline" className="text-[10px]">syncing history</Badge>}
+          {currentSession?.active_proposal_count ? <Badge variant="warning" className="text-[10px]">{currentSession.active_proposal_count} active</Badge> : null}
         </div>
       </div>
 
@@ -439,15 +505,34 @@ export default function Standup() {
                   </p>
                 )}
               </div>
-              {proposals.length === 0 ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-2 text-xs">
+                <div className="text-muted-foreground">
+                  Showing {showProposalHistory ? "all proposal history" : "active approver queue"}.
+                  {approvedPendingIds.length > 0 ? ` ${approvedPendingIds.length} approved item(s) ready to submit.` : " No approved items are waiting for implementation."}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => setShowProposalHistory((value) => !value)}>
+                    {showProposalHistory ? "Hide history" : "Show history"}
+                  </Button>
+                  <DisabledWithTooltip
+                    enabled={canApprove && Boolean(controls?.canSend) && approvedPendingIds.length > 0}
+                    message={!canApprove ? "Requires approver rights" : !controls?.canSend ? "Live websocket not connected" : "No approved items waiting"}
+                  >
+                    <Button size="sm" variant="default" onClick={() => controls?.submitApproved(approvedPendingIds)}>
+                      <ShieldCheck className="size-3.5" />
+                      Submit approved to implementation
+                    </Button>
+                  </DisabledWithTooltip>
+                </div>
+              </div>
+              {visibleProposals.length === 0 ? (
                 <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-center text-xs text-muted-foreground">
-                  No staged changes yet. Capture standup notes, then run <span className="font-medium">Summarize</span> to
-                  generate proposals for approver review.
+                  No active staged changes for this session. Capture standup notes, run <span className="font-medium">Summarize</span>, or enable <span className="font-medium">Show history</span> to review submitted/decided items.
                 </div>
               ) : (
-                proposals.map((proposal) => {
-                  const status = String(proposal.status);
-                  const decided = status !== "proposed";
+                visibleProposals.map((proposal) => {
+                  const status = String(proposal.implementation_status || proposal.status);
+                  const decided = String(proposal.status) !== "proposed";
                   const validation = validationLabel(proposal);
                   const draft = payloadDrafts[proposal.id] ?? payloadText(proposal.dry_run_payload);
                   const parsedDraft = parsePayloadDraft(draft);
@@ -473,8 +558,15 @@ export default function Standup() {
                       {!parsedDraft && <p className="mt-1 text-[10px] text-destructive">Payload must be a valid JSON object before Save/Submit.</p>}
                       {proposal.approval?.actor && (
                         <p className="mt-1 text-[10px] text-muted-foreground">
-                          {status} by {proposal.approval.actor}
+                          {proposal.status} by {proposal.approval.actor}
                           {proposal.approval.applied === false ? " · not applied" : " · applied"}
+                        </p>
+                      )}
+                      {proposal.implementation_status && (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          implementation: {proposal.implementation_status}
+                          {proposal.submitted_by ? ` by ${proposal.submitted_by}` : ""}
+                          {proposal.submitted_at ? ` · ${new Date(proposal.submitted_at).toLocaleString()}` : ""}
                         </p>
                       )}
                       <div className="mt-2 flex flex-wrap gap-2">
@@ -704,13 +796,18 @@ export default function Standup() {
             viewport while the message list scrolls inside the card. */}
         <aside className="flex min-h-0 flex-col gap-4 xl:sticky xl:top-5 xl:h-[calc(100vh-2.5rem)] xl:self-start">
           <StandupChat
-            sessionId="daily-standup"
+            sessionId={sessionId}
             onAssociationCountChange={setLinkCount}
             onAssociationsChange={setAssociations}
             onTraceChange={setTrace}
             onControlsChange={setControls}
             expanded={chatExpanded}
             onToggleExpand={() => setChatExpanded((value) => !value)}
+            onNewSession={() => setSessionId(makeSessionId())}
+            onPreviousSession={() => canGoPrevious && setSessionId(sessionRows[currentSessionIndex + 1].session_id)}
+            onNextSession={() => canGoNext && setSessionId(sessionRows[currentSessionIndex - 1].session_id)}
+            canGoPrevious={canGoPrevious}
+            canGoNext={canGoNext}
           />
         </aside>
       </div>

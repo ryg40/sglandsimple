@@ -1,8 +1,22 @@
 # Progress
 
 ## Status
-**Stages 0–2, 4, 6–20, 22, 23, 24, 25, 31, and 32 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
+**Stages 0–2, 4, 6–20, 22, 23, 24, 25, 31, 32, and 35 COMPLETE. Stage 3 transport/expose COMPLETE locally (manual external-client smoke pending). Stage 14 COMPLETE incl. docs-agent LangGraph HITL apply gate. Stage 18 architecture v2 COMPLETE. Stage 21 IN PROGRESS. Stage 26 chat runtime visibility S26.chat-runtime.1 COMPLETE. Stage 5 SHELVED.**
 Work branch: `main`; latest observed HEAD before current work: `625878c` (`feat(S21): context packs for system agents`).
+
+## Session 2026-05-29 (pi) — Stage 35: standup approver submit queue + chat history navigation
+
+Worktree `../wt-standup-approver-sessions` (branch `standup-approver-sessions-task`) off `origin/main` `3add68e`, per COORDINATION.md worktree/githook rules. Installed verified `core.hooksPath=scripts/git-hooks`; staged by explicit path only.
+
+**S35.standup-approver-queue.1 DONE.** Added a persisted standup session-list endpoint (`GET /api/standup/sessions`) backed by `StandupStore.list_sessions()` so `/standup` can show stored chats from `/data/auth/standup_sessions.json`. The chat header now has **New session**, **Previous**, and **Next** controls; the top bar also has a direct session selector. Switching sessions updates `sessionId`, reconnects the websocket, resets local trace/drafts, and reloads messages/proposals/agent runs without a full page reload.
+
+Added approver batch implementation: websocket event `proposal.submit_approved` is approver-gated like Save/Submit, collects approved proposals that have not yet been submitted, reuses `_apply_proposal_submit()` for each, and persists `implementation_status` (`implemented`/`blocked`/`failed`/`submitted`), submit actor/timestamp, implementation result, and history via `mark_proposal_submitted()`. The Approvals viewport now defaults to active work only and hides submitted/implemented history unless **Show history** is enabled; approvers see **Submit approved to implementation** with non-approver tooltip/403 behavior. No proposal/session data is hard-deleted.
+
+Updated `scripts/smoke_standup_ws.py` to assert non-approver batch-submit rejection, approver batch-submit result persistence, and authenticated session-list history. Updated `docs/standup.md`, `CHANGELOG.md`, and checked off S35 in `IMPLEMENT.md`.
+
+Verification: `python3 -m py_compile web/*.py scripts/smoke_standup_ws.py` passes; `cd web && npm run build` passes.
+
+Git handoff documented for this change: `git status --short`; `git add web/standup_store.py web/standup_ws.py web/src/components/standup-chat.tsx web/src/routes/standup.tsx web/src/lib/queries.ts web/src/lib/types.ts scripts/smoke_standup_ws.py docs/standup.md CHANGELOG.md IMPLEMENT.md progress.md`; `git diff --cached --stat`; `git commit -m 'feat(S35): standup approver submit queue + chat history navigation'`; `git push -u origin standup-approver-sessions-task`; merge by PR or `git checkout main && git pull --ff-only origin main && git merge --ff-only standup-approver-sessions-task && git push origin main` after final review.
 
 ## Session 2026-05-27 (claude code) — GUI perf (Stage 34) + Mongo auth/data recovery
 

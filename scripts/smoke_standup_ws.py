@@ -142,13 +142,32 @@ async def main() -> int:
         assert approval.get("dry_run_only") is True, approval
         print(f"  rbac: approver approved proposal (actor={approval.get('actor')}, applied=False)")
 
-        # --- snapshot persistence (authenticated GET) ---------------------- #
+        # --- S35: approver batch-submit marks approved item as implemented/blocked history.
+        if USE_AUTH:
+            await _send(viewer, "proposal.submit_approved", proposal_ids=[proposal_id])
+            err = await _recv_until(viewer, "error", timeout=10)
+            assert err.get("error", {}).get("code") == "forbidden", err
+        await _send(approver, "proposal.submit_approved", proposal_ids=[proposal_id])
+        batch = await _recv_until(approver, "proposal.batch_submitted", timeout=20)
+        assert batch.get("submitted_count") == 1, batch
+        result = (batch.get("results") or [])[0]
+        assert result.get("proposal_id") == proposal_id, batch
+        assert result.get("implementation_status") in {"blocked", "implemented", "failed", "submitted"}, batch
+        print(f"  s35: batch submit recorded implementation_status={result.get('implementation_status')}")
+
+        # --- snapshot + sessions-list persistence (authenticated GET) ------ #
         req = urllib.request.Request(_snapshot_url(url), headers=_basic_headers(APPROVER_USER))
         with urllib.request.urlopen(req, timeout=5) as response:
             snapshot = json.loads(response.read().decode("utf-8"))
         persisted = next((p for p in snapshot.get("proposals", []) if p.get("id") == proposal_id), None)
         assert persisted is not None, snapshot
         assert persisted.get("status") == "approved", persisted
+        assert persisted.get("implementation_status") in {"blocked", "implemented", "failed", "submitted"}, persisted
+
+        req = urllib.request.Request(_sessions_url(url), headers=_basic_headers(APPROVER_USER))
+        with urllib.request.urlopen(req, timeout=5) as response:
+            sessions = json.loads(response.read().decode("utf-8"))
+        assert any(row.get("session_id") in url for row in sessions.get("sessions", [])), sessions
 
     print(f"standup websocket smoke passed: {url}")
     return 0

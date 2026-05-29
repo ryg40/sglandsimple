@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link2, Maximize2, MessageSquare, Minimize2, Radio, RefreshCw, UsersRound, WifiOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, Link2, Maximize2, MessageSquare, Minimize2, PlusCircle, Radio, RefreshCw, UsersRound, WifiOff } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,11 @@ export type StandupProposal = {
   source_message_ids?: string[];
   confidence?: number | null;
   approval?: StandupProposalApproval;
+  implementation_status?: string;
+  implementation_result?: Record<string, unknown>;
+  submitted_at?: string;
+  submitted_by?: string;
+  archived?: boolean;
   created_by?: string;
   created_at?: string;
   updated_at?: string;
@@ -86,6 +91,7 @@ export type StandupControls = {
   approve: (proposalId: string) => void;
   reject: (proposalId: string) => void;
   edit: (proposalId: string, dryRunPayload: Record<string, unknown>) => void;
+  submitApproved: (proposalIds?: string[]) => void;
   summarizing: boolean;
 };
 
@@ -99,6 +105,11 @@ type StandupChatProps = {
   expanded?: boolean;
   /** Toggle the widened state; when provided, a header expand/collapse button is shown. */
   onToggleExpand?: () => void;
+  onNewSession?: () => void;
+  onPreviousSession?: () => void;
+  onNextSession?: () => void;
+  canGoPrevious?: boolean;
+  canGoNext?: boolean;
 };
 
 function normalizeProposal(raw: unknown): StandupProposal | null {
@@ -330,6 +341,11 @@ export function StandupChat({
   onControlsChange,
   expanded = false,
   onToggleExpand,
+  onNewSession,
+  onPreviousSession,
+  onNextSession,
+  canGoPrevious = false,
+  canGoNext = false,
 }: StandupChatProps) {
   const { me } = useAuth();
   const [messages, setMessages] = useState<StandupChatMessage[]>(INITIAL_MESSAGES);
@@ -356,6 +372,14 @@ export function StandupChat({
     authorRef.current = displayName;
     emailRef.current = email;
   }, [displayName, email]);
+
+  useEffect(() => {
+    setMessages(INITIAL_MESSAGES);
+    setProposals([]);
+    setSummarizing(false);
+    setDraft("");
+    reconnectAttemptRef.current = 0;
+  }, [sessionId]);
 
   const associations = useMemo(() => getAssociations(messages), [messages]);
   const associationCount = associations.length;
@@ -428,6 +452,15 @@ export function StandupChat({
     if (type === "proposal.created" || type === "proposal.updated") {
       const proposal = normalizeProposal(payload.proposal ?? payload);
       if (proposal) setProposals((current) => mergeProposals(current, [proposal]));
+      return;
+    }
+
+    if (type === "proposal.batch_submitted") {
+      const proposalsRaw = payload.proposals;
+      if (Array.isArray(proposalsRaw)) {
+        const incoming = proposalsRaw.map(normalizeProposal).filter((p): p is StandupProposal => Boolean(p));
+        setProposals((current) => mergeProposals(current, incoming));
+      }
       return;
     }
 
@@ -578,9 +611,13 @@ export function StandupChat({
     sendEvent("proposal.edit", { proposal_id: proposalId, dry_run_payload: dryRunPayload });
   }, [sendEvent]);
 
+  const submitApproved = useCallback((proposalIds?: string[]) => {
+    sendEvent("proposal.submit_approved", { proposal_ids: proposalIds ?? [] });
+  }, [sendEvent]);
+
   useEffect(() => {
-    onControlsChange?.({ proposals, canSend, summarize, approve, reject, edit, summarizing });
-  }, [approve, canSend, edit, onControlsChange, proposals, reject, summarize, summarizing]);
+    onControlsChange?.({ proposals, canSend, summarize, approve, reject, edit, submitApproved, summarizing });
+  }, [approve, canSend, edit, onControlsChange, proposals, reject, submitApproved, summarize, summarizing]);
 
   function addMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -633,6 +670,20 @@ export function StandupChat({
               Standup chat
             </CardTitle>
             <CardDescription>Live session chat with local fallback when the websocket endpoint is absent.</CardDescription>
+            <div className="mt-2 flex flex-wrap items-center gap-1">
+              <Button type="button" variant="outline" size="sm" className="h-7 gap-1 px-2" onClick={onNewSession} disabled={!onNewSession}>
+                <PlusCircle className="size-3.5" />
+                New session
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={onPreviousSession} disabled={!canGoPrevious}>
+                <ChevronLeft className="size-3.5" />
+                Previous
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={onNextSession} disabled={!canGoNext}>
+                Next
+                <ChevronRight className="size-3.5" />
+              </Button>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Badge variant={statusBadgeVariant(connection.status)} className="gap-1 whitespace-nowrap text-[10px]">

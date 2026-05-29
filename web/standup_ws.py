@@ -247,6 +247,13 @@ class StandupConnectionManager:
 manager = StandupConnectionManager()
 
 
+@router.get("/api/standup/sessions")
+async def standup_sessions(request: Request) -> JSONResponse:
+    """List persisted standup chat sessions for approver history navigation."""
+    _auth.require_user(request)
+    return JSONResponse(await get_store().list_sessions())
+
+
 @router.get("/api/standup/sessions/{session_id}/snapshot")
 async def standup_snapshot(session_id: str, request: Request) -> JSONResponse:
     # S20.auth.1 — viewing a session snapshot requires an authenticated identity
@@ -373,6 +380,8 @@ async def standup_ws(websocket: WebSocket, session_id: str) -> None:
                     await _handle_proposal_status(websocket, session_id, state, payload, "approved")
                 elif event_type == "proposal.reject":
                     await _handle_proposal_status(websocket, session_id, state, payload, "rejected")
+                elif event_type == "proposal.submit_approved":
+                    await _handle_submit_approved(websocket, session_id, state, payload)
                 else:
                     await _send_error(websocket, session_id, "unknown_event", f"unsupported event type: {event_type or '<missing>'}")
             except ValueError as exc:
@@ -668,6 +677,62 @@ async def _apply_proposal_submit(session_id: str, proposal_id: str, state: Clien
             "live_gates": {"workflow_writes": workflow_writes, "jira_writes": jira_writes},
             "detail": "submit failed; approval recorded without production apply",
         }
+
+
+async def _handle_submit_approved(websocket: WebSocket, session_id: str, state: ClientState, payload: dict[str, Any]) -> None:
+    """Batch-submit already-approved proposals through the existing apply path."""
+    if not _can_approve(state):
+        await _send_error(
+            websocket,
+            session_id,
+            "forbidden",
+            "Submitting approved standup items requires the canApproveStandupActions capability.",
+        )
+        return
+
+    snapshot = await get_store().snapshot(session_id)
+    requested = payload.get("proposal_ids")
+    requested_ids = {str(value) for value in requested if value} if isinstance(requested, list) else set()
+    candidates = []
+    for proposal in snapshot.get("proposals", []):
+        if not isinstance(proposal, dict):
+            continue
+        if requested_ids and str(proposal.get("id")) not in requested_ids:
+            continue
+        if str(proposal.get("status") or "") != "approved":
+            continue
+        if proposal.get("implementation_status") or proposal.get("archived"):
+            continue
+        candidates.append(proposal)
+
+    updated: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+    for proposal in candidates:
+        proposal_id = str(proposal.get("id") or "")
+        apply_result = await _apply_proposal_submit(session_id, proposal_id, state)
+        updated_proposal = await get_store().mark_proposal_submitted(
+            session_id, proposal_id, actor=state.author, apply_result=apply_result
+        )
+        updated.append(updated_proposal)
+        results.append({
+            "proposal_id": proposal_id,
+            "implementation_status": updated_proposal.get("implementation_status"),
+            "applied": bool(apply_result.get("applied")),
+            "detail": apply_result.get("detail"),
+            "error": apply_result.get("error"),
+        })
+        await manager.broadcast(session_id, {"type": "proposal.updated", "session_id": session_id, "proposal": updated_proposal})
+
+    await manager.broadcast(
+        session_id,
+        {
+            "type": "proposal.batch_submitted",
+            "session_id": session_id,
+            "submitted_count": len(updated),
+            "results": results,
+            "proposals": updated,
+        },
+    )
 
 
 async def _send_error(websocket: WebSocket, session_id: str, code: str, message: str) -> None:

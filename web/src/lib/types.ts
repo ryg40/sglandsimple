@@ -422,6 +422,24 @@ export interface StandupSetGatesResult {
   gates: StandupGates;
   audit: Record<string, unknown>;
 }
+
+// Stage 35 — standup chat-session history/navigation.
+export interface StandupSessionSummary {
+  session_id: string;
+  title: string;
+  sprint: string;
+  status: string;
+  started_at?: string | null;
+  updated_at?: string | null;
+  message_count: number;
+  proposal_count: number;
+  active_proposal_count: number;
+  implemented_proposal_count: number;
+}
+export interface StandupSessionsResponse {
+  sessions: StandupSessionSummary[];
+  count: number;
+}
 export interface JiraStageEdit {
   issue_key: string;
   changes: Record<string, unknown>;

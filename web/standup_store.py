@@ -148,6 +148,35 @@ class StandupStore:
             self._save(data)
             return self._snapshot(session)
 
+    async def list_sessions(self) -> dict[str, Any]:
+        """Return compact chat-history metadata ordered newest-first."""
+        async with self._lock:
+            data = self._load()
+            sessions = data.setdefault("sessions", {})
+            rows: list[dict[str, Any]] = []
+            for session_id, raw in sessions.items():
+                if not isinstance(raw, dict):
+                    continue
+                meta = raw.get("session") if isinstance(raw.get("session"), dict) else {}
+                proposals = raw.get("proposals") if isinstance(raw.get("proposals"), list) else []
+                messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
+                active = [p for p in proposals if isinstance(p, dict) and not p.get("implementation_status") and not p.get("archived") and str(p.get("status") or "proposed") in {"proposed", "approved"}]
+                implemented = [p for p in proposals if isinstance(p, dict) and p.get("implementation_status")]
+                rows.append({
+                    "session_id": str(meta.get("session_id") or session_id),
+                    "title": str(meta.get("title") or f"Standup {session_id}"),
+                    "sprint": str(meta.get("sprint") or ""),
+                    "status": str(meta.get("status") or "active"),
+                    "started_at": meta.get("started_at"),
+                    "updated_at": meta.get("updated_at"),
+                    "message_count": len(messages),
+                    "proposal_count": len(proposals),
+                    "active_proposal_count": len(active),
+                    "implemented_proposal_count": len(implemented),
+                })
+            rows.sort(key=lambda row: str(row.get("updated_at") or row.get("started_at") or ""), reverse=True)
+            return {"sessions": rows, "count": len(rows)}
+
     async def touch_session(self, session_id: str, **updates: Any) -> dict[str, Any]:
         async with self._lock:
             data = self._load()
@@ -333,6 +362,33 @@ class StandupStore:
                     if apply_result is not None:
                         approval["apply_result"] = deepcopy(apply_result)
                     proposal["approval"] = approval
+                    session["session"]["updated_at"] = now
+                    self._save(data)
+                    return deepcopy(proposal)
+            raise KeyError(f"proposal not found: {proposal_id}")
+
+    async def mark_proposal_submitted(
+        self, session_id: str, proposal_id: str, *, actor: str, apply_result: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Record batch implementation/submission result without deleting audit data."""
+        async with self._lock:
+            data = self._load()
+            session = self._ensure_session(data, session_id)
+            for proposal in session["proposals"]:
+                if proposal.get("id") == proposal_id:
+                    now = utc_now()
+                    applied = bool(apply_result.get("applied"))
+                    failed = bool(apply_result.get("error"))
+                    blocked = (not applied) and not failed
+                    status = "implemented" if applied else "failed" if failed else "blocked" if blocked else "submitted"
+                    proposal["implementation_status"] = status
+                    proposal["submitted_at"] = now
+                    proposal["submitted_by"] = actor or "anonymous"
+                    proposal["implementation_result"] = deepcopy(apply_result)
+                    proposal["updated_at"] = now
+                    history = proposal.setdefault("implementation_history", [])
+                    if isinstance(history, list):
+                        history.append({"actor": actor or "anonymous", "at": now, "status": status, "result": deepcopy(apply_result)})
                     session["session"]["updated_at"] = now
                     self._save(data)
                     return deepcopy(proposal)
