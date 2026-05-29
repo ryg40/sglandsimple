@@ -3,9 +3,9 @@
 # Opt-in container for running agent shell/code/filesystem work isolated from
 # the MCP request path. Off by default — only started via the `sandbox` compose
 # profile (`docker compose --profile sandbox up`) or when
-# DEEP_AGENT_RUNTIME_MODE=sidecar. Until the Stage-21 runtime lands
-# (S21.deploy.1) this image just provides an isolated, non-root execution
-# environment with a shared /sandbox bind mount; it idles otherwise.
+# DEEP_AGENT_RUNTIME_MODE=sidecar. It provides an isolated, non-root execution
+# environment with a shared /sandbox bind mount and (S21.deploy.1) a
+# health-checked sidecar entrypoint instead of idling.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -27,9 +27,18 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash sandbox \
     && mkdir -p /sandbox \
     && chown sandbox:sandbox /sandbox
 
+# Stdlib-only sidecar entrypoint: serves /healthz and keeps the shared artifact
+# dir present/writable. No pip deps — the heavy agent runtime stays in `mcp`.
+COPY sidecar.py /app/sidecar.py
+
 USER sandbox
 
-# No long-running process yet — the Stage-21 sidecar runtime (S21.deploy.1) will
-# replace this with the agent-runtime entrypoint. Idle so the container is
-# available for `docker compose exec` and stays healthy without doing work.
-CMD ["sleep", "infinity"]
+EXPOSE 8090
+
+# Health-checked liveness for the sidecar (S21.deploy.1). The compose service
+# also declares this; baking it in means a bare `docker run` of the image is
+# health-aware too.
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 --start-period=10s \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8090/healthz',timeout=2).status==200 else 1)"
+
+CMD ["python", "/app/sidecar.py"]

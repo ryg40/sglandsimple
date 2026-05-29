@@ -222,11 +222,17 @@ K8s). The optional `sandbox` service (`sandbox-runtime/`, added in
 `S21.upgrade.1`) already exists as the isolated, non-root sidecar shell — gated
 behind the `sandbox` compose profile so it's off by default
 (`docker compose --profile sandbox up -d`); it shares the `./sandbox` mount with
-`mcp` and idles until `S21.deploy.1` gives it the runtime entrypoint. Managed blueprints (≥1 in this stage): ECS/Fargate (task role, Secrets
-Manager/SSM, CloudWatch, VPC reach to Mongo + connectors) or K8s
-(Helm/Kustomize, config maps for profiles, HPA on concurrent runs). Optional
-`provider: bedrock` per agent maps model selection to Bedrock IDs + IAM; the
-OpenAI-compatible path is unchanged (may ship stubbed).
+`mcp` and now (S21.deploy.1) runs a stdlib-only health-checked sidecar
+entrypoint (`sandbox-runtime/sidecar.py`, `/healthz` on :8090) instead of
+idling. The chosen managed blueprint is **K8s** (`deploy/k8s/`: namespace,
+Secret template, ConfigMap + profiles, Mongo StatefulSet, MCP/Web Deployments,
+optional sandbox sidecar, Ingress, HPA); **ECS/Fargate** (task role, Secrets
+Manager/SSM, CloudWatch, VPC reach to Mongo + connectors) is the documented
+alternative, blueprint-only at this stage. Optional `provider: bedrock` per
+role (`<PREFIX>_PROVIDER=bedrock`, `mcp/deep_agent/provider.py`) maps model
+selection to Bedrock IDs + region + IAM (no key); the OpenAI-compatible path is
+unchanged and is the default. **Operational runbook + verification checklist:
+[`deployment.md`](deployment.md).**
 
 ## 11. Env surface
 

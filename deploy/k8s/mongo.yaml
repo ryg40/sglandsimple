@@ -1,0 +1,59 @@
+# Mongo — checkpoint + run-record + audit store. StatefulSet so the PVC and
+# identity are stable across restarts (pending HITL approvals depend on this
+# persistence surviving a pod restart).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: sgland
+spec:
+  clusterIP: None        # headless — stable DNS for the StatefulSet pod
+  selector:
+    app: mongo
+  ports:
+    - port: 27017
+      targetPort: 27017
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: sgland
+spec:
+  serviceName: mongo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7
+          ports:
+            - containerPort: 27017
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom: { secretKeyRef: { name: sgland-secrets, key: MONGO_ROOT_USER } }
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: sgland-secrets, key: MONGO_ROOT_PASSWORD } }
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "db.runCommand({ping:1}).ok"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # storageClassName: REPLACE_ME
+        resources:
+          requests:
+            storage: 10Gi

@@ -1,0 +1,73 @@
+# Web — public UI + /api/* proxies (incl. /api/agents/* and /api/agents/metrics).
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: sgland
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: sgland
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: REGISTRY/sgland-web:latest      # build/push ./web
+          ports:
+            - containerPort: 3000
+          env:
+            - name: MCP_URL
+              value: "http://mcp:8080/mcp"
+            - name: AGENT_URL
+              value: "http://mcp:8080"
+            - name: AUTH_SECRET
+              valueFrom: { secretKeyRef: { name: sgland-secrets, key: AUTH_SECRET } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: sgland
+  annotations:
+    # ingress-class / TLS issuer are environment-specific:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    {}
+spec:
+  rules:
+    - host: REPLACE_ME.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000

@@ -1,0 +1,62 @@
+# Optional Deep Agent sidecar runtime (DEEP_AGENT_RUNTIME_MODE=sidecar).
+# Non-root, health-checked, never exposed via Ingress. Apply only when running
+# the runtime out-of-process from mcp.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox
+  namespace: sgland
+spec:
+  selector:
+    app: sandbox
+  ports:
+    - port: 8090
+      targetPort: 8090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox
+  namespace: sgland
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox
+  template:
+    metadata:
+      labels:
+        app: sandbox
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: sandbox
+          image: REGISTRY/sgland-sandbox:latest   # build/push ./sandbox-runtime
+          ports:
+            - containerPort: 8090
+          env:
+            - name: DEEP_AGENT_RUNTIME_MODE
+              value: "sidecar"
+            - name: DEEP_AGENT_ARTIFACT_DIR
+              value: "/sandbox/agent-artifacts"
+            - name: SANDBOX_PORT
+              value: "8090"
+          volumeMounts:
+            - name: artifacts
+              mountPath: /sandbox
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8090 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+      volumes:
+        - name: artifacts
+          emptyDir: {}

@@ -89,8 +89,9 @@ services:
   # (`docker compose --profile sandbox up -d`) — a plain `docker compose up`
   # leaves it stopped, so existing behavior is unchanged. It shares the same
   # `./sandbox` bind mount (uid 1000) as `mcp`, so files written here are
-  # visible to the in-mcp deep-agent and vice versa. Until the Stage-21
-  # sidecar runtime lands (S21.deploy.1) it idles; use it via
+  # visible to the in-mcp deep-agent and vice versa. It runs a stdlib-only
+  # sidecar entrypoint (sidecar.py) that serves /healthz and keeps the shared
+  # artifact dir writable (S21.deploy.1); use it via
   # `docker compose exec sandbox bash`.
   sandbox:
     build: ./sandbox-runtime
@@ -104,12 +105,23 @@ services:
       DEEP_AGENT_RUNTIME_MODE: ${DEEP_AGENT_RUNTIME_MODE:-in_mcp}
       DEEP_AGENT_ARTIFACT_DIR: ${DEEP_AGENT_ARTIFACT_DIR:-/sandbox/agent-artifacts}
       DEEP_AGENT_DRY_RUN_ONLY: ${DEEP_AGENT_DRY_RUN_ONLY:-true}
+      SANDBOX_PORT: ${SANDBOX_PORT:-8090}
     volumes:
       - ./sandbox:/sandbox
     # LAN-only, default network only — deliberately NOT on `proxy`. The sandbox
     # runtime is never publicly reachable.
     networks:
       - default
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8090/healthz',timeout=2).status==200 else 1)
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   agent:
     build: ./agent

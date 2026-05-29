@@ -23,12 +23,16 @@ allowlist boundary they build on.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from typing import Any, Callable, Literal
 
 from langchain_core.tools import StructuredTool
 
-from llm import chat_model, role_runtime
+from llm import role_runtime
+from .provider import chat_model_for_role
+from . import observability as obs
 from .context import render_packs
 from .profiles import (
     AgentProfile,
@@ -48,8 +52,23 @@ def policy_events() -> list[dict[str, Any]]:
     return list(_POLICY_EVENTS)
 
 
-def _record_policy_event(agent: str, tool: str, reason: str) -> None:
+def _record_policy_event(agent: str, tool: str, reason: str, run_id: str = "", detail: dict[str, Any] | None = None) -> None:
+    """Record an out-of-allowlist tool attempt.
+
+    Kept in the in-process ring (back-compat + tests) and, via S21.security.1,
+    also persisted to the audit trail and counted. Audit persistence is async;
+    the wrapper that triggers this is already async so we schedule it without
+    blocking the fail-closed return.
+    """
     _POLICY_EVENTS.append({"agent": agent, "tool": tool, "reason": reason})
+    obs.incr("policy_denied_total", agent=agent or "(none)")
+    try:
+        asyncio.get_running_loop().create_task(
+            obs.record_audit("policy_denied", run_id=run_id, agent=agent, tool=tool, reason=reason, detail=detail)
+        )
+    except RuntimeError:
+        # No running loop (sync/test path): the ring + counter still recorded it.
+        pass
 
 
 def _live_tool_names() -> set[str]:
@@ -102,14 +121,26 @@ def _make_mcp_tool(agent_name: str, tool_name: str, description: str, allowed: s
 
     async def _call(**kwargs: Any) -> str:
         if tool_name not in allowed:
-            _record_policy_event(agent_name, tool_name, "outside allowlist")
+            # detail is redacted inside record_audit; pass the attempted args so
+            # the audit trail shows *what* was attempted out of policy.
+            _record_policy_event(agent_name, tool_name, "outside allowlist", detail={"args": kwargs})
             return f"[policy] tool {tool_name!r} is not permitted for agent {agent_name!r}"
+        obs.incr("tool_calls_total", agent=agent_name, tool=tool_name)
+        started = time.time()
         result = await server._dispatch_tool(tool_name, kwargs)
+        obs.log_event(
+            "tool",
+            agent=agent_name,
+            tool=tool_name,
+            ms=int((time.time() - started) * 1000),
+            error=bool(isinstance(result, dict) and result.get("isError")),
+        )
         # Flatten the MCP envelope to text for the agent loop.
         if isinstance(result, dict):
             blocks = result.get("content") or []
             text = "\n".join(b.get("text", "") for b in blocks if isinstance(b, dict))
             if result.get("isError"):
+                obs.incr("tool_errors_total", agent=agent_name, tool=tool_name)
                 return f"[tool error] {text}"
             return text or json.dumps(result)
         return str(result)
@@ -273,12 +304,13 @@ def _compile_subagent(profile: AgentProfile, live_tools: set[str]) -> Any:
         "system_prompt": _subagent_system_prompt(profile),
         "tools": tools,
     }
-    # Model: every model in this stack goes through our single OpenAI-compatible
-    # upstream, so we hand deepagents a configured BaseChatModel rather than a
-    # provider string (which would resolve to a real OpenAI/Bedrock endpoint).
-    # A profile's `model` selects the role ("planner"/"builder") used to resolve
-    # base_url/model/key; default subagents run on the builder role.
-    sub["model"] = chat_model(role=_subagent_role(profile))
+    # Model: hand deepagents a configured BaseChatModel rather than a provider
+    # string. A profile's `model` selects the role ("planner"/"builder") used to
+    # resolve base_url/model/key; default subagents run on the builder role.
+    # `chat_model_for_role` honors the per-role provider switch (S21.bedrock.1):
+    # OpenAI-compatible by default, ChatBedrockConverse when the role's provider
+    # env is `bedrock`.
+    sub["model"] = chat_model_for_role(role=_subagent_role(profile))
     if profile.write_tools:
         sub["interrupt_on"] = profile.interrupt_on()
     return sub
@@ -314,7 +346,7 @@ def build_orchestrator(profiles: PlatformProfiles | None = None, checkpointer: A
     # task → planner role. Pass a configured BaseChatModel (our upstream), not
     # a provider string.
     return create_deep_agent(
-        model=chat_model(role=_orchestrator_role(orch)),
+        model=chat_model_for_role(role=_orchestrator_role(orch)),
         tools=[],
         system_prompt=orch_prompt,
         subagents=subagents,
@@ -331,9 +363,7 @@ def build_orchestrator(profiles: PlatformProfiles | None = None, checkpointer: A
 # compiled with the Mongo checkpointer so a paused run survives a restart.
 # ---------------------------------------------------------------------------
 
-import asyncio
 import os
-import time
 import uuid
 
 from pydantic import BaseModel, Field
@@ -497,6 +527,10 @@ async def _execute_run(run_id: str) -> None:
     if rec.agent:
         goal = f"Delegate this to the {rec.agent} subagent: {rec.goal}"
 
+    agent_label = rec.agent or "(orchestrator)"
+    obs.incr("runs_started_total", agent=agent_label)
+    started = time.time()
+    obs.log_event("run", event="start", run_id=run_id, agent=agent_label, mode=rec.mode)
     try:
         async with checkpointer_context() as saver:
             orch = build_orchestrator(checkpointer=saver)
@@ -508,11 +542,17 @@ async def _execute_run(run_id: str) -> None:
             if approval:
                 rec.status = "waiting_approval"
                 rec.approval = approval
+                obs.incr("runs_waiting_approval_total", agent=agent_label)
             else:
                 rec.status = "completed"
+                obs.incr("runs_completed_total", agent=agent_label)
     except Exception as e:  # noqa: BLE001
         rec.status = "error"
         rec.error = f"{type(e).__name__}: {e}"
+        obs.incr("runs_failed_total", agent=agent_label)
+    elapsed = time.time() - started
+    obs.observe_latency(agent_label, elapsed)
+    obs.log_event("run", event="end", run_id=run_id, agent=agent_label, status=rec.status, ms=int(elapsed * 1000))
     await _persist_run(rec)
 
 
@@ -609,11 +649,24 @@ async def agent_run_resume(
 
     is_reject, edited_args, reject_msg = _normalize_decision(decision)
     needed = rec.approval.required_capability if rec.approval else ""
+    pending_tool = rec.approval.tool if rec.approval else ""
+    decision_kind = "reject" if is_reject else ("edit" if edited_args is not None else "approve")
 
     # Capability gate: only approvals/edits of a capability-gated write are checked.
     if not is_reject and needed:
         caps = set(actor_capabilities or [])
         if needed not in caps:
+            await obs.record_audit(
+                "approval",
+                run_id=run_id,
+                agent=rec.agent or "",
+                tool=pending_tool,
+                actor=actor,
+                actor_capabilities=actor_capabilities,
+                reason=f"denied: missing capability {needed!r}",
+                detail={"decision": decision_kind, "required_capability": needed},
+            )
+            obs.incr("approvals_denied_total")
             raise PermissionDeniedError(
                 f"actor {actor or '(unknown)'} lacks capability {needed!r} required to "
                 f"approve tool {rec.approval.tool!r}"
@@ -625,6 +678,21 @@ async def agent_run_resume(
         is_reject = True
         reject_msg = "DEEP_AGENT_DRY_RUN_ONLY is on — write not applied (dry-run)."
         forced_dry_run = True
+
+    # Audit the decision (with actor + capabilities) before it executes; this is
+    # the policy-flag enforcement record (read_only never reaches here; a
+    # dry_run downgrade is captured by forced_dry_run).
+    await obs.record_audit(
+        "approval",
+        run_id=run_id,
+        agent=rec.agent or "",
+        tool=pending_tool,
+        actor=actor,
+        actor_capabilities=actor_capabilities,
+        reason=("dry_run downgrade" if forced_dry_run else f"{decision_kind} accepted"),
+        detail={"decision": decision_kind, "forced_dry_run": forced_dry_run, "edited_args": edited_args},
+    )
+    obs.incr("approvals_total", decision=("dry_run" if forced_dry_run else decision_kind))
 
     resume_payload = _build_resume_decisions(rec.approval, is_reject, edited_args, reject_msg)
 
@@ -658,6 +726,8 @@ async def agent_run_cancel(run_id: str) -> AgentRunRecord:
     if rec.status in ("completed", "rejected", "error"):
         return rec
     rec.status = "cancelled"
+    obs.incr("runs_cancelled_total", agent=rec.agent or "(orchestrator)")
+    obs.log_event("run", event="cancel", run_id=run_id, agent=rec.agent or "(orchestrator)")
     await _persist_run(rec)
     return rec
 
@@ -721,6 +791,14 @@ def runtime_info() -> dict[str, Any]:
                 "inherits_default": rt["inherits_default"],
             }
         )
+    # Per-role provider mapping (S21.bedrock.1): mostly openai-compatible; a
+    # bedrock role reports its resolved model id/region or the config gap.
+    try:
+        from .provider import provider_summary
+
+        providers = provider_summary()
+    except Exception as e:  # noqa: BLE001
+        providers = {"error": str(e)}
     return {
         "roles": roles,
         "orchestrator": {
@@ -729,4 +807,26 @@ def runtime_info() -> dict[str, Any]:
             **{k: roles[orch_role][k] for k in ("provider", "endpoint", "model", "inherits_default")},
         },
         "agents": agents,
+        "providers": providers,
     }
+
+
+def runtime_metrics(fmt: str = "json") -> dict[str, Any] | str:
+    """Observability snapshot for the platform (S21.obs.1).
+
+    ``fmt="json"`` returns the structured metrics snapshot plus the recent
+    policy-event ring and budget limit; ``fmt="prometheus"`` returns the text
+    exposition format for a scraper.
+    """
+    if fmt == "prometheus":
+        return obs.metrics_prometheus()
+    snap = obs.metrics_snapshot()
+    snap["policy_events_recent"] = policy_events()[-25:]
+    snap["audit_recent"] = obs.audit_events(limit=25)
+    try:
+        from .budget import budget_limit
+
+        snap["budget_per_call"] = budget_limit()
+    except Exception:  # noqa: BLE001
+        snap["budget_per_call"] = 0
+    return snap

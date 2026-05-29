@@ -1,0 +1,81 @@
+# MCP runtime — hosts the Deep Agent platform (DEEP_AGENT_RUNTIME_MODE=in_mcp).
+# ServiceAccount carries the optional Bedrock IAM identity (IRSA / Workload
+# Identity); for the OpenAI-compatible path the annotation is simply absent.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp
+  namespace: sgland
+  annotations:
+    # EKS IRSA (uncomment + set when using provider=bedrock):
+    # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/sgland-bedrock-invoke
+    # GKE Workload Identity:
+    # iam.gke.io/gcp-service-account: sgland-bedrock@PROJECT.iam.gserviceaccount.com
+    {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp
+  namespace: sgland
+spec:
+  selector:
+    app: mcp
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp
+  namespace: sgland
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mcp
+  template:
+    metadata:
+      labels:
+        app: mcp
+    spec:
+      serviceAccountName: mcp
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: mcp
+          image: REGISTRY/sgland-mcp:latest      # build/push ./mcp
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef: { name: sgland-config }
+          env:
+            - name: UPSTREAM_API_KEY
+              valueFrom: { secretKeyRef: { name: sgland-secrets, key: UPSTREAM_API_KEY } }
+            - name: MONGO_URL
+              valueFrom: { secretKeyRef: { name: sgland-secrets, key: MONGO_URL } }
+          volumeMounts:
+            - name: profiles
+              mountPath: /app/deep_agent/profiles.yaml
+              subPath: profiles.yaml
+            - name: artifacts
+              mountPath: /sandbox
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+      volumes:
+        - name: profiles
+          configMap:
+            name: sgland-profiles      # see configmap.yaml note for how to build it
+        - name: artifacts
+          emptyDir: {}

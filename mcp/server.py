@@ -711,6 +711,19 @@ TOOLS.extend([
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "agent_metrics",
+        "description": (
+            "Deep Agent platform observability (Stage 21): run counts "
+            "(started/completed/failed/cancelled/waiting), per-agent tool-call + "
+            "error counts, per-profile latency, recent policy-denied events and "
+            "approval audit entries. `format=prometheus` returns text exposition."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"format": {"type": "string", "enum": ["json", "prometheus"], "default": "json"}},
+        },
+    },
+    {
         "name": "agent_run_start",
         "description": (
             "Start a Deep Agent run. Routes the goal to one system agent (or the "
@@ -1486,6 +1499,32 @@ async def _tool_chat_runtime_info(args: dict[str, Any]) -> dict[str, Any]:
     return _agent_envelope(payload, "\n".join(lines))
 
 
+async def _tool_agent_metrics(args: dict[str, Any]) -> dict[str, Any]:
+    """Stage 21 — Deep Agent platform observability snapshot.
+
+    ``format=prometheus`` returns the text exposition format as the envelope
+    body; the default JSON form returns the structured snapshot plus a markdown
+    summary of run counts and recent policy events."""
+    from deep_agent.runtime import runtime_metrics
+
+    fmt = args.get("format", "json")
+    if fmt == "prometheus":
+        text = runtime_metrics(fmt="prometheus")
+        return _agent_envelope({"format": "prometheus"}, str(text))
+
+    snap = runtime_metrics(fmt="json")
+    counters = snap.get("counters", {})
+    lines = ["# Deep Agent metrics", "", f"_uptime {snap.get('uptime_seconds')}s_", ""]
+    for k in sorted(counters):
+        lines.append(f"- `{k}` = {counters[k]}")
+    pol = snap.get("policy_events_recent") or []
+    if pol:
+        lines += ["", f"## Recent policy denials ({len(pol)})"]
+        for e in pol[-5:]:
+            lines.append(f"- {e.get('agent')} → {e.get('tool')}: {e.get('reason')}")
+    return _agent_envelope(snap, "\n".join(lines))
+
+
 async def _tool_agent_run_start(args: dict[str, Any]) -> dict[str, Any]:
     from deep_agent.runtime import AgentRunStartRequest, agent_run_start
 
@@ -1798,6 +1837,8 @@ async def _dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await _tool_agent_profiles_list(args)
     if name == "chat_runtime_info":
         return await _tool_chat_runtime_info(args)
+    if name == "agent_metrics":
+        return await _tool_agent_metrics(args)
     if name == "agent_run_start":
         return await _tool_agent_run_start(args)
     if name == "agent_run_status":

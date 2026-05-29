@@ -1,0 +1,22 @@
+# Autoscale the MCP runtime on CPU. For run-concurrency-based scaling, expose
+# deep_agent_runs_started_total / deep_agent_run_latency_seconds_avg from
+# /api/agents/metrics?format=prometheus and switch to a custom-metrics HPA.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mcp
+  namespace: sgland
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mcp
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

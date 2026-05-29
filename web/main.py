@@ -62,7 +62,7 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 # S19.backend.1 — identity resolution (resolve_user / require_user / require_capability)
@@ -948,6 +948,23 @@ async def api_agent_run_cancel(run_id: str) -> JSONResponse:
 @app.get("/api/agents/runs/{run_id}/artifacts", dependencies=[Depends(_guard_user)])
 async def api_agent_run_artifacts(run_id: str) -> JSONResponse:
     res = await _mcp_tool("agent_run_artifacts", {"run_id": run_id})
+    return JSONResponse(_extract_json_block(res), status_code=400 if res.get("isError") else 200)
+
+
+@app.get("/api/agents/metrics", dependencies=[Depends(_guard_user)])
+async def api_agent_metrics(format: str = "json") -> Response:
+    """Deep Agent platform observability (S21.obs.1).
+
+    `format=prometheus` returns the text exposition format (text/plain) for a
+    scraper; otherwise the structured JSON snapshot."""
+    res = await _mcp_tool("agent_metrics", {"format": format})
+    if format == "prometheus":
+        text = ""
+        for block in res.get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text", "")
+                break
+        return Response(content=text, media_type="text/plain; version=0.0.4")
     return JSONResponse(_extract_json_block(res), status_code=400 if res.get("isError") else 200)
 
 

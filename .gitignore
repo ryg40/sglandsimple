@@ -18,3 +18,5 @@ perm/
 data/
 /data/auth/
 /data/auth/users.json
+# Stage 21 K8s blueprint — filled Secret (template is secret.example.yaml)
+deploy/k8s/secret.yaml

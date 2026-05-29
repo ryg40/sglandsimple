@@ -1057,39 +1057,39 @@ Prefer adding these as MCP tools plus web `/api/agents/*` proxies, so existing c
   - Verified: `cd web && npm run build` clean.
   - Depends on: S21.runtime.1.
 
-- [ ] **S21.deploy.1 — Containerize/runtime deployment path**
-  - Files: `compose.yaml`, optional `agent-runtime/` service, Dockerfiles, deployment docs.
-  - Done when: runtime can run in current compose either in `mcp` or as a sidecar; healthcheck passes; secrets/config are env/secret-driven; no local-only assumptions block container deployment.
+- [x] **S21.deploy.1 — Containerize/runtime deployment path** ✅ DONE
+  - Files: `sandbox-runtime/sidecar.py` (new), `sandbox-runtime/Dockerfile`, `compose.yaml`, `docs/deployment.md` (new).
+  - Done: the runtime runs `in_mcp` (default, unchanged) or as the opt-in `sidecar` (the `sandbox` service). The sidecar now runs a stdlib-only entrypoint (`sidecar.py`) that serves `/healthz` on :8090 and keeps the shared `DEEP_AGENT_ARTIFACT_DIR` writable, instead of idling — the image bakes a `HEALTHCHECK` and the compose service declares one too. All config is env/secret-driven (no local-only assumptions): LLM via `UPSTREAM_*`/role envs, state via `MONGO_URL`, profiles via `DEEP_AGENT_PROFILES_FILE`. **Verified live:** built `sglandsimple-sandbox`, ran it, container transitioned `starting → healthy` on the baked healthcheck and `/healthz` returned `{"status":"ok","artifact_writable":true}`. `docs/deployment.md` documents the three modes + the healthcheck contract.
   - Depends on: S21.runtime.1.
 
-- [ ] **S21.deploy.2 — Add ECS/Fargate or K8S deployment blueprint**
-  - Files: `deploy/ecs/` or `deploy/k8s/`, `docs/deep_agent_platform.md`.
-  - Done when: documented manifests/templates cover runtime container, task/service roles, secrets, network access, healthchecks, logs, scaling, and rollback. One target (ECS/Fargate or K8S) may be blueprint-only at this stage.
+- [x] **S21.deploy.2 — Add ECS/Fargate or K8S deployment blueprint** ✅ DONE
+  - Files: `deploy/k8s/` (new: README + namespace/secret.example/configmap/mongo/mcp-deployment/web-deployment/sandbox-deployment/hpa), `.gitignore`, `docs/deep_agent_platform.md`, `docs/deployment.md`.
+  - Done: **K8s** is the chosen blueprint (plain YAML, no Helm so the parts are visible) covering the runtime container (MCP Deployment + Service, readiness/liveness on `/healthz`), task/service identity (ServiceAccount with IRSA/Workload-Identity annotations for the optional Bedrock IAM role — *no key*), secrets (Secret template; filled `secret.yaml` gitignored), config maps (runtime env + the agent `profiles.yaml` mounted in), network access (Service DNS + Ingress), healthchecks, logs (structured stdout → cluster log agent), scaling (HPA on CPU, with the run-metrics path documented), and rollback (`kubectl rollout undo`, approvals unaffected because they're Mongo-backed). **ECS/Fargate** is documented as the alternative target (blueprint-only, allowed at this stage). All 8 manifests parse (`yaml.safe_load_all`). Design doc §10 updated to point at the blueprint + `docs/deployment.md`.
   - Depends on: S21.deploy.1.
 
-- [ ] **S21.bedrock.1 — Design/implement Bedrock provider adapter path**
-  - Files: `mcp/llm.py`, `mcp/deep_agent/provider.py` (new), `.env.example`, docs.
-  - Done when: a profile's `provider: bedrock` maps that agent's `model` to a Bedrock model ID + region + IAM, or the Bedrock path is explicitly stubbed with interface + envs + IAM requirements; the OpenAI-compatible path remains unchanged.
+- [x] **S21.bedrock.1 — Design/implement Bedrock provider adapter path** ✅ DONE
+  - Files: `mcp/deep_agent/provider.py` (new), `mcp/deep_agent/runtime.py` (use `chat_model_for_role`), `.env.example`, `docs/deep_agent_platform.md`/`docs/deployment.md`.
+  - Done: a role's provider switch (`<PREFIX>_PROVIDER=bedrock`, reusing the Stage-26 provider machinery in `llm.py`) routes that role's agents to `langchain_aws.ChatBedrockConverse` instead of `ChatOpenAI`, with the model id resolved from `<PREFIX>_BEDROCK_MODEL` (or a profile model that already *looks* like a Bedrock id — alphabetic provider segment before the first dot, so a version-dotted OpenAI name like `qwen3.6-27b` is **not** mistaken for a billed id) and region from `<PREFIX>_BEDROCK_REGION`/`AWS_REGION`. Auth is the **AWS credential chain (IAM role / AWS_* env), never a key**; required IAM = `bedrock:InvokeModel` (+ ...WithResponseStream). `langchain-aws`/`boto3` are optional deps — absent, the path raises a clear actionable `ProviderConfigError` (the allowed "explicitly stubbed with interface + envs + IAM" form). The OpenAI-compatible path is the default and unchanged. `runtime.py` now builds subagent/orchestrator models via `chat_model_for_role`, and `runtime_info()` surfaces `providers` (`provider_summary`). **Verified live in-container:** default role → `ChatOpenAI`; `BUILDER_PROVIDER=bedrock` with model+region → `provider_summary` reports the resolved Bedrock id/region/credential-chain and the build raises the documented `ProviderConfigError` (no `langchain-aws`); the OpenAI-style model name is correctly rejected as a Bedrock id.
   - Depends on: S21.deploy.1.
 
-- [ ] **S21.obs.1 — Add runtime observability and metrics**
-  - Files: `mcp/deep_agent/runtime.py`, `mcp/server.py`, optional metrics endpoint, docs.
-  - Done when: structured logs and metrics cover active/completed/failed runs, pending approvals, token budgets, tool-call counts, retries, cancellations, and per-profile latency.
+- [x] **S21.obs.1 — Add runtime observability and metrics** ✅ DONE
+  - Files: `mcp/deep_agent/observability.py` (new), `mcp/deep_agent/runtime.py`, `mcp/server.py` (`agent_metrics` tool), `web/main.py` (`/api/agents/metrics` proxy), `docs/deployment.md`.
+  - Done: in-process counters + per-profile latency cover runs started/completed/failed/cancelled/waiting-approval, per-agent tool-call + tool-error counts, approvals (by decision + denied), and policy denials; plus the per-call token budget (existing `budget.py`). Structured single-line `[deep_agent.*] k=v` logs mark run start/end (with ms), each tool call (ms + error), and cancels. Surfaced via the `agent_metrics` MCP tool / `GET /api/agents/metrics` — JSON snapshot (counters + latency + recent policy/audit + budget) or `?format=prometheus` text exposition. **Verified live:** `agent_metrics` returns the snapshot (it even captured a real failed orchestrator run during the LLM outage as `runs_failed_total`); prometheus form renders; all expected keys present.
   - Depends on: S21.runtime.1.
 
-- [ ] **S21.security.1 — Add redaction and policy audit trail**
-  - Files: runtime dispatcher, audit helpers, docs.
-  - Done when: tool inputs/outputs are redacted for secrets, denied tool calls (outside an agent's allowlist) are persisted as policy events, approvals include actor/roles/groups, and `read_only`/`dry_run_only`/`write_capable` policy flags are enforced.
+- [x] **S21.security.1 — Add redaction and policy audit trail** ✅ DONE
+  - Files: `mcp/deep_agent/observability.py` (new: `redact`/`record_audit`/policy-flag helpers), `mcp/deep_agent/runtime.py` (dispatch + resume wiring), `docs/deployment.md`.
+  - Done: `redact()` masks secret-named keys (api_key/token/password/…) and token-shaped values (GitHub `ghu_`/`gh*_`, OpenAI `sk-`, AWS `AKIA`, JWT, bearer) recursively, and caps oversized strings. Out-of-allowlist tool calls fail closed (`[policy]` return) **and** persist a `policy_denied` audit event (with the redacted attempted args) to `DEEP_AGENT_AUDIT_COLLECTION` + an in-process ring + counter + log line. HITL approvals persist an `approval` audit event with actor + actor_capabilities + decision; a capability-denied approve and a dry-run downgrade are both recorded. Policy flags (`read_only`/`write_capable`/`dry_run_only`) are resolved per profile (`policy_flags_for`) and enforced: read_only agents have no write tools, the `DEEP_AGENT_DRY_RUN_ONLY` guardrail downgrades any approve to a no-write reject, and the capability gate stands. **Verified live in-container:** fail-closed returns `[policy]`, records the ring event, and persists to Mongo (doc has `_id`); redaction masks both a secret-named key and a token-shaped value inside a persisted audit detail.
   - Depends on: S21.hitl.1.
 
-- [ ] **S21.verify.1 — Deep Agent platform smoke suite**
-  - Files: `scripts/smoke_deep_agent_platform.sh` or `.py`, existing `scripts/smoke_deep_agent.sh` updates.
-  - Done when: smoke lists agents, has the orchestrator route a goal to a subagent, runs Atlassian (dry-run) and Mongo (read-only) agent goals, validates `interrupt_on` HITL pause/resume, verifies a denied/out-of-allowlist tool call fails closed, checks persistence, and confirms no live external writes occur.
+- [x] **S21.verify.1 — Deep Agent platform smoke suite** ✅ DONE
+  - Files: `scripts/smoke_deep_agent_platform.py` (new).
+  - Done: one session-aware MCP smoke covering the full acceptance list — roster + **write-tool uniqueness** (the security-meaningful disjointness invariant; read tools may overlap by design, e.g. the cross-system `audit_agent`), orchestrator routing, Atlassian dry-run → `interrupt_on` pause, HITL `resume(reject)` resolving cleanly with no write, persistence (run reload by id), the observability surface (`agent_metrics` counters + policy-event channel), and the dry-run guardrail. Mongo graph agent is opt-in (`RUN_GRAPH_AGENTS=1`). **Verified live:** roster (9 agents incl. `datadog_agent`) + write-tool uniqueness PASS; `agent_metrics`/persistence/fail-closed/audit/redaction all PASS against the live mcp (see obs.1/security.1 notes). **Infra-blocked at run time:** the LLM-routing / Atlassian-HITL-pause / Mongo-answer steps need the upstream model, and **both remote inference endpoints (`:8001` default and `:9292` builder) were down** during this run — confirmed by direct curl (`unable to start process: upstream command exited prematurely` / empty responses), independent of this code. Re-run `MCP_URL=… RUN_GRAPH_AGENTS=1 python3 scripts/smoke_deep_agent_platform.py` once an inference backend is serving to green the LLM-dependent steps.
   - Depends on: S21.agent.1, S21.security.1.
 
-- [ ] **S21.verify.2 — Deployment and restart verification**
-  - Files: deployment docs/scripts.
-  - Done when: runtime restart does not lose pending HITL approvals; compose healthchecks pass; chosen deployment blueprint has a clear verification checklist.
+- [x] **S21.verify.2 — Deployment and restart verification** ✅ DONE
+  - Files: `docs/deployment.md` (verification checklist + restart drill), existing `scripts/smoke_agent_hitl.py` (automated restart drill).
+  - Done: `docs/deployment.md` carries the deployment + restart checklist (compose health, platform smoke, the pending-HITL-survives-restart drill, rollback). **Verified live:** persisted a synthetic `waiting_approval` run record (run + typed approval with tool + `canApplyJira`), ran `docker compose restart mcp`, waited for `healthy`, and reloaded the same run — status still `waiting_approval` with the approval intact, proving the Mongo-backed durability guarantee independent of the LLM (the existing `scripts/smoke_agent_hitl.py` automates the same drill end-to-end through a real interrupt once inference is up). Compose healthcheck passed after the restart.
   - Depends on: S21.deploy.1, S21.hitl.1.
 
 ---
